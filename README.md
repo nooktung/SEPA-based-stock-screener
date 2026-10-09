@@ -1,156 +1,101 @@
-# vn-stock-agent
+# SEPA-based stock screener — cổ phiếu Việt Nam
 
-An investment **research** assistant for the Vietnamese equity market.
+Công cụ **nghiên cứu** cổ phiếu HOSE / HNX / UPCoM theo phương pháp SEPA (Mark Minervini):
+- lấy dữ liệu giá từ DNSE OpenAPI;
+- lọc toàn thị trường ra danh sách theo dõi;
+- theo dõi sự kiện hằng ngày;
+- hiển thị trên dashboard chạy trên máy (http://127.0.0.1:8765).
 
-It is not a trading bot. It never places orders. It produces evidence,
-scenarios and explicit uncertainty; the investment decision belongs to the
-user.
+**Không phải bot giao dịch:** không đặt lệnh, các lệnh mua/bán của DNSE và SSI bị chặn trong code. Kết quả là bằng chứng
+để nghiên cứu, không phải khuyến nghị mua bán.
 
----
+## Cần có
 
-## Status
+- Windows, [Python 3.11+](https://www.python.org/downloads/) (lúc cài nhớ tick "Add python.exe to PATH") và
+  [Git](https://git-scm.com/download/win).
+- Cặp khóa **DNSE OpenAPI** (API key + secret), tạo trên EntradeX / developers.dnse.com.vn.
 
-| Phase | Scope | State |
-|---|---|---|
-| 1 | Project structure, configuration, database schema, provider interfaces | **Done** |
-| 2 | Market data provider implementations (DNSE) | **Partial** |
-| 3 | News collection, deduplication, ranking | Not started |
-| 4 | Technical engine | Not started |
-| 5 | Fundamental engine | Not started |
-| 6 | Macro engine | Not started |
-| 7 | Flow engine | Not started |
-| 8 | Analyst modules (Claude reasoning layer) | Not started |
-| 9 | Decision / scoring engine | Not started |
-| 10 | 08:00 pre-market report | Not started |
-| 11 | Intraday alerts | Not started |
-| 12 | End-of-day evaluation | Not started |
-| 13 | Backtesting and self-evaluation | Not started |
+## Cài đặt (một lần trên mỗi máy)
 
----
-
-## Quick start
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # optional in Phase 1
-python -m src.main doctor     # validate config, show source status
-python -m src.main initdb     # create schema, sync watchlist
-python -m pytest -q           # 78 tests
+```powershell
+git clone https://github.com/nooktung/SEPA-based-stock-screener.git D:\vn-stock-agent
+cd D:\vn-stock-agent
+powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
-`doctor` exits **2** while every enabled source is a fixture. That is correct
-behaviour, not a bug: it means no real data is wired yet and no report may be
-published.
+`setup.ps1` làm các việc sau:
+- tạo môi trường riêng `.venv` và cài thư viện;
+- tạo file `.env` từ `.env.example`;
+- chạy test;
+- tạo database trống.
 
----
-
-## What Phase 1 actually gives you
-
-**Provider abstraction** (`src/collectors/base.py`). Five interfaces —
-`MarketDataProvider`, `NewsProvider`, `FinancialDataProvider`,
-`MacroDataProvider`, `FlowDataProvider`. The engine depends only on these.
-Changing data vendor means editing `config/sources.yaml` and adding one
-subclass; `quant/`, `analysts/` and `decision/` never change.
-
-**Provenance enforced by type.** Every record carries `source_id`,
-`source_level` and `observed_at`. A record without provenance raises at
-construction, not three layers downstream.
-
-**Assertion types in the schema.** `FACT | INFERENCE | ESTIMATE | RUMOUR` is a
-`CHECK` constraint in SQLite, not a convention. A level-5 forum source is
-forced to `rumour_only` by the interface regardless of what the article says.
-
-**Config validated at load.** Scoring weights that do not sum to 100, or
-recommendation bands with a gap, fail immediately rather than producing a
-plausible wrong number later.
-
-**Fixture providers.** Deterministic offline data so the pipeline and all
-tests run with no network and no credentials — and the runner knows they are
-fixtures and refuses to publish from them.
-
-**Append-only decision history.** `signals` is never mutated; outcomes go in
-`signal_outcomes`. Past predictions cannot be quietly rewritten to look better.
-
----
-
-## Design decisions worth knowing
-
-**Data source: DNSE OpenAPI.** REST (`/price/ohlc`, `/price/{sym}/foreign-trading`,
-`/market/instruments`) for bars and flow; WebSocket (`wss://ws-openapi.dnse.com.vn`)
-for intraday. Auth is HMAC-SHA256 over api_key/api_secret. The SDK's execution
-methods are blocked at the proxy layer -- see `FORBIDDEN_METHODS`.
-
-**Adjusted prices are mandatory.** Vietnamese securities firms issue bonus
-shares and stock dividends often. SSI went ex-rights on a 5:1 bonus in August
-2026; VIX has done two capital increases in one year. An unadjusted series
-shows a phantom gap-down on the ex-date that a naive breakdown detector reads
-as a real breakdown. `adj_close` and `adj_factor` exist for this reason.
-
-**Sector-specific fundamentals.** A generic P/E screen applied to a broker is
-confidently wrong. The `securities` sector profile carries
-`brokerage_revenue`, `margin_balance`, `prop_trading_pnl`,
-`market_share_hose`, `capital_adequacy_ratio`. Proprietary trading is the
-swing factor for VN brokers — it is why two firms with similar revenue can
-report wildly different profit.
-
-**Breadth is tracked separately from index level.** An index can rise on four
-large caps while most of the market falls. The regime classifier must see that
-difference.
-
-**Score is not confidence.** Kept as two independent numbers. A high score
-built on stale data with conflicting signals should read `BUY / 81 / conf 44`,
-and the gates in `thresholds.yaml` will block the BUY at that confidence.
-
-**Failure never fabricates.** Source down → mark stale → reduce confidence →
-continue with what remains. If critical data is missing the recommendation
-becomes `INSUFFICIENT_DATA` rather than a forced BUY/HOLD/SELL.
-
----
-
-## Layout
+Sau đó mở `.env` và điền khóa (file này không bao giờ được đưa lên GitHub):
 
 ```
-config/       watchlist, thresholds, sources -- all behaviour tuning lives here
-database/     schema.sql (SQLite dev / PostgreSQL prod, common subset only)
-src/
-  config.py         validated config loading
-  database.py       bootstrap and connection
-  collectors/
-    base.py         the five provider interfaces
-    registry.py     instantiation, priority fallback, staleness marking
-    providers/      concrete vendors (fixtures only so far)
-  quant/            deterministic calculation -- Python, never the LLM
-  analysts/         interpretation and synthesis -- LLM, never arithmetic
-  decision/         scoring, gating, risk/reward
-  reports/          premarket / intraday / end-of-day
-tests/        30 tests, no network required
+DNSE_API_KEY=...
+DNSE_API_SECRET=...
 ```
 
----
+## Chạy lần đầu
 
-## The division of labour
+```powershell
+.\.venv\Scripts\Activate.ps1          # mỗi lần mở terminal mới
+python -m src.main universe           # danh sách ~1.660 mã HOSE/HNX/UPCoM
+python -m src.main start              # tải dữ liệu, lọc, rồi mở dashboard
+```
 
-Deterministic code computes. The model interprets.
+Lần đầu `start` cần khoảng 30–60 phút vì phải tải đủ:
+- 11 năm giá của mọi mã;
+- phân ngành;
+- báo cáo tài chính;
+- tin tức.
 
-RSI, MACD, ATR, moving averages, valuation multiples, breadth ratios,
-risk/reward arithmetic — all Python. Asking a language model to compute a
-14-period RSI is slower, more expensive and less reliable than four lines of
-pandas.
+Những lần sau chỉ tải phần còn thiếu, nên chạy nhanh.
 
-The model receives a compact feature vector and does what it is actually good
-at: reading conflicting evidence, comparing sources, spotting that a positive
-headline has negative second-order implications, and explaining why.
+Nếu `Activate.ps1` bị chặn, chạy thẳng: `.venv\Scripts\python -m src.main start`.
 
-Not `500 articles + 10 years of OHLCV`. Instead: `7 new events, 3 material,
-35 technical features, 8 changed financial metrics, 5 macro deltas`.
+## Dùng hằng ngày
 
----
+| Lệnh | Việc |
+|---|---|
+| `python -m src.main start` | Cập nhật phiên mới nhất rồi mở dashboard (bỏ qua bước đã làm) |
+| `python -m src.main start --no-update` | Mở dashboard ngay, không cập nhật |
+| `python -m src.main start --plan` | Xem trước bước nào sẽ chạy |
+| `python -m src.main doctor` | Kiểm tra cấu hình và nguồn dữ liệu |
+| `python -m pytest -q` | Chạy toàn bộ test |
 
-## Safety
+**Tự cập nhật lúc 15:30 thứ Hai–Sáu** (tùy chọn): chạy một lần
 
-This is research tooling, not advice, and not a guarantee of returns.
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_task.ps1
+```
 
-The system is built to say "current evidence favours", "base case",
-"invalidation level" — and to say "data unavailable" instead of guessing. It
-must never say a stock will definitely rise. If you find output that states
-a prediction as certainty, that is a bug worth filing.
+Nếu máy đang tắt hoặc ngủ lúc 15:30, tác vụ sẽ tự chạy bù khi máy bật lại. Log nằm trong `data\logs\`.
+
+## Cập nhật code mới từ GitHub
+
+```powershell
+git pull
+.venv\Scripts\python -m pip install -r requirements.txt
+python -m src.main start
+```
+
+## Chuyển sang máy khác mà giữ lịch sử
+
+Database `data\agent.db` (~400 MB) **không có trên GitHub**. Nó chứa:
+- các lượt lọc;
+- danh mục "Của tôi";
+- trạng thái theo dõi;
+- tin tức đã thu.
+
+Muốn giữ những thứ này thì chép tay file đó (USB, OneDrive) vào `data\` của máy mới, sau khi chạy `setup.ps1` và trước
+khi `start`.
+
+## Tài liệu
+
+- [run.md](run.md): mọi lệnh, giải thích từng bước.
+- [congthuc.md](congthuc.md): mọi công thức và ngưỡng hệ thống dùng, có nguồn.
+- [C.md](C.md): hướng dẫn đọc dashboard.
+- [CLAUDE.md](CLAUDE.md): ghi chú kỹ thuật cho người phát triển.
+- [docs/](docs/): ghi chú về DNSE, SSI, kiểm định mẫu hình.
+- Ngưỡng và nguồn dữ liệu chỉnh trong `config/thresholds.yaml` và `config/sources.yaml`, không cần sửa code.
