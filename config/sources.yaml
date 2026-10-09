@@ -1,0 +1,318 @@
+# Data source registry.
+#
+# The architecture never hard-codes a provider. Each entry below is bound to a
+# provider class implementing one of the interfaces in src/collectors/base.py.
+# Swapping vendor = editing this file, not the engine.
+#
+# source_level maps to the hierarchy in the spec:
+#   1 official exchange / regulator / company IR
+#   2 reputable financial data vendor
+#   3 major financial news
+#   4 secondary financial media
+#   5 forum / social  -- rumour and sentiment ONLY, never treated as fact
+
+version: 1
+
+market_data:
+  - id: dnse_openapi
+    provider_class: src.collectors.providers.dnse_provider.DnseMarketProvider
+    source_level: 2
+    enabled: true
+    priority: 5
+    capabilities: [ohlcv_daily, index_ohlcv, reference_prices]
+    auth_env: DNSE_API_KEY
+    auth_secret_env: DNSE_API_SECRET
+    base_url: https://openapi.dnse.com.vn
+    api_version: "2026-07-23"
+    rate_limit_per_min: 60          # used only when `rate_limits` is absent
+    # Pace per DNSE endpoint group (requests per minute, and a rolling-hour budget kept well
+    # under the published hourly limit). DNSE's table, read 2026-10-08 ("Giới hạn truy cập"):
+    # OHLC 50k/h & 100k/day; trades, foreign-trading 10k/h & 100k/day; secdef, market-index,
+    # instruments 1k/h & 10k/day; working-dates 100/h & 1k/day. A path not listed here gets
+    # the strictest pace. dnse_client.py explains the rest.
+    rate_limits: &dnse_rate_limits
+      ohlc:          {per_min: 300, per_hour: 30000}
+      trades:        {per_min: 150, per_hour: 6000}
+      foreign:       {per_min: 150, per_hour: 6000}
+      secdef:        {per_min: 90,  per_hour: 700}
+      market_index:  {per_min: 90,  per_hour: 700}
+      instruments:   {per_min: 30,  per_hour: 600}
+      working_dates: {per_min: 10,  per_hour: 60}
+    # Stop with a "quota" error when the 24-hour X-Ratelimit-Remaining falls to this, rather
+    # than running into DNSE's 403; retry a 429 after Retry-After this many times.
+    min_quota_remaining: 50
+    retry_429: 2
+    max_retry_wait_seconds: 60
+    timeout_seconds: 20
+    board_id: G1
+    # Window per request. 11 years (2,747 bars) came back in one call with
+    # nextTime 0 on 2026-09-27; the provider still splits if nextTime is set.
+    chunk_days: 4000
+    # DNSE quotes stock prices in thousands of VND, indices in points.
+    # Never inferred from magnitude -- see dnse_provider.normalize_price.
+    price_scale: 1000.0
+    index_scale: 1.0
+    # /price/{index}/market-index amounts are billions of VND (VN-Index 08/10/2026: 15883.3)
+    market_index_value_scale: 1000000000
+    # Measured 2026-08-28 (docs/DNSE.md): continuous across SSI's 5:1 bonus and
+    # VIX's capital increases. Cash dividends are NOT covered by that check.
+    # Set to `unknown` if a re-check ever shows a step down on an ex-date.
+    price_series: adjusted
+    # Project name -> DNSE name. Bars are labelled with the project's name.
+    index_symbol_aliases:
+      HNXINDEX: HNX
+    notes: "Official DNSE OpenAPI. REST for bars, WebSocket for intraday. See docs/DNSE.md."
+
+  - id: vnstock_local
+    provider_class: src.collectors.providers.vnstock_provider.VnstockMarketProvider
+    source_level: 2
+    enabled: false           # DO NOT ENABLE -- see notes
+    priority: 10
+    capabilities: [ohlcv_daily, ohlcv_intraday, index_ohlcv]
+    rate_limit_per_min: 60
+    notes: >-
+      Not installed and not to be installed: PyPI quarantined vnstock/vnai on
+      2026-09-24 because releases wrote instructions into AGENTS.md and
+      ~/.claude/CLAUDE.md on import. No provider module exists for this entry.
+
+  - id: broker_api_generic
+    provider_class: src.collectors.providers.broker_provider.BrokerMarketProvider
+    source_level: 2
+    enabled: false
+    priority: 20
+    capabilities: [ohlcv_daily, ohlcv_intraday, quote]
+    auth_env: BROKER_API_KEY
+    notes: "Placeholder for whichever broker API the user has access to."
+
+  - id: fixture_market
+    provider_class: src.collectors.providers.fixture_provider.FixtureMarketProvider
+    source_level: 2
+    enabled: true
+    priority: 99            # lowest priority; used for tests and offline dev
+    capabilities: [ohlcv_daily, index_ohlcv]
+
+news:
+  - id: hose_disclosure
+    provider_class: src.collectors.providers.hose_provider.HoseDisclosureProvider
+    source_level: 1
+    enabled: false
+    priority: 10
+    event_authority: true    # can mark an event as CONFIRMED
+    notes: "Official HOSE company disclosure feed. Highest authority."
+
+  - id: hnx_disclosure
+    provider_class: src.collectors.providers.hnx_provider.HnxDisclosureProvider
+    source_level: 1
+    enabled: false
+    priority: 11
+    event_authority: true
+
+  - id: company_ir
+    provider_class: src.collectors.providers.ir_provider.CompanyIrProvider
+    source_level: 1
+    enabled: false
+    priority: 12
+    event_authority: true
+
+  # Per-ticker news and reposted company disclosures (with a link to the
+  # issuer's original PDF). robots.txt: Allow: / (checked 2026-09-27).
+  - id: cafef
+    provider_class: src.collectors.providers.cafef_news.CafefTickerNewsProvider
+    source_level: 3
+    enabled: true
+    priority: 30
+    event_authority: false
+    list_url: https://cafef.vn/du-lieu/Ajax/Events_RelatedNews_New.aspx
+    base_url: https://cafef.vn
+    page_size: 30
+    max_pages: 3
+    request_interval_seconds: 2.5
+    timeout_seconds: 20
+    notes: "Aggregator: disclosures are reposts, so level 3 until checked against the original PDF."
+
+  # Market-wide feeds for context; tickers are tagged by the pipeline.
+  # robots.txt allows these paths (checked 2026-09-27).
+  - id: vietstock
+    provider_class: src.collectors.providers.rss_provider.RssNewsProvider
+    source_level: 3
+    enabled: true
+    priority: 31
+    event_authority: false
+    feeds:
+      - https://vietstock.vn/830/chung-khoan/co-phieu.rss
+      - https://vietstock.vn/737/doanh-nghiep/hoat-dong-kinh-doanh.rss
+    request_interval_seconds: 2.5
+    timeout_seconds: 20
+
+  - id: cafef_rss
+    provider_class: src.collectors.providers.rss_provider.RssNewsProvider
+    source_level: 3
+    enabled: true
+    priority: 32
+    event_authority: false
+    feeds:
+      - https://cafef.vn/thi-truong-chung-khoan.rss
+      - https://cafef.vn/doanh-nghiep.rss
+    request_interval_seconds: 2.5
+    timeout_seconds: 20
+
+  - id: forum_sentiment
+    provider_class: src.collectors.providers.social_provider.SocialSentimentProvider
+    source_level: 5
+    enabled: false
+    priority: 90
+    event_authority: false
+    rumour_only: true        # engine must tag every item from here as RUMOUR
+
+  - id: fixture_news
+    provider_class: src.collectors.providers.fixture_provider.FixtureNewsProvider
+    source_level: 3
+    enabled: true
+    priority: 99
+    event_authority: false
+
+financial:
+  - id: company_filings
+    provider_class: src.collectors.providers.filing_provider.FilingFinancialProvider
+    source_level: 1
+    enabled: false
+    priority: 10
+    capabilities: [income_statement, balance_sheet, cashflow, securities_specific]
+
+  # Tier A: CafeF's quarterly income statements. Aggregator (level 3), so every
+  # number stays unverified (ESTIMATE) until checked against the issuer's filing.
+  # Bank / securities layouts are rejected by an accounting check -- see the provider.
+  - id: cafef_financial
+    provider_class: src.collectors.providers.cafef_financial_provider.CafefFinancialProvider
+    source_level: 3
+    enabled: true
+    priority: 30
+    capabilities: [income_statement]
+    request_interval_seconds: 2.5
+
+  # Industry classification (sector > industry group > industry) from the
+  # Vietstock profile page breadcrumb. Reference data only; no metrics.
+  - id: vietstock_industry
+    provider_class: src.collectors.providers.vietstock_industry_provider.VietstockIndustryProvider
+    source_level: 3
+    enabled: true
+    priority: 90
+    capabilities: [industry_classification]
+    request_interval_seconds: 2.5
+
+  - id: fixture_financial
+    provider_class: src.collectors.providers.fixture_provider.FixtureFinancialProvider
+    source_level: 2
+    enabled: true
+    priority: 99
+    capabilities: [income_statement, balance_sheet, cashflow, securities_specific]
+
+macro:
+  - id: fred
+    provider_class: src.collectors.providers.fred_provider.FredMacroProvider
+    source_level: 1
+    enabled: false
+    priority: 10
+    auth_env: FRED_API_KEY
+    capabilities: [us_rates, us_inflation, us_labour, us_gdp]
+
+  - id: sbv
+    provider_class: src.collectors.providers.sbv_provider.SbvMacroProvider
+    source_level: 1
+    enabled: false
+    priority: 11
+    capabilities: [vn_policy_rate, usdvnd, credit_growth]
+
+  - id: fixture_macro
+    provider_class: src.collectors.providers.fixture_provider.FixtureMacroProvider
+    source_level: 2
+    enabled: true
+    priority: 99
+    capabilities: [us_rates, us_inflation, vn_policy_rate, usdvnd]
+
+flow:
+  - id: dnse_foreign_flow
+    provider_class: src.collectors.providers.dnse_flow_provider.DnseFlowProvider
+    source_level: 2
+    enabled: true
+    priority: 5
+    capabilities: [foreign_net]
+    auth_env: DNSE_API_KEY
+    auth_secret_env: DNSE_API_SECRET
+    base_url: https://openapi.dnse.com.vn
+    api_version: "2026-07-23"
+    rate_limit_per_min: 60          # used only when `rate_limits` is absent
+    rate_limits: *dnse_rate_limits  # same table as dnse_openapi above
+    min_quota_remaining: 50
+    retry_429: 2
+    max_retry_wait_seconds: 60
+    board_id: G1
+    notes: "GET /price/{symbol}/foreign-trading, one request per session. Values already in full VND."
+
+  - id: exchange_foreign_flow
+    provider_class: src.collectors.providers.hose_provider.HoseForeignFlowProvider
+    source_level: 1
+    enabled: false
+    priority: 10
+    capabilities: [foreign_net, prop_trading, market_breadth, sector_flow]
+
+  - id: etf_flow
+    provider_class: src.collectors.providers.etf_provider.EtfFlowProvider
+    source_level: 2
+    enabled: false
+    priority: 20
+    capabilities: [etf_flow]
+
+  - id: fixture_flow
+    provider_class: src.collectors.providers.fixture_provider.FixtureFlowProvider
+    source_level: 2
+    enabled: true
+    priority: 99
+    capabilities: [foreign_net, market_breadth]
+
+# Failure policy applied uniformly by the collector runner.
+failure_policy:
+  retries: 2
+  backoff_seconds: [3, 10]
+  on_exhausted: mark_stale        # never fabricate; mark stale and continue
+  stale_confidence_penalty: 12
+  critical_sources: [hose_disclosure, dnse_openapi]
+
+# Cross-check sources: they verify DNSE, they never replace it. Nothing in the
+# backfill or the runner reads this kind (src/config.py REQUIRED_KINDS).
+crosscheck:
+  # HOSE's own end-of-day index values: the API behind the "Biểu đồ cơ bản" page on hsx.vn
+  # (found 2026-10-09; undocumented, read-only; robots.txt allows all). The official figure
+  # for checking DNSE's VN-Index bars (`index-check`); the backfill and the rules never read it.
+  - id: hose_index_chart
+    provider_class: src.collectors.providers.hose_index_provider.HoseIndexProvider
+    source_level: 1
+    enabled: true
+    priority: 4
+    capabilities: [index_daily_official]
+    base_url: https://api.hsx.vn/mk/api/v1/market/basic-chart
+    timeout_seconds: 30
+
+  - id: ssi_fcdata
+    provider_class: src.collectors.providers.ssi_fcdata_provider.SsiFcDataProvider
+    source_level: 2
+    enabled: true            # used only once SSI_CONSUMER_ID / SSI_CONSUMER_SECRET are in .env
+    priority: 5
+    capabilities: [daily_snapshot, index_daily_split, reference_prices_daily, foreign_flow_daily]
+    auth_env: SSI_CONSUMER_ID
+    auth_secret_env: SSI_CONSUMER_SECRET
+    base_url: https://fc-data.ssi.com.vn/
+    # SSI's docs give both; the first that issues a token is kept for the run.
+    api_paths: ["api/v2/Market/", "v2.0/Market/"]
+    # Documented samples quote full VND ("28600") -- [chưa xác minh trực tiếp]: the first
+    # live `crosscheck` compares every close with DNSE, so a 1000x slip cannot pass unseen.
+    price_scale: 1.0
+    index_scale: 1.0
+    index_codes: {VNINDEX: VNIndex, HNXINDEX: HNXIndex, UPCOMINDEX: UpcomIndex, VN30: VN30}
+    request_interval_seconds: 1.0      # SSI publishes no rate limit; be gentle
+    quota_waits_seconds: [5, 15, 60]   # back off on "API calls quota exceeded"
+    timeout_seconds: 20
+    notes: >-
+      SSI FastConnect Data (data only; FastConnect Trading is never contacted, see
+      ssi_fcdata_provider.ALLOWED_ENDPOINTS). Needs an SSI account and a key created on
+      iBoard -> Dịch vụ API. Docs: https://guide.ssi.com.vn/ssi-products/tieng-viet/fastconnect-data

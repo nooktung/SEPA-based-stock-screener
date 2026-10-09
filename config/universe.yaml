@@ -1,0 +1,28 @@
+# Screening universe: which listed instruments the system is allowed to cover.
+# Source: DNSE GET /market/instruments (paginated, ~3,300 rows incl. warrants,
+# bonds, ETFs, futures and indices). Everything outside these rules is dropped.
+#
+# Edit here only. No code change should ever be required.
+
+version: 1
+
+# DNSE marketId -> exchange name stored in `tickers.exchange`.
+# DVX (derivatives) and HCX (bonds) are deliberately absent.
+markets:
+  STO: HOSE
+  STX: HNX
+  UPX: UPCOM
+
+# DNSE securityGroupId values that count as ordinary shares.
+# Excluded: EW (covered warrants), EF (ETF), MF (funds), BS (bonds), FU (futures),
+# blank (indices).
+security_groups:
+  - ST
+
+# Ordinary VN share codes are exactly 3 characters. The length rule also drops
+# mislabelled rows such as VN30F2305 (futures tagged ST on HNX) and fund codes.
+symbol_length: 3
+
+# ~140 genuine shares carry a digit (PC1, HT1, L14, C69...). Set to false to
+# keep letters-only codes, which silently drops those companies.
+allow_digits: true

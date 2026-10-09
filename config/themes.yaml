@@ -1,0 +1,63 @@
+# Market themes ("sóng ngành") the user follows, as ticker lists.
+#
+# Vietstock's industry tree is too coarse for these: rubber growers sit in
+# "Hóa chất" with fertiliser and plastics, ports sit in "Hạ tầng giao thông"
+# with airports and toll roads. A theme here is a user-curated group; the
+# screen measures each one (group RS, 1- and 3-month returns, share of members
+# above MA50) and puts the uptrending members of a strong theme first in the
+# extended watch list. Edit freely: add a theme, add or remove tickers. Only
+# members that clear the liquidity floor are measured.
+#
+# Added 2026-09-30 at the user's request (oil & gas, rubber, ports).
+
+themes:
+  Dầu khí:
+    - BSR
+    - PLX
+    - OIL
+    - PVS
+    - PVD
+    - PVC
+    - PVB
+    - PVT
+    - PVP
+    - PPT
+    - GAS
+    - PVG
+    - PGS
+    - CNG
+    - PGC
+    - PET
+    - POS
+  Cao su:
+    - GVR
+    - PHR
+    - DPR
+    - DRI
+    - TRC
+    - TNC
+    - HRC
+    - BRR
+    - RTB
+    - DRG
+    - SBR
+    - CSM
+    - DRC
+    - SRC
+  Cảng & vận tải biển:
+    - GMD
+    - VSC
+    - PHP
+    - SGP
+    - VGR
+    - DVP
+    - TCL
+    - CDN
+    - PDN
+    - DXP
+    - CLL
+    - HAH
+    - VOS
+    - VTO
+    - VIP
+    - MVN

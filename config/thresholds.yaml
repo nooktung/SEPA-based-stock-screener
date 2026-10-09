@@ -1,0 +1,652 @@
+# All tunable numbers live here. Nothing in src/ may hard-code a threshold.
+# Changing this file changes agent behaviour without touching code.
+
+version: 1
+
+# --------------------------------------------------------------------------
+# Scoring weights. Must sum to 100. Validated at load time.
+# --------------------------------------------------------------------------
+scoring_weights:
+  fundamental: 25
+  technical: 20
+  news_catalyst: 15
+  market_regime: 10
+  capital_flow: 10
+  valuation: 10
+  macro: 5
+  risk: 5
+
+# --------------------------------------------------------------------------
+# Recommendation bands. Score alone never produces the recommendation --
+# see decision/recommendation.py for the gates applied on top of these.
+# --------------------------------------------------------------------------
+recommendation_bands:
+  - {min: 90, max: 100, label: STRONG_BUY}
+  - {min: 75, max: 89,  label: BUY}
+  - {min: 60, max: 74,  label: BUY_ON_PULLBACK}
+  - {min: 45, max: 59,  label: HOLD}
+  - {min: 30, max: 44,  label: REDUCE}
+  - {min: 0,  max: 29,  label: SELL_AVOID}
+
+# Hard gates. If any gate fails, the recommendation is downgraded or replaced
+# regardless of how high the score is.
+recommendation_gates:
+  min_risk_reward_for_buy: 1.8
+  min_confidence_for_buy: 55
+  min_avg_daily_value_vnd: 5_000_000_000   # liquidity floor
+  max_data_staleness_hours: 30
+  block_buy_in_regimes: [BEAR, DISTRIBUTION]
+  insufficient_data_below_completeness: 0.60
+
+# --------------------------------------------------------------------------
+# Confidence scoring. Deliberately separate from score.
+# --------------------------------------------------------------------------
+confidence:
+  weights:
+    data_completeness: 30
+    source_quality: 20
+    analyst_agreement: 20
+    signal_strength: 15
+    historical_setup_reliability: 15
+  penalty_per_conflicting_signal: 6
+  max_conflict_penalty: 25
+
+# --------------------------------------------------------------------------
+# Technical parameters
+# --------------------------------------------------------------------------
+technical:
+  ma_periods: [20, 50, 100, 200]
+  ema_periods: [12, 26]
+  rsi_period: 14
+  macd: {fast: 12, slow: 26, signal: 9}
+  atr_period: 14
+  bollinger: {period: 20, std: 2.0}
+  volume_ma_periods: [10, 20, 50]
+  volume_expansion_ratio: 1.5      # vs 20-session average
+  volume_contraction_ratio: 0.6
+  breakout_lookback_sessions: 60
+  breakout_confirm_close_pct: 0.005
+  gap_min_pct: 0.02
+  relative_strength_lookback: [20, 60]
+
+# --------------------------------------------------------------------------
+# Market regime classifier
+# --------------------------------------------------------------------------
+market_regime:
+  states: [STRONG_BULL, BULL, EARLY_BULL, SIDEWAYS, DISTRIBUTION, EARLY_BEAR, BEAR, RECOVERY]
+  breadth_bullish_ratio: 1.5        # advancers / decliners
+  breadth_bearish_ratio: 0.67
+  volume_healthy_vs_ma20: 1.0
+  foreign_flow_lookback_sessions: 20
+  volatility_high_atr_percentile: 80
+  # 20-session ROC (percent) inside +/- this band reads as FLAT momentum.
+  # [chọn lại 2026-09-27] tests require 0.5 -> FLAT and 5.0 -> POSITIVE.
+  momentum_flat_band_pct: 2.0
+  # Regime confidence, 0..100. [chọn lại 2026-09-27]
+  base_confidence: 60
+  confidence_per_agreeing_input: 10
+  confidence_penalty_per_missing_input: 12
+  risk_multiplier_by_regime:
+    STRONG_BULL: 1.20
+    BULL: 1.10
+    EARLY_BULL: 1.00
+    RECOVERY: 0.90
+    SIDEWAYS: 0.80
+    DISTRIBUTION: 0.55
+    EARLY_BEAR: 0.45
+    BEAR: 0.30
+
+# --------------------------------------------------------------------------
+# Deterministic pattern layer (src/quant/patterns.py and siblings; docs/PATTERNS.md)
+#
+# RECONSTRUCTED 2026-09-27. The 2026-08-28 version of this section was lost
+# when the project was copied; code, tests and docs survived. Values marked
+# [chọn lại] are reasoned defaults, not the originals -- review them, and
+# re-run the backtest before trusting any pattern result produced with them.
+# --------------------------------------------------------------------------
+patterns:
+  swing_strength: 3                 # bars each side of a pivot [chọn lại]
+  breakout_windows: [20, 60]        # docs/PATTERNS.md reports breakout_20d / breakout_60d
+  breakout_failure_window: 5        # sessions for a break to confirm before it counts as failed [chọn lại]
+  weak_close_position: 0.35         # close in bottom 35% of the day's range [chọn lại]
+  strong_close_position: 0.65       # close in top 35% [chọn lại]
+  long_wick_ratio: 0.5              # wick >= half the range [chọn lại]
+  trap_confirmation_window: 3       # [chọn lại]
+  # Five observable conditions, equal weight: docs/PATTERNS.md reads a trap score
+  # of 80 as "four of five conditions met". Must sum to 100 (tested).
+  bull_trap_weights:
+    broke_intraday: 20
+    closed_below: 20
+    weak_close: 20
+    upper_wick: 20
+    volume_expansion: 20
+  bear_trap_weights:
+    broke_intraday: 20
+    closed_above: 20
+    strong_close: 20
+    lower_wick: 20
+    volume_expansion: 20
+
+  behaviour:
+    window: 20
+    range_contraction_ratio: 0.7    # recent range / prior range [chọn lại]
+    range_expansion_ratio: 1.3      # [chọn lại]
+    up_down_volume_bullish: 1.3     # up-day volume / down-day volume [chọn lại]
+    up_down_volume_bearish: 0.77    # reciprocal of the bullish ratio
+    close_position_bullish: 0.55    # average close position in range [chọn lại]
+    close_position_bearish: 0.45
+    accumulation_weights:           # sum 100 [chọn lại]
+      up_down_volume: 25
+      closes_in_upper_half: 15
+      range_contraction: 15
+      holds_support: 15
+      relative_strength: 15
+      failed_breakdown: 15
+    distribution_weights:           # sum 100 [chọn lại]
+      up_down_volume: 25
+      closes_in_lower_half: 15
+      range_expansion: 15
+      rejects_resistance: 15
+      relative_weakness: 15
+      failed_breakout: 15
+
+  conflicts:
+    trap_risk_high: 60              # bull-trap score counted as high risk [chọn lại]
+    rsi_extended: 70
+    rsi_oversold: 30
+    near_resistance_pct: 3.0        # percent distance to the zone [chọn lại]
+    near_support_pct: 3.0
+    volume_contraction_ratio: 0.8   # rising price on volume below this x average [chọn lại]
+
+  divergence:
+    min_price_change_pct: 1.0       # between the two price pivots, percent [chọn lại]
+    min_indicator_change: 3.0       # RSI points / scaled MACD histogram [chọn lại]
+    max_pivot_gap_sessions: 60      # [chọn lại]
+    confirmation_window: 5
+    expiry_sessions: 10
+
+  shakeout:
+    window: 20                      # support = lowest low of the prior N sessions
+    confirmation_window: 3
+    min_lower_wick: 0.5
+    min_close_position: 0.6
+
+  zones:
+    merge_within_pct: 1.5           # levels closer than this merge into one zone [chọn lại]
+    zone_half_width_pct: 0.75
+    touch_tolerance_pct: 1.0
+    max_zones_per_side: 3
+    recency_half_life_sessions: 120
+
+# --------------------------------------------------------------------------
+# Backtest (src/backtest/). Costs and horizons are the ones docs/PATTERNS.md
+# reports: 0.6% round trip = 0.15% brokerage x2 + 0.10% sell tax + 0.10% slippage x2.
+# --------------------------------------------------------------------------
+backtest:
+  horizons: [1, 3, 5, 10, 20]
+  entry: next_open                  # next_open | signal_close
+  exit: close                       # close at signal date + horizon
+  brokerage_fee_pct: 0.15
+  sell_tax_pct: 0.10
+  slippage_pct: 0.10
+  min_sample_size: 30               # below this a result is INSUFFICIENT_SAMPLE [chọn lại]
+  robust_sample_size: 200           # [chọn lại]
+  out_of_sample_fraction: 0.3       # newest 30% held out [chọn lại]
+
+# --------------------------------------------------------------------------
+# Risk / reward
+# --------------------------------------------------------------------------
+risk_reward:
+  stop_method: atr                  # atr | structure | percent
+  atr_stop_multiple: 2.0
+  min_stop_pct: 0.04
+  max_stop_pct: 0.12
+  target1_rr: 2.0
+  target2_rr: 3.5
+  speculative_setup_min_rr: 1.2     # only if explicitly flagged speculative
+
+# --------------------------------------------------------------------------
+# News pipeline
+# --------------------------------------------------------------------------
+news:
+  lookback_hours: 26
+  dedup_similarity_threshold: 0.82
+  min_relevance_to_surface: 0.35
+  max_events_in_report: 12
+  credibility_by_source_level:
+    1: 1.00      # exchange / regulator / company IR
+    2: 0.85      # reputable financial data vendor
+    3: 0.70      # major financial news
+    4: 0.50      # secondary media
+    5: 0.20      # forum / social -- rumour signal only, never fact
+  # Only sources at or above this level may originate a FACT. Aggregator reposts
+  # of disclosures stay INFERENCE until checked against the issuer's document.
+  fact_max_source_level: 2
+  lookback_days_default: 30
+  brief_max_events: 7               # the context boundary: 7 events, not 500 articles
+  # Near-duplicate clustering: same ticker, within N days, and either a 64-bit
+  # simhash within this Hamming distance or title-token Jaccard >= dedup_similarity_threshold.
+  dedup_window_days: 3
+  simhash_max_hamming: 3
+  # Three-letter words that are also tickers. Matched only with the company
+  # name or an explicit "mã"/"cổ phiếu" cue nearby, never on their own.
+  # (checked against the universe 2026-09-27: these are tickers AND everyday words)
+  ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP]
+  # Deterministic event typing: lower-case keyword -> type, first match wins in this order.
+  # Matched against the headline first; the summary is used only if the headline matches nothing.
+  event_rules:
+    LEGAL: ["xử phạt", "vi phạm", "khởi tố", "điều tra", "thanh tra", "bị bắt", "truy tố"]
+    INSIDER: ["đăng ký mua", "đăng ký bán", "đã mua", "đã bán", "người nội bộ", "người có liên quan", "cổ đông lớn",
+              "bán ra", "mua vào"]   # not "bán cổ phiếu": it is inside "chào bán cổ phiếu"
+    # ĐKCC / record date is used for every shareholder action, so it is not a dividend cue.
+    DIVIDEND: ["cổ tức", "gdkhq", "trả cổ tức"]
+    CAPITAL_RAISING: ["phát hành", "tăng vốn", "chào bán", "cổ phiếu thưởng", "esop", "trái phiếu", "đang lưu hành"]
+    EARNINGS: ["lợi nhuận", "kết quả kinh doanh", "báo cáo tài chính", "doanh thu", "lãi ròng", "lỗ", "bctc"]
+    SHAREHOLDER_MEETING: ["đại hội đồng cổ đông", "đhđcđ", "đhcđ", "lấy ý kiến cổ đông"]
+    MNA: ["sáp nhập", "mua lại", "thoái vốn", "chuyển nhượng vốn", "hợp nhất", "chào mua công khai"]
+    LISTING: ["niêm yết", "chuyển sàn", "hủy niêm yết", "đăng ký giao dịch"]
+    GOVERNANCE: ["nghị quyết", "bổ nhiệm", "miễn nhiệm", "từ nhiệm", "nhân sự", "điều lệ", "quản trị công ty",
+                 "tình hình quản trị", "giấy chứng nhận đăng ký", "chi nhánh", "công ty con", "thành lập",
+                 "tổng giám đốc", "chủ tịch"]
+  # Priors used for ranking only (0..1). [chọn lại 2026-09-27] -- untested.
+  company_impact_by_type: {EARNINGS: 0.9, LEGAL: 0.8, MNA: 0.8, CAPITAL_RAISING: 0.7, INSIDER: 0.6, DIVIDEND: 0.5, SHAREHOLDER_MEETING: 0.5, LISTING: 0.4, GOVERNANCE: 0.2, OTHER: 0.3}
+  time_sensitivity_by_type: {EARNINGS: 0.9, LEGAL: 0.9, INSIDER: 0.7, CAPITAL_RAISING: 0.6, MNA: 0.7, DIVIDEND: 0.6, SHAREHOLDER_MEETING: 0.4, LISTING: 0.4, GOVERNANCE: 0.2, OTHER: 0.3}
+  novelty_half_life_days: 7
+  # Brief ranking = relevance x credibility x (weighted sum below). [TRIỂN KHAI]
+  rank_weights: {company_impact: 0.5, time_sensitivity: 0.2, novelty: 0.3}
+  relevance_subject: 1.0            # ticker's own news page, or the ticker in the headline
+  relevance_mention: 0.6            # ticker only in the summary/body
+
+# --------------------------------------------------------------------------
+# Report scheduling (Asia/Ho_Chi_Minh)
+# --------------------------------------------------------------------------
+schedule:
+  timezone: Asia/Ho_Chi_Minh
+  premarket_collect_start: "07:00"
+  premarket_process_start: "07:45"
+  premarket_publish: "08:00"
+  intraday_poll_minutes: 15
+  end_of_day_publish: "15:45"
+  market_close: "15:00"             # UPCoM continuous trading ends 15:00; HOSE/HNX ATC ends 14:45
+  trading_days: [MON, TUE, WED, THU, FRI]
+
+# --------------------------------------------------------------------------
+# SEPA screen -> focus list (src/quant/screener.py). Rules and their confidence
+# tags come from .claude/skills/sepa-vn-screening/. Output is a list of research
+# candidates, never a buy list.
+# --------------------------------------------------------------------------
+sepa_screen:
+  max_members: 80                   # user's focus-list size (60 until 2026-09-29)
+  min_history_sessions: 252         # 52-week metrics and 12-month RS need a year
+  lookback_52w_sessions: 250        # VN has ~245-250 sessions a year, not 252
+  max_last_bar_age_days: 7          # a series older than this is stale for screening
+  # Tickers whose band-breaking gap was checked by a person and found legitimate
+  # (typically a transfer between exchanges, whose first session has a wider
+  # band). Ticker: reason, date checked. Empty until someone has looked.
+  gap_waivers: {}
+
+  liquidity:                        # not in the original method; required in VN [TRIỂN KHAI]
+    window: 20
+    # Estimated as close x volume: DNSE bars carry no traded value. User-chosen floors.
+    # 2026-09-29: lowered from 5 / 5 / 10 bn to 3 bn everywhere so smaller growth names
+    # (PHP, TRC...) are not missed; the tiers below say how tradable each one is.
+    min_value_vnd: {HOSE: 3.0e9, HNX: 3.0e9, UPCOM: 3.0e9}
+    tiers:                          # a label only: no tier changes a group or a score
+      high_vnd: 10.0e9              # >= 10 bn: Cao
+      good_vnd: 8.0e9               # 8-10 bn: Khá; below 8 bn down to the floor: Thấp
+    active_window: 60
+    min_active_session_ratio: 0.9   # share of sessions with any volume [TRIỂN KHAI]
+
+  trend_template:
+    ma200_rising_sessions: 22       # TT3 minimum "at least 1 month" [SÁCH]
+    ma200_rising_preferred_sessions: 105   # "preferably 4-5 months" -- reported, not required
+    above_52w_low_pct: 30           # TT6: 30 = TLSMW 2013; 25 = TTLC 2017 (disputed D1)
+    within_52w_high_pct: 25         # TT7 [SÁCH]
+    min_rs_rating: 70               # TT8 [SÁCH]; books prefer 80-90+
+
+  rs:                               # IBD's formula is proprietary (D3); both replications [THỨ CẤP]
+    variant: A                      # A: 0.4*P3 + 0.2*P6 + 0.2*P9 + 0.2*P12 ; B: 2*Q1 + Q2 + Q3 + Q4
+    periods: [63, 126, 189, 252]
+
+  # Leadership tiers on the RS rating. Minervini's floor is 70 but the books
+  # prefer 80-90+ [SÁCH]; within each group, higher tiers rank first.
+  rs_tiers: {strong_leader: 90, leader: 80, qualified: 70}
+
+  # Entry zone relative to the pivot (the third question, after trend and setup).
+  # Up to buy_zone_max_pct above the pivot is the buy zone [THỨ CẤP]; below
+  # approaching_pct the price has not reached the pivot yet [TRIỂN KHAI].
+  entry:
+    approaching_pct: -5
+
+  group_b:                          # "near-pass" group, user decision
+    min_criteria_passed: 6          # of 8
+    must_pass: [TT8]                # RS >= min_rs_rating is not waived
+    require_base: true              # must be forming a base (not extended, not broken)
+
+  # User decision 2026-09-27: the focus list is filled to max_members. After A
+  # and B, the next-best liquid names by composite score fill the rest as group
+  # C -- a wider watch list, NOT SEPA-qualified, each showing what it misses.
+  # The floors below keep obvious non-candidates out; if fewer names clear
+  # them, the list is shorter rather than padded with them. [TRIỂN KHAI]
+  # User decision 2026-09-27 ("Giữ thanh khoản + thêm IPO + nới C"): liquidity
+  # floors unchanged; recent listings first; the rest of C may include names in
+  # a deep correction (TOO_DEEP) but never ones that broke their base.
+  # User decision 2026-09-30: C held too many downtrends (22 of 52 below MA150/200).
+  # C is now only names in an uptrend -- price above MA50, MA150 and MA200 -- and
+  # the list is NOT padded to max_members: fewer qualifying names, shorter list.
+  group_c:
+    min_rs_rating: 60
+    min_criteria_passed: 3          # of 8
+    require_criteria: [TT1, TT5]    # price > MA150 & MA200, price > MA50
+    exclude_bases: [BROKEN, SHARP_PULLBACK]
+    hot_themes_first: true          # members of a hot theme (see themes) lead C
+
+  # A chart that just broke (a sharp pullback or a broken base) leaves the main
+  # list even with 8/8 criteria -- the Trend Template lags a fresh break.
+  main_exclude_bases: [BROKEN, SHARP_PULLBACK]
+
+  themes:                           # user-curated groups in config/themes.yaml [TRIỂN KHAI]
+    min_members: 2                  # liquid members needed before a theme is ranked
+    hot_percentile: 80              # group RS percentile (vs every industry) that marks a "sóng"
+
+  # Minervini's "primary base / IPO base": new listings can't be scored on a
+  # 52-week Trend Template yet. Liquid ones within within_52w_high_pct of their
+  # post-listing high join group C first, with TT1-TT8 marked "not assessable".
+  recent_listings:
+    min_sessions: 20
+
+  base:                             # measurable forms are [TRIỂN KHAI]; see skill 02 §3.1-3.2
+    min_swing_pct: 3.0              # zigzag reversal that counts as a contraction leg
+    max_base_sessions: 325          # 65 weeks
+    min_base_sessions: 15           # 3 weeks
+    vcp:
+      min_contractions: 2           # "two to four, occasionally five or six" [SÁCH]
+      max_contractions: 6
+      first_depth_min_pct: 10       # 10-35% UNVERIFIED (U1)
+      first_depth_max_pct: 35
+      last_depth_max_pct: 10        # [TRIỂN KHAI]
+      depth_tolerance_pct: 1.0      # a later leg may exceed the earlier by this much
+      dryup_window: 5
+      dryup_ratio: 0.7              # 5-session avg volume vs 50-session avg; UNVERIFIED (U3)
+    flat_base: {max_depth_pct: 15, min_sessions: 25}         # IBD [TRANG GỐC]
+    # Cup (with / without handle). Depth and length are O'Neil's [SÁCH/THỨ CẤP];
+    # 40-50% depth is tolerated after bear markets (D14). Tightened 2026-09-27
+    # after TLG showed the loose rule calling a spike-and-V a cup: the shape
+    # rules below are measurable forms of "U not V", "prior uptrend" and
+    # "handle" [TRIỂN KHAI], every one reported in the dashboard.
+    cup:
+      min_depth_pct: 12
+      max_depth_pct: 33
+      min_sessions: 35                    # ~7 weeks
+      min_left_side_sessions: 15          # top -> low in >= 3 weeks: a slide, not a crash (U not V)
+      bottom_zone_pct: 25                 # "near the bottom" = lower quarter of the cup's range
+      min_bottom_sessions: 10             # closes spent there: a rounded bottom takes time
+      prior_uptrend_pct: 30               # O'Neil: roughly 30%+ advance before the base
+      prior_uptrend_lookback_sessions: 130
+      prior_uptrend_min_sessions: 20      # the advance lasts >= 4 weeks, not a one-week spike
+    handle:
+      min_sessions: 5                     # >= 1 week [THỨ CẤP]
+      max_depth_pct: 12                   # 8-12% in a bull market [SÁCH/THỨ CẤP]
+      # must sit in the upper half of the cup, on volume below the cup's average [TRIỂN KHAI]
+    buy_zone_max_pct: 5             # above pivot by more than this = extended [THỨ CẤP]
+    max_stop_pct: 8                 # stop = max(last contraction low, pivot - 8%); max 10 [SÁCH]
+
+  # Fundamental gate (tier A data, unverified) [TRIỂN KHAI thresholds; Minervini/O'Neil
+  # look for EPS growth >= 20-25% and accelerating -- skill 02 §3.3]. Net profit to the
+  # parent stands in for EPS (CafeF leaves EPS blank); share issuance makes them differ.
+  fundamentals:
+    strong_profit_growth_pct: 25        # latest quarter YoY
+    strong_revenue_growth_pct: 15
+    good_revenue_growth_pct: 10
+    some_growth_pct: 10                 # grade B: profit or revenue growing at least this much
+    fail_profit_decline_pct: -20        # FAIL: profit down this much YoY ...
+    # ... or both profit and revenue falling, or a loss in the latest quarter
+    min_quarters: 5                     # need the latest quarter and the one a year earlier (+ history)
+    fail_leaves_main_list: true         # FAIL moves a stock from A/B to the extended list
+
+  industry:                         # industry strength [TRIỂN KHAI]; display only
+    level: 2                          # 1 = sector (20), 2 = industry group (2010), 3 = industry (201030)
+    min_members: 3                    # liquid tickers needed before an industry is ranked
+    leading_percentile: 80            # industry RS percentile shown as "ngành dẫn dắt"
+    refresh_days: 30                  # re-read a ticker's classification after this many days
+    leaders_per_industry: 3           # "Đầu ngành" tab: most-traded liquid stocks per industry, monitored
+    # Weight 0 in the composite until a backtest shows industry strength adds edge in VN.
+
+  ranking_weights:                  # composite score, sums to 100 [TRIỂN KHAI]
+    rs: 35
+    trend_template: 20
+    near_high: 15
+    base_quality: 20
+    fundamentals: 10                # dropped (and weights renormalised) until Phase 5 data exists
+
+  market:                           # skill 02 §3.5; VN thresholds untested [TRIỂN KHAI]
+    index: VNINDEX
+    distribution_window: 25
+    distribution_min_drop_pct: 0.2
+    # Which index volume "higher volume than the day before" compares (distribution days and the
+    # FTD): `matched` = matched trading only, the figure VNDirect and the price boards show (equal
+    # to DNSE market-index contauctAccTrdVol, 5/5 sessions checked 2026-10-08); `total` = the OHLC
+    # feed's volume, which adds put-through deals. A pair of sessions lacking matched volume is
+    # compared on total volume for both (user decision 2026-10-08: matched). congthuc.md §11.
+    index_volume: matched             # matched | total
+    # A distribution day also stops counting once the index trades this far above that
+    # day's close [TRANG GỐC IBD]; measured on the session high (THỨ CẤP sources) or,
+    # with `close`, only on closes (stricter: days are kept longer). congthuc.md §11.
+    distribution_expire_gain_pct: 5
+    distribution_expire_on: high      # high | close
+    pressure_distribution_days: 5     # also: distribution days since an FTD that end its validity
+    # Follow-through day (IBD) [TRANG GỐC; thresholds changed over time -- D16 closed].
+    # Day 1 = first up close after a new low; an FTD is a later day (>= earliest_day)
+    # up >= min_gain_pct on higher volume; undercutting the low resets the count.
+    ftd:
+      lookback_sessions: 90
+      earliest_day: 4
+      min_gain_pct: 1.25
+      undercut_on: low                  # an FTD fails when the session LOW undercuts the rally low (user, 2026-10-07)
+
+# --------------------------------------------------------------------------
+# Daily monitoring of the focus list (src/quant/monitor.py). Events describe
+# what the bars did; none of them is an instruction to trade.
+# --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Chart overlays on the dashboard [TRIỂN KHAI]. Zones use patterns.zones above.
+chart_levels:
+  trendline:                        # auto trendlines + parallel channel on the chart
+    lookback_sessions: 250          # search swings in this many recent sessions
+    pivot_strength: 5               # bars each side of a swing high / low (chart lines only)
+    min_span_sessions: 10           # anchors at least this far apart
+    tolerance_pct: 1.0              # a close may poke this far through the line and it still holds
+    project_sessions: 20            # extend an unbroken line this many sessions forward as a ray
+    bars_per_month: 21              # for the slope shown as % per month
+  # The same rules on the weekly / monthly chart (2026-10-06). Counts are in bars of that
+  # timeframe. [TRIỂN KHAI] -- scaled from the daily values by bar size, not from a source:
+  # weekly looks back 3 years, monthly 10; wider bars get a wider close tolerance.
+  trendline_by_tf:
+    W: {lookback_sessions: 156, pivot_strength: 3, min_span_sessions: 6, tolerance_pct: 2.0, project_sessions: 8, bars_per_month: 4.33}
+    M: {lookback_sessions: 120, pivot_strength: 2, min_span_sessions: 4, tolerance_pct: 3.0, project_sessions: 4, bars_per_month: 1}
+
+# Dashboard "Kiểm tra vị thế": the user's own cost price against the SEPA rules.
+# Facts only -- no buy / sell verdict.
+# Chart timeframes (src/quant/timeframes.py): the four MA lines per timeframe. Weekly 4/10/30/40
+# weeks = daily 20/50/150/200 sessions (10 and 40 weeks as on MarketSmith's weekly chart, 30 weeks
+# is Weinstein's stage line). Display only.
+chart_timeframes:
+  D: [20, 50, 150, 200]
+  W: [4, 10, 30, 40]
+  M: [5, 10, 20, 40]
+
+# `python -m src.main start`: update everything, then open the dashboard (src/pipeline.py).
+pipeline:
+  session_closed_after: "15:05"     # VN time; before this, today's bar is still forming
+  coverage_ratio: 0.9               # a session counts as loaded when it has >= 90% of the previous session's tickers
+  news_min_interval_hours: 4        # news collected more recently than this is not collected again
+  flow_days: 10                     # foreign flow lookback (sessions already stored are skipped)
+  lock_stale_hours: 3               # a start left running longer than this no longer blocks a new one
+  refprices_min_interval_hours: 3   # reference prices read more recently than this are not read again (unless the list changed)
+
+# Reference / ceiling / floor per session (src/collectors/refprices.py), read from DNSE's
+# security definition. The dashboard's % change is taken against the reference, as the
+# price boards do. DNSE publishes the next session's definition in the evening (20:46 on
+# 05/10/2026); a definition published on a weekday before this time belongs to that day's
+# session, anything later to the next weekday. Market fact, not a tuning knob.
+# End-of-session index figures from DNSE /price/{index}/market-index (src/collectors/index_session.py):
+# matched / put-through volume, advancers / decliners / ceiling / floor counts. One request per session.
+index_session:
+  symbols: [VNINDEX]
+  backfill_sessions: 300            # newest sessions without these figures that one run looks at
+  stop_after_empty: 3               # this many empty sessions in a row = the start of DNSE's history
+  final_snapshot_after: "15:00"     # an earlier snapshot is not the session's final state
+  close_tolerance_pct: 0.05         # snapshot close vs the stored OHLC close; beyond it nothing is written
+
+# Short-term setups held two weeks at most (src/backtest/swing.py), user request 2026-10-09.
+# Measured first; nothing reaches the dashboard unless it clears `gate` and the user has read
+# the report. Every threshold is an implementation choice [TRIỂN KHAI], not a book rule.
+swing:
+  horizons: [3, 5, 10]              # fixed exits: close 3 / 5 / 10 sessions after the buy
+  first_sell_session: 2             # shares bought on B can be sold from the afternoon of B+2 (skill 05)
+  stop_target:
+    stop_pct: 5
+    target_pct: 8
+    max_hold: 10
+  ceiling_tolerance_pct: 0.6        # ceiling estimated as band minus tick rounding (no historical ceilings)
+  cooldown_sessions: 5              # the same setup on the same stock counts again only after this gap
+  baseline_step: 5                  # control: every 5th tradeable session of every stock
+  tiers_vnd: {HIGH: 10.0e9, GOOD: 8.0e9, LOW: 3.0e9}   # the screen's liquidity tiers; below 3 bn = BELOW
+  costs:
+    brokerage_fee_pct: 0.15         # each side, as `backtest`
+    sell_tax_pct: 0.10
+    slippage_pct_by_tier: {HIGH: 0.10, GOOD: 0.15, LOW: 0.25, BELOW: 0.50}   # each side
+    stress_slippage_pct_by_tier: {HIGH: 0.20, GOOD: 0.30, LOW: 0.50, BELOW: 1.00}   # robustness check only
+  quality:
+    min_history_sessions: 210       # MA200 needs 200 sessions
+    before_sessions: 30             # a signal this close to an impossible one-session move is left out
+    after_sessions: 15
+  gate:
+    out_of_sample_fraction: 0.3     # newest 30% of the dates, never used to choose anything
+    min_signals_in_sample: 200
+    min_signals_out_of_sample: 60
+    min_edge_pct: 0.5               # percentage points over the same tier's baseline
+    min_t: 2.5                      # t of that difference; above 2 because many setups are tested at once
+  setups:
+    pullback_uptrend: {rsi2_max: 10, down_days: 3, near_ma_pct: 2}
+    oversold_bounce: {drop_sessions: 5, drop_pct: 10, rsi14_max: 30, reversal_close_position: 0.6}
+    momentum: {surge_pct: 5, surge_volume_ratio: 2.0, high20_volume_ratio: 1.5}
+    tight_base: {base_sessions: 10, base_max_width_pct: 8, breakout_volume_ratio: 1.3}
+
+# VN-Index bars vs HOSE's own published values (src/collectors/index_check.py). Report only:
+# the user keeps DNSE's bars until they decide (2026-10-09); nothing here changes a rule.
+index_check:
+  symbols: [VNINDEX]
+  sessions: 60                      # recent sessions in the agreement table
+  status_sessions: 400              # sessions the market status is recomputed on (as monitor / screen)
+  tolerance_points: 0.011           # index points; HOSE and DNSE both publish two decimals
+  history_from: "2015-01-01"        # first HOSE read: the whole history in one request
+  overlap_days: 30                  # later reads re-read this many calendar days
+
+reference_prices:
+  next_session_after: "15:00"
+  # A session whose definition was never read: on UPCoM the reference is the previous
+  # trading session's average matched price rounded to the tick (exchange rule, checked
+  # against DNSE's published values every run). Fill the monitored tickers' last N sessions;
+  # `refprices --market` also fills every UPCoM ticker's latest session (~230 requests).
+  fill_sessions: 5
+  fill_max_gap_days: 14             # previous trading session further back = a halt: not filled
+  average_rule_min_share: 0.9       # share of published UPCoM references the rule must reproduce
+
+# DNSE vs SSI cross-check (src/collectors/crosscheck.py). Report only: nothing is changed.
+crosscheck:
+  close_tolerance_pct: 0.1          # same session's close
+  volume_tolerance_pct: 2.0         # DNSE volume vs SSI matched volume
+  foreign_tolerance_pct: 1.0        # foreign buy / sell shares
+  reference_tolerance_pct: 0.05     # reference price vs the previous close: beyond = a corporate action
+  index_put_through_ratio: 1.05     # DNSE index volume / SSI matched above this = put-through included
+  max_listed: 30                    # mismatches listed per section in the report
+
+# Whole-market snapshot for the dashboard (display only; src/quant/market_view.py).
+market_view:
+  keep_snapshots: 10                # dates kept in market_snapshot; older ones are deleted
+
+# Company logos for the dashboard (display only; src/collectors/logos.py).
+logos:
+  max_bytes: 1000000                # refuse anything larger than this as not a logo
+  min_bytes: 100                    # Vietstock answers an unknown code with a 43-byte blank GIF
+  retry_missing_days: 30            # a code without a logo is asked again after this many days
+
+position_check:
+  max_loss_pct: 8                   # [SÁCH] Minervini: cut losses at 7-8% at most
+  warn_loss_pct: 5                  # flag before the maximum is reached
+  breakeven_gain_multiple: 2        # gain >= 2 x max loss: raise the stop to at least breakeven [SÁCH]
+  signal_lookback_sessions: 10      # sell signals considered from this many recent sessions
+  news_days: 7
+  cost_unit_check_ratio: 5          # a cost more than 5x above / below the price is asked about first:
+                                    # almost always a unit slip (68.5 typed for 68,500 VND)
+
+# TradingView-style technical ratings (dashboard "Chỉ báo kỹ thuật"). Display only:
+# short-term readings, not SEPA rules, untested on VN data, never scored.
+tv_ratings:
+  ma_periods: [10, 20, 30, 50, 100, 200]   # SMA and EMA of each, plus Ichimoku Cloud, VWMA20, HMA9
+  # Rules per TradingView's "Technical Ratings" help page (checked 2026-10-07). The earlier
+  # readings stay selectable for the benchmark against TradingView's screener (congthuc.md 14.5).
+  momentum_mode: rising             # rising (TradingView page) | sign (earlier reading)
+  stoch_mode: level                 # level (TradingView page) | cross (earlier reading)
+  ichimoku_shift: 25                # cloud under today's bar = spans from 25 sessions earlier (displacement 26,
+                                    # plotted 25 bars ahead); unshifted, span A sits between the lines and the rule never fires
+  trend_sma: 50                     # "uptrend" for Stoch RSI / Bull Bear Power: close vs SMA50 [TRIỂN KHAI]
+  strong: 0.5                       # rating > 0.5: "Tích cực mạnh" (TradingView: Strong Buy)
+  neutral_band: 0.1                 # -0.1..0.1: "Trung tính"
+
+# Candlestick pattern of the latest session (skill reference 03). [TRIỂN KHAI] where marked.
+candles:
+  doji_ratio: 0.1                   # body <= 0.1 x average range of 10 prior bars (TA-Lib)
+  small_body_ratio: 0.3             # star body
+  short_shadow_ratio: 0.1           # "little or no" shadow, x average range (TA-Lib)
+  long_shadow_mult: 2.0             # hammer / shooting star shadow >= 2 x body (Nison)
+  tall_candle_mult: 1.46            # range > 1.46 x average of 22 prior bars (Bulkowski)
+  trend_sma: 10                     # prior trend: close vs SMA10 and its slope [TRIỂN KHAI]
+  trend_slope_sessions: 5
+
+monitor:
+  volume_avg_sessions: 50
+  breakout_volume_ratio: 1.4        # >= 40% above the 50-day average [TRANG GỐC IBD]
+  heavy_volume_ratio: 1.4           # close below MA50 on heavy volume [THỨ CẤP]
+  breakout_failure_sessions: 10     # a breakout that closes back under its pivot within N sessions [TRIỂN KHAI]
+  largest_down_lookback_sessions: 120   # "largest down day since Stage 2 began" -- window is [TRIỂN KHAI]
+  setup_ready_within_pct: 3         # tight, dried-up base within this % below its pivot [TRIỂN KHAI]
+  climax_above_ma200_pct: 70        # IBD climax warning 70-100% above the 200-day [TRANG GỐC]
+  climax_up_days: 7                 # 7 of the last 8 sessions up [TRANG GỐC]
+  climax_up_window: 8
+  # A valid breakout also closes in the upper part of the day's range and is not
+  # already extended past the buy zone [TRIỂN KHAI measurable forms of IBD rules].
+  breakout_min_close_position: 0.5
+  # Status window: "Vừa breakout" / "Mất hiệu lực" look back this many sessions.
+  status_window_sessions: 5
+
+# --------------------------------------------------------------------------
+# Price collection (src/collectors/backfill.py)
+# --------------------------------------------------------------------------
+collection:
+  # ~11 years = everything DNSE serves (from 2015-09-15), and exactly one DNSE request
+  # (`chunk_days: 4000` in sources.yaml; more would cost a second). MA200, 52-week range, 12-month
+  # RS and bases need well under this; the rest feeds the weekly / monthly charts
+  # (MA40 months) and backtests. One DNSE request covers it, so a longer window costs
+  # storage, not time. Was 1830 (~5 years) until 2026-10-06; series stored with the
+  # old window are deepened once by `python -m src.main backfill --deepen`.
+  backfill_history_days: 4000
+  # Each incremental fetch re-reads this many calendar days already stored, to
+  # detect a history the vendor has re-adjusted after a corporate action.
+  backfill_overlap_days: 15
+  # A stored close that moved more than this (percent) means re-adjusted history.
+  readjust_tolerance_pct: 0.5
+  # Band-breaking overnight moves are checked over the most recent N sessions
+  # only -- the window the screener reads (MA200, 52 weeks, 12-month RS). Older
+  # history can predate a transfer between exchanges with different bands.
+  gap_check_sessions: 300
+
+# --------------------------------------------------------------------------
+# Daily price bands, percent from the reference price (market fact, not a tuning
+# knob). First trading day / after a >=25-session halt: HOSE 20, HNX 30, UPCOM 40.
+# --------------------------------------------------------------------------
+exchange_price_limit_pct:
+  HOSE: 7
+  HNX: 10
+  UPCOM: 15

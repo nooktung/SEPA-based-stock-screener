@@ -1,0 +1,25 @@
+# Credentials: never commit. Copy .env.example to .env on each machine.
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Everything the system collects or computes lives under data/ and is rebuilt on a new
+# machine (`universe`, then `start`). The database (~400 MB, over GitHub's 100 MB limit),
+# its backups, logos, logs, reports and markers stay local; copy data/agent.db by hand
+# to keep the history. Empty folders keep their .gitkeep.
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# Database files anywhere, with SQLite's WAL / SHM companions and dated backups
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
+
+# Logs
+*.log

@@ -1,0 +1,20 @@
+# Phase 1 runtime
+PyYAML>=6.0
+
+# Phase 2+ (quant engine)
+pandas>=2.2
+numpy>=1.26
+
+# Phase 2+ (DNSE OpenAPI)
+dnse-sdk-openapi>=1.4.6
+websockets>=12.0
+msgpack>=1.0
+
+# Phase 3+ (collection)
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+feedparser>=6.0
+
+# Dev
+pytest>=8.0

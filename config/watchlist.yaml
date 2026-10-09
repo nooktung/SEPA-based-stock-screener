@@ -1,0 +1,84 @@
+# Watchlist configuration.
+# Add or remove tickers here only. No code change should ever be required.
+# Reloaded on every run by src/config.py.
+
+version: 1
+
+# Sector profiles decide which fundamental metric set and which valuation
+# method the engine applies. Never use one generic P/E rule for everything.
+default_sector_profile: generic
+
+securities:
+  - ticker: SSI
+    exchange: HOSE
+    name: CTCP Chung khoan SSI
+    sector_profile: securities
+    active: true
+
+  - ticker: VIX
+    exchange: HOSE
+    name: CTCP Chung khoan VIX
+    sector_profile: securities
+    active: true
+
+  - ticker: VND
+    exchange: HOSE
+    name: CTCP Chung khoan VNDIRECT
+    sector_profile: securities
+    active: true
+
+  - ticker: VCI
+    exchange: HOSE
+    name: CTCP Chung khoan Vietcap
+    sector_profile: securities
+    active: true
+
+  - ticker: HCM
+    exchange: HOSE
+    name: CTCP Chung khoan TP Ho Chi Minh
+    sector_profile: securities
+    active: true
+
+benchmarks:
+  - symbol: VNINDEX
+    role: primary_market
+  - symbol: VN30
+    role: large_cap
+  - symbol: HNXINDEX
+    role: secondary_market
+
+# Peer groups used for relative valuation and relative strength.
+# A ticker may belong to several groups.
+peer_groups:
+  securities_large:
+    - SSI
+    - VCI
+    - HCM
+    - VND
+  securities_prop_heavy:
+    - VIX
+    - VND
+
+# Macro series the macro engine must always carry, regardless of watchlist.
+macro_watch:
+  us:
+    - FED_FUNDS_RATE
+    - US_CPI_YOY
+    - US_CORE_CPI_YOY
+    - US_CORE_PCE_YOY
+    - US10Y
+    - DXY
+    - US_UNEMPLOYMENT
+    - US_GDP_QOQ
+  vietnam:
+    - SBV_REFINANCING_RATE
+    - SBV_OMO_RATE
+    - USDVND
+    - VN_CREDIT_GROWTH_YTD
+    - VN_CPI_YOY
+    - VN_GDP_YOY
+    - VN_GOVBOND_10Y
+    - INTERBANK_ON_RATE
+  global:
+    - GOLD_SPOT
+    - BRENT_CRUDE

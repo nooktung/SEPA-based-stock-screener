@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEPA Việt Nam</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<!-- TradingView's official free embed widget (loaded by the browser; needs internet). -->
+<script src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+<div class="app">
+
+<!-- ============================================================ sidebar -->
+<aside class="side">
+  <div class="brand">
+    <div class="logo">S</div>
+    <div><b>SEPA Việt Nam</b><span>Công cụ nghiên cứu</span></div>
+  </div>
+  <nav class="nav" role="tablist">
+    <div class="nav-group">Cổ phiếu</div>
+    <button class="tab active" data-tab="screen" data-group="main" role="tab"
+      data-title="Danh sách chính" data-desc="Đạt đủ 8/8 tiêu chí xu hướng (A) hoặc gần đạt và đang tạo nền (B). Đây là ứng viên để nghiên cứu, không phải khuyến nghị.">
+      <span class="ico">◆</span>Danh sách chính<span class="n" id="n-main"></span></button>
+    <button class="tab" data-tab="screen" data-group="ext" role="tab"
+      data-title="Theo dõi mở rộng" data-desc="Đang trong xu hướng tăng nhưng chưa đạt chuẩn SEPA. Chỉ để theo dõi, không phải ứng viên.">
+      <span class="ico">◇</span>Theo dõi mở rộng<span class="n" id="n-ext"></span></button>
+    <button class="tab" data-tab="screen" data-group="mine" role="tab"
+      data-title="Của tôi" data-desc="Mã bạn tự chọn, được cập nhật giá, sự kiện và tin tức hằng ngày dù có đạt chuẩn hay không.">
+      <span class="ico">★</span>Của tôi<span class="n" id="n-mine"></span></button>
+    <button class="tab" data-tab="screen" data-group="leaders" role="tab"
+      data-title="Đầu ngành" data-desc="Ba mã giao dịch nhiều nhất mỗi ngành, để theo dõi diễn biến ngành. Không phải ứng viên SEPA.">
+      <span class="ico">▲</span>Đầu ngành<span class="n" id="n-leaders"></span></button>
+    <button class="tab" data-tab="screen" data-group="all" role="tab"
+      data-title="Tất cả mã đang theo dõi" data-desc="Mọi mã hệ thống cập nhật hằng ngày: danh sách chính, mở rộng, đầu ngành, của tôi và watchlist.">
+      <span class="ico">≡</span>Tất cả theo dõi<span class="n" id="n-all"></span></button>
+    <button class="tab" data-tab="screen" data-group="market" role="tab"
+      data-title="Toàn thị trường" data-desc="Mọi mã HOSE, HNX, UPCoM có dữ liệu giá — lọc theo xu hướng, ngành, sàn, thanh khoản. Ảnh chụp để nghiên cứu, không phải danh sách ứng viên.">
+      <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
+    <div class="nav-group">Thị trường</div>
+    <button class="tab" data-tab="industries" role="tab"
+      data-title="Ngành và sóng ngành" data-desc="Sức mạnh các sóng ngành bạn định nghĩa (config/themes.yaml) và các ngành theo phân loại Vietstock.">
+      <span class="ico">◎</span>Ngành &amp; sóng</button>
+    <button class="tab" data-tab="alerts" role="tab"
+      data-title="Sự kiện" data-desc="Breakout, thủng stop, mất tiêu chí… của các mã đang theo dõi, mới nhất trước.">
+      <span class="ico">⚑</span>Sự kiện</button>
+    <button class="tab" data-tab="news" role="tab"
+      data-title="Tin tức" data-desc="Tin 30 ngày của các mã đang theo dõi, đã gộp trùng.">
+      <span class="ico">✉</span>Tin tức</button>
+    <div class="nav-group">Kiến thức</div>
+    <button class="tab" data-tab="learn" role="tab"
+      data-title="Học mẫu hình" data-desc="Mẫu nến và mô hình giá thường gặp: cách nhận biết, ý nghĩa và cần xác nhận gì. Không mẫu hình nào chắc chắn đúng.">
+      <span class="ico">✎</span>Học</button>
+  </nav>
+  <p class="side-foot">Không có chức năng đặt lệnh. Kết quả lọc là ứng viên nghiên cứu, không phải khuyến nghị.</p>
+</aside>
+
+<!-- ============================================================ main -->
+<div class="main-col">
+  <header class="topbar">
+    <div class="page-head">
+      <h1 id="page-title">Danh sách chính</h1>
+      <p id="page-desc" class="muted"></p>
+    </div>
+    <div class="top-end">
+      <div id="vni" class="vni" role="button" tabindex="0" aria-label="Mở biểu đồ VN-Index"></div>
+      <div class="run" title="Danh sách được lọc toàn thị trường vào ngày này; giá và chỉ báo vẫn cập nhật hằng ngày">
+        <span>Danh sách lọc ngày</span>
+        <button id="run-btn" class="dd dd-plain" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="dd-value" id="run-text">–</span><svg class="dd-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- every stock group: one table, one set of filters -->
+    <section id="tab-screen" class="panel active">
+      <div id="mine-form" class="mine-form" hidden>
+        <input id="mine-ticker" type="text" maxlength="3" placeholder="Thêm mã, VD: PHP" autocomplete="off" aria-label="Mã cổ phiếu">
+        <input id="mine-note" type="text" maxlength="120" placeholder="Ghi chú (tuỳ chọn)" aria-label="Ghi chú">
+        <button id="mine-add" class="btn primary" type="button">+ Thêm</button>
+        <span id="mine-msg" class="muted small"></span>
+      </div>
+      <div class="toolbar">
+        <div class="search"><span aria-hidden="true">⌕</span>
+          <input id="search" type="search" placeholder="Tìm mã hoặc tên công ty" aria-label="Tìm mã" autocomplete="off"></div>
+        <div id="filter-selects" class="filter-selects"></div>
+      </div>
+      <div class="subbar">
+        <div id="filter-summary" class="filter-summary"></div>
+        <div class="seg view-seg" role="tablist" aria-label="Kiểu bảng">
+          <button class="on" data-view="overview" title="Xu hướng, nền giá, trạng thái, khối ngoại, cơ bản">Tổng quan</button>
+          <button data-view="tech" title="Xếp hạng và chỉ báo kỹ thuật theo công thức TradingView">Kỹ thuật</button>
+          <button data-view="flow" title="Khối ngoại và khối nội mua / bán phiên gần nhất">Dòng tiền</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="screen-table"><thead></thead><tbody></tbody></table></div>
+      <p class="note" id="list-note"></p>
+    </section>
+
+    <!-- industries and themes -->
+    <section id="tab-industries" class="panel">
+      <h2 class="section-title">Sóng ngành</h2>
+      <div class="table-wrap"><table id="themes-table">
+        <thead><tr><th class="num" title="Trung bình điểm RS của các mã đủ thanh khoản, xếp hạng so với mọi ngành">RS nhóm</th>
+          <th>Sóng</th><th class="num" title="Số mã đủ thanh khoản / số mã khai báo">Số mã</th>
+          <th class="num" title="Lợi nhuận trung vị 21 phiên">1 tháng</th><th class="num" title="Lợi nhuận trung vị 63 phiên">3 tháng</th>
+          <th class="num">Trên MA50</th><th>Trong danh sách chính</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p class="note">Sóng "đang mạnh" khi RS nhóm ≥ 80; mã thuộc sóng đang mạnh và đang uptrend được xếp đầu nhóm theo dõi mở rộng — không được nâng lên danh sách chính nếu chưa đạt chuẩn SEPA.</p>
+      <h2 class="section-title">Ngành (Vietstock)</h2>
+      <div class="table-wrap"><table id="industries-table">
+        <thead><tr><th class="num">RS ngành</th><th>Nhóm ngành</th><th class="num">Số mã</th>
+          <th class="num" title="% mã trong ngành đóng cửa trên MA50">Trên MA50</th><th class="num">Trên MA200</th>
+          <th>Trong danh sách chính</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p class="note">RS ngành = trung bình điểm RS thô của các mã đủ thanh khoản, xếp hạng giữa các ngành. Chỉ tham khảo — không tính vào điểm.</p>
+    </section>
+
+    <!-- events -->
+    <section id="tab-alerts" class="panel">
+      <div class="table-wrap"><table id="alerts-table">
+        <thead><tr><th>Phiên</th><th>Mã</th><th>Sự kiện</th><th>Chi tiết</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <!-- news -->
+    <section id="tab-news" class="panel">
+      <div class="toolbar">
+        <div class="search"><span aria-hidden="true">⌕</span><input id="news-search" type="search" placeholder="Lọc theo mã, VD: PNJ" aria-label="Lọc tin theo mã"></div>
+      </div>
+      <div id="news-list" class="news-list"></div>
+    </section>
+
+    <!-- learning -->
+    <section id="tab-learn" class="panel">
+      <div class="learn-grid">
+        <div class="learn-col">
+          <div class="learn-h"><h2>Mẫu hình nến</h2><span class="muted small">đọc 1–3 phiên gần nhất</span></div>
+          <div id="learn-candles"></div>
+        </div>
+        <div class="learn-col">
+          <div class="learn-h"><h2>Mô hình giá</h2><span class="muted small">đọc hình dạng nhiều tuần</span></div>
+          <div id="learn-charts"></div>
+        </div>
+      </div>
+      <p class="note">Hình vẽ minh họa, không theo tỉ lệ thật. Số liệu "Bulkowski" lấy từ thống kê thị trường Mỹ, chưa kiểm định trên cổ phiếu Việt Nam.
+        Nến chỉ có ý nghĩa khi đặt trong bối cảnh: xu hướng trước đó, vị trí so với hỗ trợ / kháng cự, khối lượng và phiên xác nhận sau.</p>
+    </section>
+  </main>
+</div>
+</div>
+
+<!-- ============================================================ detail drawer -->
+<aside id="detail" class="detail" aria-hidden="true">
+  <div class="d-head">
+    <div id="d-logo" class="d-logo"></div>
+    <div class="d-id">
+      <div class="d-line1">
+        <h2 id="d-title"></h2>
+        <button id="d-star" class="star big" type="button" title="Thêm vào Của tôi">☆</button>
+      </div>
+      <p id="d-sub" class="muted"></p>
+      <div id="d-badges" class="d-badges"></div>
+    </div>
+    <div class="d-price" id="d-price"></div>
+    <button id="d-close" class="close" aria-label="Đóng">×</button>
+  </div>
+  <nav class="dtabs" role="tablist">
+    <button class="dtab on" data-pane="chart">Biểu đồ</button>
+    <button class="dtab" data-pane="sepa">Phân tích SEPA</button>
+    <button class="dtab" data-pane="flow">Dòng tiền</button>
+    <button class="dtab" data-pane="fund">Cơ bản &amp; ngành</button>
+    <button class="dtab" data-pane="news">Tin tức &amp; sự kiện</button>
+    <button class="dtab" data-pane="position">Kiểm tra vị thế</button>
+  </nav>
+
+  <div class="dpane on" data-pane="chart">
+    <div class="chart-bar">
+      <div class="seg chart-tabs">
+        <button class="on" data-chart="own">Biểu đồ</button>
+        <button data-chart="tv" title="Widget TradingView: chỉ HNX và UPCoM">TradingView</button>
+      </div>
+      <div class="seg tf-seg" role="tablist" aria-label="Khung thời gian">
+        <button class="on" data-tf="D" title="Mỗi nến là một phiên">Ngày</button>
+        <button data-tf="W" title="Mỗi nến là một tuần (thứ Hai – thứ Sáu)">Tuần</button>
+        <button data-tf="M" title="Mỗi nến là một tháng">Tháng</button>
+      </div>
+      <div class="layers">
+        <button id="layers-btn" class="btn ghost" type="button" aria-expanded="false">Lớp hiển thị <span id="layers-n" class="count"></span> ▾</button>
+        <div id="layers-menu" class="menu" hidden></div>
+      </div>
+      <a id="tv-link" class="tv-link" target="_blank" rel="noopener">Mở trên TradingView ↗</a>
+    </div>
+    <div id="tv-chart" class="chart tv" hidden></div>
+    <div id="own-chart" class="own-chart">
+      <div class="panes">
+        <div class="legend" id="legend"></div>
+        <div id="chart" class="pane pane-price"></div>
+        <div class="pane-label" id="rsi-label">RSI (14)</div>
+        <div id="rsi-chart" class="pane pane-rsi"></div>
+        <div class="pane-label" id="macd-label">MACD (12, 26, 9)</div>
+        <div id="macd-chart" class="pane pane-macd"></div>
+      </div>
+      <p class="levels" id="levels-text"></p>
+    </div>
+  </div>
+
+  <div class="dpane" data-pane="sepa">
+    <div class="card"><div class="card-h"><h3>Ba câu hỏi SEPA</h3></div><div id="d-questions"></div></div>
+    <div class="grid2">
+      <div class="card"><div class="card-h"><h3>8 tiêu chí xu hướng (Trend Template)</h3></div><div id="d-criteria"></div></div>
+      <div class="card"><div class="card-h"><h3>Nền giá</h3></div><div id="d-base"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3>Chỉ báo kỹ thuật (kiểu TradingView)</h3><span class="muted small">không phải quy tắc SEPA · không tính điểm</span></div>
+      <div id="d-tech"></div>
+    </div>
+  </div>
+
+  <div class="dpane" data-pane="flow">
+    <div id="d-flow"></div>
+  </div>
+
+  <div class="dpane" data-pane="fund">
+    <div class="grid2">
+      <div class="card"><div class="card-h"><h3>Cơ bản (báo cáo tài chính quý)</h3></div><div id="d-fund"></div></div>
+      <div class="card"><div class="card-h"><h3>Ngành</h3></div><div id="d-industry"></div></div>
+    </div>
+  </div>
+
+  <div class="dpane" data-pane="news">
+    <div class="grid2">
+      <div class="card"><div class="card-h"><h3>Sự kiện</h3></div><div id="d-alerts"></div></div>
+      <div class="card"><div class="card-h"><h3>Tin tức</h3></div><div id="d-news"></div></div>
+    </div>
+  </div>
+
+  <div class="dpane" data-pane="position">
+    <div class="card">
+      <div class="card-h"><h3>Kiểm tra vị thế</h3><span class="muted small">đối chiếu với quy tắc SEPA · không phải lời khuyên</span></div>
+      <p class="muted small">Nhập giá vốn trung bình. Hệ thống đặt vị thế của bạn cạnh các mốc giá (mức lỗ tối đa, stop, MA, hỗ trợ / kháng cự, pivot),
+        mô tả tình huống theo quy tắc SEPA, diễn biến 5 phiên, khối ngoại, cơ bản, thị trường và tin gần đây. Không đưa ra lời khuyên mua thêm hay bán —
+        quyết định là của bạn. Giá vốn chỉ lưu trong trình duyệt này.</p>
+      <div class="pos-form">
+        <label>Giá vốn trung bình (đồng)<input id="p-cost" type="text" inputmode="decimal" autocomplete="off" placeholder="VD: 68.500"></label>
+        <label>Số lượng cổ phiếu (tuỳ chọn)<input id="p-qty" type="text" inputmode="numeric" autocomplete="off" placeholder="VD: 1.000"></label>
+        <button id="p-check" class="btn primary" type="button">Kiểm tra</button>
+        <button id="p-clear" class="btn" type="button" title="Xóa giá vốn đã lưu của mã này">Xóa</button>
+      </div>
+    </div>
+    <div id="p-out"></div>
+  </div>
+</aside>
+<div id="scrim" class="scrim"></div>
+
+<script src="learn.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
