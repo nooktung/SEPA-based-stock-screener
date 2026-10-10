@@ -71,6 +71,16 @@ def tick_size(price_vnd: float, exchange: str) -> float:
     return 100.0
 
 
+def round_to_tick(price: float, exchange: str, up: bool) -> float:
+    """`price` on the exchange's tick grid: up for a pivot (a buy point is never below the
+    level it clears), down for a stop. Adjusted histories put old highs and lows between
+    ticks (HDB after its 30% stock dividend: 23,080), which no order can be placed at."""
+    tick = tick_size(price, exchange)
+    steps = price / tick
+    n = math.ceil(steps - 1e-9) if up else math.floor(steps + 1e-9)
+    return float(n * tick)
+
+
 def locked_worst_case_pct(band_pct: float, from_ceiling: bool = False) -> float:
     """Loss if every session limits down until the first possible T+2 sale.
 
@@ -261,6 +271,10 @@ class BaseRead:
     handle_low_date: str | None = None
     handle_low: float | None = None
     cup_checks: list[dict[str, Any]] = field(default_factory=list)
+    # Set by tracked_base: the base is held from the session a close broke out of it
+    # ("BREAKOUT") or broke its stop ("STOP"), so its pivot and stop stay where they were.
+    held_since: str | None = None
+    held_by: str | None = None
 
     @property
     def forming(self) -> bool:
@@ -367,6 +381,58 @@ def evaluate_cup(frame: pd.DataFrame, top_index: int, base: pd.DataFrame, settin
 
 
 def read_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
+    """The base the stock is in (see _read_base_raw), with the pivot rounded up and the
+    stop rounded down to the exchange's tick, and the distance to the pivot from them."""
+    read = _read_base_raw(frame, exchange, settings)
+    if read.pivot:
+        read.pivot = round_to_tick(read.pivot, exchange, up=True)
+        if read.stop:
+            read.stop = round_to_tick(read.stop, exchange, up=False)
+        read.distance_to_pivot_pct = (float(frame["close"].iloc[-1]) / read.pivot - 1) * 100.0
+    return read
+
+
+def tracked_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
+    """The base to show and judge today: today's base, except after an event.
+
+    Read on every session, a base takes the breakout bar as its new right side,
+    so the pivot climbs above a stock that has just broken out (GMD 07/10/2026:
+    out of 52,770, then "pivot 55,100") and the stop drops to wherever the price
+    fell after breaking it (VIC 09/10/2026: stop 226,900 -> 225,500, the close).
+    For `base.hold_sessions` after a close above the base's pivot or below its
+    stop, the base that was knowable the session before that close is kept --
+    pivot, stop, label -- and marked `held_since` / `held_by`. A new forming
+    base that starts after that session replaces it [TRIỂN KHAI].
+    """
+    current = read_base(frame, exchange, settings)
+    hold = int(settings["base"].get("hold_sessions", 0) or 0)
+    close = frame["close"].to_numpy(dtype="float64")
+    n = len(frame)
+    for k in range(min(hold, n - int(settings["base"]["min_base_sessions"]) - 1)):
+        i = n - 1 - k
+        prior = read_base(frame.iloc[:i], exchange, settings)
+        if not prior.pivot:
+            continue
+        if not prior.forming:
+            continue                                         # only a real base has a pivot and stop to keep
+        broke_out = close[i] > prior.pivot >= close[i - 1]
+        broke_stop = bool(prior.stop) and close[i] < prior.stop <= close[i - 1]
+        if not (broke_out or broke_stop):
+            continue
+        day = frame.index[i].date().isoformat()
+        if current.forming and current.start_date and current.start_date > day:
+            return current                                   # a new base has formed since
+        held = BaseRead(**{**asdict(prior), "contractions": list(prior.contractions),
+                           "notes": list(prior.notes), "cup_checks": list(prior.cup_checks)})
+        held.held_since, held.held_by = day, "BREAKOUT" if broke_out else "STOP"
+        held.distance_to_pivot_pct = (float(close[-1]) / held.pivot - 1) * 100.0
+        what = "breakout" if broke_out else "phiên thủng stop"
+        held.notes.insert(0, f"pivot và stop giữ từ {what} {day[8:10]}/{day[5:7]}/{day[:4]}")
+        return held
+    return current
+
+
+def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
     """Describe the base the stock is in, measured from its highest high.
 
     The base starts at the highest high of the last `max_base_sessions`. Its
@@ -526,11 +592,12 @@ def explain_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]
     a textbook pattern.
     """
     b = settings["base"]
-    read = read_base(frame, exchange, settings)
+    read = tracked_base(frame, exchange, settings)       # the same base the monitor and the list show
     out: dict[str, Any] = {k: v for k, v in read.as_dict().items() if k in (
         "kind", "sessions", "depth_pct", "pivot", "stop", "distance_to_pivot_pct",
         "volume_dryup", "start_date", "top", "low_date", "low", "notes",
-        "right_lip_date", "right_lip", "handle_low_date", "handle_low")}
+        "right_lip_date", "right_lip", "handle_low_date", "handle_low", "held_since", "held_by")}
+    out["stop_breached"] = bool(read.stop) and float(frame["close"].iloc[-1]) <= read.stop
     out["contractions"] = [round(x, 1) for x in read.contractions]
     if read.top is None or read.low is None:
         out["checks"], out["swings"] = [], []
@@ -904,6 +971,11 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
     settings = screen_settings(thresholds)
     as_of = as_of or datetime.now(timezone.utc).date()
     frames, exchanges, stale = _load_universe_frames(as_of, int(settings["min_history_sessions"]) + 120, path)
+    # Only ~1.5 years are loaded; the full stored count tells a recent listing from a stock that
+    # trades on few days (the tester read "history < 252" as "only ~376 sessions stored").
+    with connect(path) as conn:
+        stored = dict(conn.execute("SELECT ticker, COUNT(*) FROM prices_daily WHERE trade_date <= ? GROUP BY ticker",
+                                   (as_of.isoformat(),)).fetchall())
 
     funnel: dict[str, int] = {"universe": len(exchanges)}
     exclusions: dict[str, int] = {}
@@ -929,8 +1001,10 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
             value, _ = liquidity(f, settings)
             if value is not None and value >= float(floors.get(ex.upper(), max(floors.values()))):
                 flagged_liquid.append((t, ex, value))
+        elif len(f) < min_hist and stored.get(t, 0) >= min_hist:
+            drop(f"giao dịch thưa / tạm ngừng: < {min_hist} phiên có giá trong ~1,5 năm (lịch sử dài hơn)")
         elif len(f) < min_hist:
-            drop(f"lịch sử < {min_hist} phiên")
+            drop(f"mới niêm yết: lịch sử < {min_hist} phiên")
             if ipo_cfg and len(f) >= int(ipo_cfg["min_sessions"]) and as_of - f.index[-1].date() <= max_age:
                 recent_listings[t] = f
         elif as_of - f.index[-1].date() > max_age:
@@ -953,11 +1027,13 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
             liquid[t] = (f, value)
     funnel["liquid"] = len(liquid)
 
-    # 3. RS across the liquid universe
+    # 3. RS across every ticker with clean data, liquid or not: IBD ranks the whole market, so an
+    # RS of 90 means the top 10% of it, not of the ~190 liquid names (user decision 2026-10-11).
     rs_cfg = settings["rs"]
-    raw = {t: s for t, (f, _) in liquid.items()
+    raw = {t: s for t, f in clean.items()
            if (s := rs_raw_score(f["close"], str(rs_cfg["variant"]), rs_cfg["periods"])) is not None}
     ratings = rs_ratings(raw)
+    funnel["rs_universe"] = len(ratings)
 
     # 4-5. Trend Template and base
     gb = settings["group_b"]
@@ -1116,6 +1192,13 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
     idx = pd.DataFrame(list(reversed(idx_rows)), columns=["trade_date", "close", "volume", "low", "high", "matched_volume"])
     market = market_status(idx, settings)
     for c in members:
+        # Groups were decided on today's base; what is shown and stored is the held one after a
+        # breakout or a stop breach, so the list, the events and the detail agree (tracked_base).
+        f = clean.get(c.ticker, recent_listings.get(c.ticker))
+        if f is not None:
+            held = tracked_base(f, c.exchange, settings)
+            if held.held_since:
+                c.base = held
         c.setup = assess(c.group, c.base.kind, c.base.distance_to_pivot_pct, settings, market)
 
     last_session = max((f.index[-1].date() for f in clean.values()), default=as_of)

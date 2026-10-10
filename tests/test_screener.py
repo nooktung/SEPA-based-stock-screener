@@ -14,6 +14,7 @@ from src.quant.screener import (
     latest_focus_list,
     liquidity,
     locked_worst_case_pct,
+    round_to_tick,
     read_base,
     rs_ratings,
     rs_raw_score,
@@ -292,15 +293,24 @@ def test_textbook_cup_with_handle_is_recognised_with_handle_pivot():
     f = _cup(handle=True)
     base = read_base(f, "HOSE", SETTINGS)
     assert base.kind == "CUP_HANDLE", [c for c in base.cup_checks if not c["ok"]]
-    assert base.right_lip and abs(base.pivot - (base.right_lip + 50)) < 1e-6      # right lip + one HOSE tick
-    assert base.handle_low and base.stop >= base.handle_low - 1e-6
+    # right lip + one HOSE tick, then up to the tick grid (an adjusted lip can sit between ticks)
+    assert base.right_lip and base.pivot == round_to_tick(base.right_lip + 50, "HOSE", up=True)
+    assert base.pivot % 50 == 0 and base.stop % 50 == 0
+    assert base.handle_low and base.stop >= round_to_tick(base.handle_low, "HOSE", up=False) - 1e-6
 
 
 def test_cup_without_a_handle_uses_the_left_side_high():
     f = _cup(handle=False)
     base = read_base(f, "HOSE", SETTINGS)
     assert base.kind == "CUP", [c for c in base.cup_checks if not c["ok"]]
-    assert abs(base.pivot - (base.top + 50)) < 1e-6
+    assert base.pivot == round_to_tick(base.top + 50, "HOSE", up=True)
+
+
+def test_prices_are_rounded_to_the_exchange_tick():
+    assert round_to_tick(23_130, "HOSE", up=True) == 23_150      # HDB after its 30% stock dividend
+    assert round_to_tick(21_279.6, "HOSE", up=False) == 21_250
+    assert round_to_tick(9_996, "HOSE", up=True) == 10_000 and round_to_tick(134_504, "HNX", up=False) == 134_500
+    assert round_to_tick(40_250, "HOSE", up=True) == 40_250      # already on the grid: unchanged
 
 
 def test_spike_then_v_crash_is_not_a_cup():

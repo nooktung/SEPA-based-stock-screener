@@ -260,6 +260,8 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
     bars = _rows("SELECT trade_date, open, high, low, close, volume FROM (SELECT * FROM prices_daily "
                  "WHERE ticker = ? ORDER BY trade_date DESC LIMIT 520) ORDER BY trade_date", (ticker,), path)
     info = _rows("SELECT ticker, exchange, name, listed_date FROM tickers WHERE ticker = ?", (ticker,), path)
+    if not bars:
+        raise KeyError(f"không có dữ liệu giá cho mã {ticker}" if info else f"không có mã {ticker}")
     ma, oscillators = _chart_series(bars)
     base_overlay = None
     levels = None
@@ -280,10 +282,11 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
                    "WHERE m.ticker = ? ORDER BY r.created_at DESC LIMIT 1", (ticker,), path)
     alerts = _rows("SELECT alert_type, what_changed, why_it_matters, created_at FROM alerts WHERE ticker = ? "
                    "ORDER BY what_changed DESC LIMIT 40", (ticker,), path)
+    # News about the ticker first, then articles that only mention it (tester report B06).
     news = _rows("SELECT e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, e.best_source_level, "
-                 "e.assertion_type, e.what_happened, e.why_it_matters, e.direction, e.time_horizon "
+                 "e.assertion_type, e.what_happened, e.why_it_matters, e.direction, e.time_horizon, t.role "
                  "FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id WHERE t.ticker = ? "
-                 "ORDER BY e.occurred_at DESC LIMIT 40", (ticker,), path)
+                 "ORDER BY t.role = 'mention', e.occurred_at DESC LIMIT 40", (ticker,), path)
     fundamentals = None
     try:
         from src.quant.fundamentals import grade_ticker, load_quarters  # noqa: PLC0415
@@ -487,7 +490,8 @@ def api_position(q: dict[str, str], path: Path | None = None) -> Any:
             alerts.append((day, r["alert_type"]))
     since = (datetime.now(VN_TZ) - timedelta(days=int(cfg["news_days"]))).isoformat()
     news = _rows("SELECT e.headline, e.occurred_at FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id "
-                 "WHERE t.ticker = ? AND e.occurred_at >= ? ORDER BY e.occurred_at DESC", (ticker, since), path)
+                 "WHERE t.ticker = ? AND t.role = 'subject' AND e.occurred_at >= ? ORDER BY e.occurred_at DESC",
+                 (ticker, since), path)
     value, _ = liquidity(frame, screen)
     band = price_limit_pct(exchange)
     try:   # the same nearest zones the chart draws
@@ -513,11 +517,12 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
     from src.quant.themes import load_themes  # noqa: PLC0415
     from src.quant.user_watchlist import entries as my_entries  # noqa: PLC0415
 
-    run_id = q.get("run_id")
-    if not run_id:
-        latest = _rows("SELECT run_id FROM screen_runs ORDER BY created_at DESC LIMIT 1", path=path)
-        run_id = latest[0]["run_id"] if latest else None
-    run = _rows("SELECT funnel_json FROM screen_runs WHERE run_id = ?", (run_id,), path) if run_id else []
+    latest = _rows("SELECT run_id FROM screen_runs ORDER BY created_at DESC LIMIT 1", path=path)
+    latest_id = latest[0]["run_id"] if latest else None
+    run_id = q.get("run_id") or latest_id
+    run = _rows("SELECT funnel_json, as_of_date FROM screen_runs WHERE run_id = ?", (run_id,), path) if run_id else []
+    # Viewing an older run: each member's close on that run's session and the change since (tester B12).
+    old_run = bool(run) and run_id != latest_id
     funnel = json.loads(run[0]["funnel_json"] or "{}") if run else {}
     rs_all = funnel.get("rs_ratings") or {}
     hot = {t["name"]: bool(t.get("hot")) for t in funnel.get("themes") or []}
@@ -601,11 +606,30 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
                      "volume": f[0]["volume"] if f else None,
                      "net5_volume": sum(v for v in last5 if v is not None) if any(v is not None for v in last5) else None,
                      "net5_value": sum(r["foreign_net_value"] or 0 for r in f[:5]) if f else None},
-            "risk_to_stop_pct": m["risk_to_stop_pct"] if m else None,
+            # From the base shown today (held after a breakout or a breach), not the screen run's:
+            # the loss from a buy at the pivot to the stop. A close at or below the stop is
+            # `stop_breached`, and then there is no "risk to stop" left to show.
+            "risk_to_stop_pct": _risk_to_stop(st, m),
+            "stop_breached": bool(st.get("stop_breached")),
+            "held_since": st.get("held_since"), "held_by": st.get("held_by"),
             "locked_worst_case_pct": m["locked_worst_case_pct"] if m else None,
             "demoted": bj.get("demoted"),
+            "since_screen": ({"date": run[0]["as_of_date"], "close": m["close"],
+                              "pct": (round((st["close"] / m["close"] - 1) * 100.0, 2)
+                                      if st.get("close") and m["close"] else None)}
+                             if old_run and m else None),
         }))
     return _board_change(out, path)
+
+
+def _risk_to_stop(state: Mapping[str, Any], member: Mapping[str, Any] | None) -> float | None:
+    """(pivot - stop) / pivot of the base shown today; None once the stop is breached."""
+    if state.get("stop_breached"):
+        return None
+    pivot, stop = state.get("pivot"), state.get("stop")
+    if pivot and stop:
+        return round((pivot - stop) / pivot * 100.0, 2)
+    return member["risk_to_stop_pct"] if member else None
 
 
 def _board_change(rows: list[dict[str, Any]], path: Path | None) -> list[dict[str, Any]]:
@@ -644,9 +668,11 @@ def api_market(q: dict[str, str], path: Path | None = None) -> Any:
     for r in rows:
         r["grp"], r["leader_of"], r["mine"] = groups.get(r["ticker"]), leaders.get(r["ticker"]), r["ticker"] in mine
     _board_change(rows, path)
-    return {"as_of": as_of, "rs_from": latest[0]["as_of_date"] if latest else None, "rows": rows,
-            "note": "Ảnh chụp để nghiên cứu, không phải danh sách ứng viên. RS theo lượt lọc gần nhất; "
-                    "mã dưới ngưỡng thanh khoản không có RS. % so với giá tham chiếu với mã đã đọc giá tham chiếu "
+    # The run the snapshot's RS really came from (a snapshot is rebuilt after every new run).
+    rs_from = next((r.get("rs_from") for r in rows if r.get("rs_from")), None)
+    return {"as_of": as_of, "rs_from": rs_from, "rows": rows,
+            "note": f"Ảnh chụp để nghiên cứu, không phải danh sách ứng viên. RS theo lượt lọc {rs_from or '–'}, "
+                    "xếp hạng trên mọi mã đủ dữ liệu. % so với giá tham chiếu với mã đã đọc giá tham chiếu "
                     "(mã đang theo dõi); mã khác so với giá đóng cửa phiên trước — ở UPCoM (gạch chấm) bảng giá "
                     "tính so với giá bình quân phiên trước nên có thể khác."}
 
@@ -675,8 +701,10 @@ def api_flow(q: dict[str, str], path: Path | None = None) -> Any:
             "foreign_buy": fb, "foreign_sell": fs,
             "foreign_net": None if fb is None or fs is None else fb - fs,
             "foreign_net_value": None if r["fbv"] is None or r["fsv"] is None else r["fbv"] - r["fsv"],
-            "domestic_buy": None if vol is None or fb is None else max(vol - fb, 0),
-            "domestic_sell": None if vol is None or fs is None else max(vol - fs, 0),
+            # Foreign volume includes put-through deals; when it exceeds the matched volume the
+            # subtraction says nothing (VHM 09/10: 0 / 0), so the domestic side is left blank (tester B16).
+            "domestic_buy": None if vol is None or fb is None or fb > vol else vol - fb,
+            "domestic_sell": None if vol is None or fs is None or fs > vol else vol - fs,
         })
     return {"ticker": ticker, "rows": out,
             "note": "Khối ngoại: DNSE (bảng khớp lệnh). Khối nội = tổng khối lượng khớp − phần khối ngoại."}
@@ -707,7 +735,7 @@ def api_alerts(q: dict[str, str], path: Path | None = None) -> Any:
 def api_news(q: dict[str, str], path: Path | None = None) -> Any:
     days = int(q.get("days", 30))
     since = (datetime.now(VN_TZ) - timedelta(days=days)).isoformat()
-    return _rows("SELECT t.ticker, e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, "
+    return _rows("SELECT t.ticker, t.role, e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, "
                  "e.best_source_level, e.assertion_type, e.what_happened, e.direction "
                  "FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id "
                  "WHERE e.occurred_at >= ? ORDER BY e.occurred_at DESC LIMIT 500", (since,), path)

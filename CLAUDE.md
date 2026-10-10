@@ -253,6 +253,18 @@ code when none is stored. Display only.
   oversold ones (below 3 bn) have negative medians and tiny signal-day value,
   and the liquid pullback earns +0.13% at T+5. Never label any of it a
   prediction or a buy.
+- Tester report (2026-10-11, `Bao_cao_kiem_thu_SEPA_Viet_Nam.docx`, fixed the same day):
+  `screener.tracked_base` keeps the pivot / stop of a base for `base.hold_sessions`
+  (5 = the status window) after a close through its pivot or its stop, so
+  "Vừa breakout" never sits beside a pivot above the price; `stop_breached` when
+  close <= stop. Pivot / stop rounded to the tick (`round_to_tick`). RS is ranked
+  over every clean ticker (~785), and the market table is rebuilt after each
+  new screen run (`rs_from` says which). DNSE rescales prices but not volumes on
+  ex-rights dates: volume averages start at the ex-date (`monitor.
+  min_sessions_after_action`), no valid breakout on the ex-date + 2 sessions.
+  `recent_gaps` uses UPCoM bounds up to `tickers.listed_date` (exchange moves);
+  `data_freshness.note` says why a series is flagged. News links found only in
+  an RSS summary are `role = 'mention'`. `start --update-only` ends the 15:30 job.
 - Backtest (`backtest-sepa`, 1,209 tickers, 2016-2026): most rules as
   implemented show no edge over a random liquid stock; valid breakouts of 8/8
   stocks help only in an UPTREND market and hurt under pressure. Thresholds
@@ -419,7 +431,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 777 tests currently pass.
+- Run `python -m pytest -q` after every change. 788 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

@@ -10,7 +10,7 @@ Usage:
     python -m src.main news [--days 30] [--tickers SSI] [--no-rss]   # collect + dedupe news for the focus list
     python -m src.main news-brief SSI [--days 30]                    # <= 7 ranked events, for in-session reading
     python -m src.main news-annotate <event_id> <file.json>          # store a checked interpretation
-    python -m src.main start [--no-update] [--plan] [--port 8765] [--no-browser]            # local web dashboard
+    python -m src.main start [--no-update] [--plan] [--update-only] [--port 8765] [--no-browser]  # local web dashboard
     python -m src.main backtest-sepa [--limit 50] [--step 5]         # test the SEPA rules on 5 years of VN data
     python -m src.main backtest-swing [--limit 50]                   # short-term setups (<= 2 weeks), VN rules
     python -m src.main fundamentals [--tickers HPG] [--refresh]      # quarterly income from CafeF + growth grade
@@ -346,7 +346,7 @@ def news(args: list[str]) -> int:
     from src.collectors.base import ProviderError
     from src.collectors.providers.web_news import PoliteFetcher, extract_body
     from src.collectors.registry import instantiate
-    from src.processors.news_pipeline import news_settings, process_articles
+    from src.processors.news_pipeline import news_settings, process_articles, reclassify_roles
     from src.database import connect
     from src.quant.monitor import monitored_tickers
 
@@ -380,12 +380,16 @@ def news(args: list[str]) -> int:
         print(f"  {spec.id:<10} bài mới {report.new_articles:>4}  lấy nội dung {report.bodies_fetched:>3}  "
               f"sự kiện mới {report.events_created:>3}  gộp {report.events_updated:>3}"
               + (f"  lỗi nội dung {len(report.body_failures)}" if report.body_failures else ""), flush=True)
+    moved = reclassify_roles()              # links stored before roles existed (idempotent)
+    if moved:
+        print(f"  {moved} liên kết tin chỉ nhắc tới mã (không phải tin của mã) được đánh dấu lại")
     print(f"\nTin theo mã ({days} ngày, {len(focus)} mã theo dõi):")
     since_iso = since.isoformat()
     with connect() as conn:
         for t in focus:
             n = conn.execute("SELECT COUNT(*) FROM news_events e JOIN event_tickers x ON x.event_id = e.event_id "
-                             "WHERE x.ticker = ? AND e.occurred_at >= ?", (t, since_iso)).fetchone()[0]
+                             "WHERE x.ticker = ? AND x.role = 'subject' AND e.occurred_at >= ?",
+                             (t, since_iso)).fetchone()[0]
             print(f"  {t:<4} {n:>3} sự kiện")
     print("\nĐọc: python -m src.main news-brief <MÃ>")
     return 0
@@ -938,6 +942,8 @@ def start(args: list[str]) -> int:
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--no-update", action="store_true", help="open the dashboard at once, without updating")
     parser.add_argument("--plan", action="store_true", help="show which steps would run, run nothing")
+    parser.add_argument("--update-only", action="store_true",
+                        help="update (screen included when due), then exit without serving: the 15:30 job's last step")
     opts = parser.parse_args(args)
     init_db()
     if opts.plan:
@@ -949,6 +955,8 @@ def start(args: list[str]) -> int:
         holder = pl.acquire_lock(now, cfg)
         if holder:
             print(f"Đang có một lượt cập nhật khác chạy ({holder}) — mở web với dữ liệu hiện có.")
+            if opts.update_only:
+                return 1
         else:
             try:
                 plan = pl.plan_steps(now, index_dates=pl.dnse_index_dates(now))
@@ -960,6 +968,8 @@ def start(args: list[str]) -> int:
                 return 130
             finally:
                 pl.release_lock()
+        if opts.update_only:
+            return 0
     url = f"http://127.0.0.1:{opts.port}/"
     with socket.socket() as probe:
         busy = probe.connect_ex(("127.0.0.1", opts.port)) == 0

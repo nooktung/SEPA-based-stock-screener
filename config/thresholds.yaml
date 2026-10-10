@@ -232,6 +232,10 @@ news:
   # name or an explicit "mã"/"cổ phiếu" cue nearby, never on their own.
   # (checked against the universe 2026-09-27: these are tickers AND everyday words)
   ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP]
+  # Sources whose articles come from a ticker's own news page: that ticker is their subject even
+  # when the headline does not name it. Elsewhere (RSS) a ticker found only in the summary is a
+  # "mention" -- "Một cổ phiếu bị khối ngoại xả 9.600 tỷ" (MCH) was filed under VHM (tester, B06).
+  ticker_page_sources: [cafef]
   # Deterministic event typing: lower-case keyword -> type, first match wins in this order.
   # Matched against the headline first; the summary is used only if the headline matches nothing.
   event_rules:
@@ -359,6 +363,12 @@ sepa_screen:
     min_swing_pct: 3.0              # zigzag reversal that counts as a contraction leg
     max_base_sessions: 325          # 65 weeks
     min_base_sessions: 15           # 3 weeks
+    # After a close above the pivot or below the stop, keep that base's pivot and stop this many
+    # sessions (unless a new base forms): otherwise the breakout bar becomes the new right side and
+    # the pivot climbs above a stock that just broke out (tester report 2026-10-11) [TRIỂN KHAI].
+    # Same length as monitor.status_window_sessions, so "Vừa breakout" / "Mất hiệu lực" and the
+    # pivot / stop shown beside them always describe the same base.
+    hold_sessions: 5
     vcp:
       min_contractions: 2           # "two to four, occasionally five or six" [SÁCH]
       max_contractions: 6
@@ -620,6 +630,13 @@ monitor:
   breakout_min_close_position: 0.5
   # Status window: "Vừa breakout" / "Mất hiệu lực" look back this many sessions.
   status_window_sessions: 5
+  # DNSE rescales past PRICES on an ex-rights date but not past VOLUMES (HDB 09/10/2026, 30% stock:
+  # prices / 1.3, volumes unchanged), so a 50-session average straddling the ex-date is in old share
+  # units. The average then uses only sessions from the ex-date on, if at least this many; otherwise
+  # the volume ratio is "not comparable". A breakout on the ex-date or the next N sessions is never
+  # rated valid (tester report 2026-10-11) [TRIỂN KHAI].
+  min_sessions_after_action: 10
+  corporate_action_quiet_sessions: 2
 
 # --------------------------------------------------------------------------
 # Price collection (src/collectors/backfill.py)

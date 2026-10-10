@@ -50,7 +50,7 @@ def test_flat_base_pivot_is_the_highest_price_in_the_base():
     from src.quant.screener import read_base
     b = read_base(frame(flat_base_closes()), "HOSE", SCREEN)
     assert b.kind == "FLAT_BASE"
-    assert b.pivot == pytest.approx(40_000 * 1.004 + 50, rel=1e-6)     # top high + one HOSE tick
+    assert b.pivot == 40_250                       # top high 40,160 + one HOSE tick, on the 50-dong grid
 
 
 def test_breakout_through_yesterdays_pivot_with_volume():
@@ -221,3 +221,52 @@ def test_status_is_attached_to_each_monitored_state(db):
     setup = result.states["AAA"].setup
     assert setup["status"] in {"AT_PIVOT", "WATCH", "BREAKOUT", "INVALIDATED"}
     assert setup["market_note"]
+
+
+# -- pivot / stop held after an event; volume around an ex-rights date (tester report 2026-10-11) --
+
+def test_after_a_breakout_the_pivot_it_cleared_is_kept():
+    """GMD 07/10/2026 broke out of 52,770 and the list then said "pivot 55,100" (B01)."""
+    closes = flat_base_closes() + [41_000, 41_600, 42_300]
+    volumes = [1_000_000] * (len(closes) - 3) + [2_000_000] * 3
+    f = frame(closes, volumes)
+    s = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON)
+    assert s.pivot == 40_250 and s.held_by == "BREAKOUT" and s.held_since == f.index[-3].date().isoformat()
+    assert s.distance_to_pivot_pct > 0 and not s.stop_breached
+
+
+def test_the_hold_ends_after_the_status_window():
+    closes = flat_base_closes() + [41_000] + [41_000 + 150 * k for k in range(1, 7)]
+    s = compute_state("AAA", "HOSE", frame(closes), None, 90.0, SCREEN, MON)
+    assert s.held_since is None                     # 6 sessions after the breakout: today's base again
+
+
+def test_after_a_close_under_the_stop_the_stop_is_kept_and_marked_breached():
+    """VIC 09/10/2026: "thủng stop 226.900", then the list showed stop 225.500 = the close (B05)."""
+    base = flat_base_closes()
+    stop_before = compute_state("AAA", "HOSE", frame(base), None, 90.0, SCREEN, MON).stop
+    s = compute_state("AAA", "HOSE", frame(base + [stop_before * 0.97]), None, 90.0, SCREEN, MON)
+    assert s.stop == stop_before and s.stop_breached and s.held_by == "STOP"
+
+
+def test_volume_is_averaged_only_from_the_ex_rights_date():
+    """DNSE rescaled HDB's prices for a 30% stock dividend but not its volumes (B03)."""
+    closes = flat_base_closes() + [38_000] * 12
+    volumes = [1_000_000] * (len(closes) - 12) + [1_300_000] * 11 + [2_600_000]
+    f = frame(closes, volumes)
+    through = f.index[-13].date().isoformat()          # last old-scale session: ex-date 12 sessions ago
+    s = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON, actions=[(through, 0.769)])
+    assert s.ex_date == f.index[-12].date().isoformat() and s.volume_ratio == pytest.approx(2.0)
+    fresh = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON, actions=[(f.index[-4].date().isoformat(), 0.769)])
+    assert fresh.volume_ratio is None and "GDKHQ" in fresh.volume_note   # 2 sessions after: not comparable
+
+
+def test_a_breakout_on_the_ex_rights_date_is_never_rated_valid():
+    closes = flat_base_closes() + [41_000]
+    volumes = [1_000_000] * (len(closes) - 1) + [3_000_000]
+    f = frame(closes, volumes)
+    acts = [(f.index[-2].date().isoformat(), 0.769)]  # today is the ex-date
+    today = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON, actions=acts)
+    before = compute_state("AAA", "HOSE", f.iloc[:-1], None, 90.0, SCREEN, MON, actions=acts)
+    events = {e.event_type: e for e in detect_events("AAA", "HOSE", f, today, before, SCREEN, MON, actions=acts)}
+    assert BREAKOUT not in events and "GDKHQ" in events[BREAKOUT_WEAK].what_changed

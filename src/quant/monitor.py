@@ -23,12 +23,13 @@ from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
+from src.collectors.refprices import _adjustments
 from src.collectors.refprices import lookup as reference_lookup
 from src.config import load_config
 from src.database import connect, init_db
 from src.market_calendar import price_limit_pct
 from src.quant import indicators as ind
-from src.quant.screener import market_status, read_base, screen_settings, tick_size, trend_template
+from src.quant.screener import market_status, read_base, screen_settings, tick_size, tracked_base, trend_template
 from src.quant.setup_status import assess, market_note
 
 # Event types, stored in alerts.alert_type
@@ -70,6 +71,11 @@ class TickerState:
     at_ceiling: bool
     setup: dict[str, Any] = field(default_factory=dict)    # three questions + status (setup_status)
     tech: dict[str, Any] = field(default_factory=dict)     # TradingView-style ratings + candle (display only)
+    stop_breached: bool = False         # the close is at or below the (held) stop
+    held_since: str | None = None       # pivot / stop held from this session (screener.tracked_base)
+    held_by: str | None = None          # "BREAKOUT" or "STOP"
+    ex_date: str | None = None          # a recorded ex-rights date within the volume window
+    volume_note: str | None = None      # why the volume ratio could not be measured
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -113,6 +119,32 @@ def monitor_settings(thresholds: Mapping[str, Any] | None = None) -> dict[str, A
 # State
 # ---------------------------------------------------------------------------
 
+def ex_dates(frame: pd.DataFrame, actions: Sequence[tuple[str, float]]) -> list[pd.Timestamp]:
+    """First session after each recorded rescale's last old-scale session (the ex-rights date)."""
+    out = []
+    for through, _factor in actions:
+        later = frame.index[frame.index > pd.Timestamp(through)]
+        if len(later):
+            out.append(later[0])
+    return sorted(out)
+
+
+def _dmy(day: Any) -> str:
+    text = str(day)[:10]
+    return f"{text[8:10]}/{text[5:7]}/{text[:4]}"
+
+
+def _n(value: float, decimals: int = 0) -> str:
+    """Vietnamese number: 39.020 and 1,62 (event texts used English 39,020 and 1.62 -- tester B14)."""
+    return f"{value:,.{decimals}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+# Base labels as the dashboard shows them (app.js BASE_TEXT), for event texts (tester B15).
+BASE_TEXT = {"VCP": "VCP", "FLAT_BASE": "nền phẳng", "CUP_HANDLE": "cốc tay cầm", "CUP": "cốc chưa có tay cầm",
+             "BASE": "nền", "NEAR_HIGH": "sát đỉnh", "SHARP_PULLBACK": "vừa giảm mạnh", "EXTENDED": "đã chạy xa",
+             "TOO_DEEP": "điều chỉnh quá sâu", "BROKEN": "thủng nền", "NONE": "–"}
+
+
 def compute_state(
     ticker: str,
     exchange: str,
@@ -123,16 +155,29 @@ def compute_state(
     mon: Mapping[str, Any],
     with_tech: bool = True,
     ceiling: float | None = None,
+    actions: Sequence[tuple[str, float]] = (),
 ) -> TickerState:
     """`ceiling`: the exchange's ceiling price for the last session when stored
-    (src/collectors/refprices.py); otherwise it is derived from the previous close."""
+    (src/collectors/refprices.py); otherwise it is derived from the previous close.
+    `actions`: the ticker's recorded rescales, (last old-scale session, factor)."""
     close = frame["close"].astype("float64")
     vol = frame["volume"].astype("float64")
     last = float(close.iloc[-1])
     prev = float(close.iloc[-2]) if len(close) > 1 else None
     change = (last / prev - 1) * 100.0 if prev else None
     n = int(mon["volume_avg_sessions"])
-    avg = float(vol.iloc[-n - 1:-1].mean()) if len(vol) > n else float("nan")
+    window = vol.iloc[-n - 1:-1]
+    volume_note = ex_date = None
+    # DNSE does not rescale past volumes on an ex-rights date: average only from the ex-date on.
+    recent = [d for d in ex_dates(frame, actions) if len(window) and d >= window.index[0]]
+    if recent:
+        ex_date = recent[-1].date().isoformat()
+        window = window[window.index >= recent[-1]]
+        if len(window) < int(mon.get("min_sessions_after_action", 10)):
+            window = window.iloc[0:0]
+            volume_note = (f"KL không so được: ngày GDKHQ {_dmy(ex_date)}, DNSE điều chỉnh giá quá khứ "
+                           "nhưng không điều chỉnh khối lượng")
+    avg = float(window.mean()) if len(window) and (len(vol) > n or recent) else float("nan")
     volume_ratio = float(vol.iloc[-1]) / avg if avg == avg and avg > 0 else None
 
     criteria = trend_template(frame, rs_rating, screen)
@@ -145,7 +190,7 @@ def compute_state(
                 c.assessable = False
                 c.passed = False
                 c.threshold = f"cần ≥ {min_hist} phiên (mới {len(frame)})"
-    base = read_base(frame, exchange, screen)
+    base = tracked_base(frame, exchange, screen)
 
     rs_vs_index = None
     if index_close is not None and len(close) > 63:
@@ -183,6 +228,11 @@ def compute_state(
         above_ma200_pct=(last / float(ma200) - 1) * 100.0 if ma200 == ma200 and ma200 else None,
         at_ceiling=at_ceiling,
         tech=technicals(frame, band) if with_tech else {},
+        stop_breached=bool(base.stop) and last <= base.stop,
+        held_since=base.held_since,
+        held_by=base.held_by,
+        ex_date=ex_date,
+        volume_note=volume_note,
     )
 
 
@@ -213,9 +263,14 @@ def detect_events(
     screen: Mapping[str, Any],
     mon: Mapping[str, Any],
     market: Mapping[str, Any] | None = None,
+    actions: Sequence[tuple[str, float]] = (),
 ) -> list[Event]:
     out: list[Event] = []
     d = today.trade_date
+    # sessions since the latest recorded ex-rights date (0 = the ex-date itself)
+    exd = [x for x in ex_dates(frame, actions) if x <= frame.index[-1]]
+    since_ex = int((frame.index > exd[-1]).sum()) if exd else None
+    quiet = since_ex is not None and since_ex <= int(mon.get("corporate_action_quiet_sessions", 2))
 
     def add(kind: str, what: str, why: str) -> None:
         out.append(Event(ticker, d, kind, what, why))
@@ -230,12 +285,13 @@ def detect_events(
         prev_close = float(frame["close"].iloc[-2])
         if today.close > before.pivot >= prev_close:
             ratio = today.volume_ratio
-            vol_text = f"KL = {ratio:.2f}× TB{mon['volume_avg_sessions']}." if ratio else "KL không xác định."
+            vol_text = (f"KL = {_n(ratio, 2)}× TB{mon['volume_avg_sessions']}." if ratio
+                        else f"{today.volume_note or 'KL không xác định'}.")
             if before.base_kind == "NEAR_HIGH":
                 # A high set only weeks ago is not a base: no contraction, no
                 # dry-up, so this is a new high rather than a base breakout.
                 add(NEW_HIGH_NO_BASE,
-                    f"Đóng cửa {today.close:,.0f} vượt đỉnh gần {before.pivot:,.0f}; {vol_text}",
+                    f"Đóng cửa {_n(today.close)} vượt đỉnh gần {_n(before.pivot)}; {vol_text}",
                     "Đỉnh cũ mới hình thành vài tuần, chưa có nền đạt chuẩn -- không phải điểm mua "
                     "breakout khỏi nền theo SEPA [SÁCH]." + vol_note)
             else:
@@ -249,26 +305,31 @@ def detect_events(
                     "volume": strong_vol or today.at_ceiling,
                     "close_high": close_pos >= float(mon["breakout_min_close_position"]),
                     "not_extended": today.close <= before.pivot * (1 + zone / 100.0),
+                    # On and just after an ex-rights date prices and volumes are distorted.
+                    "corporate_action": not quiet,
                 }
                 missing = {
-                    "volume": f"KL chỉ {ratio:.2f}× trung bình (cần ≥ {mon['breakout_volume_ratio']}×)" if ratio else "thiếu KL",
+                    "volume": (f"KL chỉ {_n(ratio, 2)}× trung bình (cần ≥ {_n(float(mon['breakout_volume_ratio']), 1)}×)" if ratio
+                               else (today.volume_note or "thiếu KL")),
                     "close_high": f"đóng cửa ở {close_pos:.0%} biên độ phiên (cần ≥ {mon['breakout_min_close_position']:.0%})",
                     "not_extended": f"đã vượt pivot hơn {zone:g}% ngay phiên breakout",
+                    "corporate_action": (f"sát ngày GDKHQ {_dmy(exd[-1]) if exd else ''}: giá quá khứ đã điều chỉnh, "
+                                         "khối lượng thì chưa, nên tín hiệu cần kiểm tra lại"),
                 }
                 valid = all(checks.values())
                 level, note = market_note(market)
                 market_text = "" if level == "ok" else f" Thị trường: {note}."
                 if valid:
                     add(BREAKOUT,
-                        f"Breakout hợp lệ: đóng cửa {today.close:,.0f} vượt pivot {before.pivot:,.0f} của nền "
-                        f"{before.base_kind}; {vol_text} Đóng cửa ở {close_pos:.0%} biên độ phiên.",
+                        f"Breakout hợp lệ: đóng cửa {_n(today.close)} vượt pivot {_n(before.pivot)} của "
+                        f"{BASE_TEXT.get(before.base_kind, before.base_kind)}; {vol_text} Đóng cửa ở {close_pos:.0%} biên độ phiên.",
                         "Đủ các điều kiện: KL ≥ 40% trên trung bình [TRANG GỐC IBD], đóng cửa ở nửa trên phiên, "
                         "chưa chạy xa khỏi pivot." + market_text + vol_note)
                 else:
                     gaps = "; ".join(missing[k] for k, ok in checks.items() if not ok)
                     add(BREAKOUT_WEAK,
-                        f"Breakout yếu: đóng cửa {today.close:,.0f} vượt pivot {before.pivot:,.0f} của nền "
-                        f"{before.base_kind} nhưng {gaps}.",
+                        f"Breakout yếu: đóng cửa {_n(today.close)} vượt pivot {_n(before.pivot)} của "
+                        f"{BASE_TEXT.get(before.base_kind, before.base_kind)} nhưng {gaps}.",
                         "Breakout thiếu xác nhận dễ thất bại [SÁCH]." + market_text + vol_note)
 
     # A recent breakout that has closed back under its pivot
@@ -282,14 +343,14 @@ def detect_events(
         if base_prior.pivot and broke_close > base_prior.pivot >= float(f_prior["close"].iloc[-1]):
             if today.close < base_prior.pivot <= float(frame["close"].iloc[-2]):
                 add(BREAKOUT_FAILED,
-                    f"Breakout ngày {frame.index[-k - 1].date()} qua pivot {base_prior.pivot:,.0f} "
-                    f"đã đóng cửa trở lại dưới pivot ({today.close:,.0f}).",
+                    f"Breakout ngày {_dmy(frame.index[-k - 1])} qua pivot {_n(base_prior.pivot)} "
+                    f"đã đóng cửa trở lại dưới pivot ({_n(today.close)}).",
                     "Giá quay lại dưới pivot là một trong các dấu hiệu thất bại của SEPA [SÁCH].")
             break
 
     if before.stop and today.close < before.stop <= float(frame["close"].iloc[-2]):
         add(STOP_BREACHED,
-            f"Đóng cửa {today.close:,.0f} dưới mức stop tham chiếu {before.stop:,.0f} (đáy nhịp co hẹp cuối "
+            f"Đóng cửa {_n(today.close)} dưới mức stop tham chiếu {_n(before.stop)} (đáy nhịp co hẹp cuối "
             f"hoặc pivot − {screen['base']['max_stop_pct']}%).",
             "Mức stop là điểm vô hiệu hóa của nền giá; thủng nó là nền đã hỏng theo cách đo hiện tại.")
 
@@ -311,14 +372,14 @@ def detect_events(
     heavy = today.volume_ratio is not None and today.volume_ratio >= float(mon["heavy_volume_ratio"])
     if len(ma50.dropna()) > 1 and close.iloc[-1] < ma50.iloc[-1] and close.iloc[-2] >= ma50.iloc[-2] and heavy:
         add(MA50_HEAVY_VOLUME,
-            f"Đóng cửa dưới MA50 ({ma50.iloc[-1]:,.0f}) với KL {today.volume_ratio:.2f}× trung bình.",
+            f"Đóng cửa dưới MA50 ({_n(ma50.iloc[-1])}) với KL {_n(today.volume_ratio, 2)}× trung bình.",
             "IBD thường coi đóng cửa dưới MA50 với KL lớn là tín hiệu bán khi yếu [THỨ CẤP].")
 
     lookback = int(mon["largest_down_lookback_sessions"])
     changes = close.pct_change(fill_method=None).iloc[-lookback:]
     if len(changes.dropna()) >= 20 and changes.iloc[-1] < 0 and changes.iloc[-1] <= changes.min():
         add(LARGEST_DOWN_DAY,
-            f"Phiên giảm {changes.iloc[-1] * 100:.1f}%, mạnh nhất trong {lookback} phiên.",
+            f"Phiên giảm {_n(changes.iloc[-1] * 100, 1)}%, mạnh nhất trong {lookback} phiên.",
             "Minervini xem phiên giảm lớn nhất kể từ đầu Stage 2 là dấu hiệu bán khi yếu [SÁCH]; "
             "cửa sổ đo là lựa chọn triển khai.")
 
@@ -330,8 +391,8 @@ def detect_events(
 
     if ready(today) and not ready(before):
         add(SETUP_READY,
-            f"Nền {today.base_kind} ({_legs(today.contractions)}) "
-            f"cách pivot {today.distance_to_pivot_pct:+.1f}%, KL đã cạn.",
+            f"{BASE_TEXT.get(today.base_kind, today.base_kind).capitalize()} ({_legs(today.contractions)}) "
+            f"cách pivot {_n(today.distance_to_pivot_pct, 1)}%, KL đã cạn.",
             "Đủ các điều kiện đo được của một điểm pivot đang hình thành [TRIỂN KHAI]; "
             "chưa phải breakout.")
 
@@ -437,6 +498,8 @@ def run_monitor(persist: bool = True, path: Path | None = None,
     # Trend Template events wait until a year of history exists.
     min_bars = int((screen.get("recent_listings") or {}).get("min_sessions", 210)) + 1
     limits = reference_lookup([(t, d.date().isoformat()) for t, f in frames.items() for d in f.index[-2:]], path)
+    with connect(path) as conn:
+        actions = _adjustments(conn)                # recorded ex-rights rescales (src/collectors/refprices.py)
     for t in tickers:
         f = frames.get(t)
         ex = exchanges.get(t)
@@ -445,11 +508,12 @@ def run_monitor(persist: bool = True, path: Path | None = None,
             continue
         days = [d.date().isoformat() for d in f.index[-2:]]
         ceil = [(limits.get((t, d)) or {}).get("ceiling") for d in days]
-        today = compute_state(t, ex, f, index_close, screen_rs.get(t), screen, mon, ceiling=ceil[-1])
+        acts = actions.get(t, [])
+        today = compute_state(t, ex, f, index_close, screen_rs.get(t), screen, mon, ceiling=ceil[-1], actions=acts)
         before = compute_state(t, ex, f.iloc[:-1], index_close, screen_rs.get(t), screen, mon, with_tech=False,
-                               ceiling=ceil[0] if len(ceil) > 1 else None)
+                               ceiling=ceil[0] if len(ceil) > 1 else None, actions=acts)
         result.states[t] = today
-        result.events.extend(detect_events(t, ex, f, today, before, screen, mon, result.market))
+        result.events.extend(detect_events(t, ex, f, today, before, screen, mon, result.market, actions=acts))
 
     dates = [s.trade_date for s in result.states.values()]
     result.as_of = max(dates) if dates else None

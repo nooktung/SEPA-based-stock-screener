@@ -127,7 +127,7 @@ Toàn thị trường (1.663)
  │    - gắn HẠNG thanh khoản (chỉ là nhãn, không loại mã, không đổi điểm):
  │        Cao ≥ 10 tỷ · Khá 8–10 tỷ · Thấp 3–8 tỷ (khó mua bán lượng lớn, dễ kẹt khi giảm sàn)
  │    - ≥ 90% số phiên trong 60 phiên gần nhất có giao dịch
- │ 3. RS Rating — xếp hạng trên nhóm đã qua thanh khoản (mục 6)
+ │ 3. RS Rating — xếp hạng trên mọi mã đủ dữ liệu (mục 6)
  │ 4. Trend Template 8 tiêu chí (mục 5)
  │ 5. Nhận dạng nền giá (mục 7)
  │ 6. Chia nhóm A/B/C, xếp hạng, lấy đủ 80 (mục 9)
@@ -176,10 +176,10 @@ P12 = giá hôm nay / giá 252 phiên trước − 1     (~12 tháng)
 Điểm thô (biến thể A, mặc định) = 0,4·P3 + 0,2·P6 + 0,2·P9 + 0,2·P12
    (biến thể B = 2·Q1 + Q2 + Q3 + Q4, theo từng quý riêng — đổi bằng `rs.variant: B`)
 
-RS Rating = thứ hạng phần trăm của điểm thô trong nhóm mã ĐÃ QUA LỌC THANH KHOẢN, từ 1 đến 99
+RS Rating = thứ hạng phần trăm của điểm thô trong MỌI MÃ ĐỦ DỮ LIỆU (~785 mã), từ 1 đến 99
 ```
 
-- RS 90 = mạnh hơn 90% số mã đủ thanh khoản.
+- RS 90 = mạnh hơn 90% số mã đủ dữ liệu trên thị trường (từ 11/10/2026; trước đó chỉ so trong nhóm đủ thanh khoản).
 - Tính theo **giá**, không cộng cổ tức tiền mặt (giống IBD). Vì vậy mã cổ tức cao như VNM
   có RS thấp hơn tổng lợi nhuận thực.
 - RS **chỉ cập nhật khi lọc lại**. Hằng ngày, monitor dùng thêm chỉ số "so với VN-Index
@@ -287,6 +287,11 @@ IBD dùng "+10 cent"; ở Việt Nam đổi thành **+1 bước giá**:
 | HNX, UPCoM | 100đ |
 
 **Vùng mua**: tối đa 5% trên pivot; quá 5% = "đã chạy xa" **[THỨ CẤP]**.
+
+Pivot làm tròn **lên**, stop làm tròn **xuống** theo bước giá. Trong **5 phiên** sau một phiên breakout (hoặc thủng stop),
+dashboard giữ nguyên pivot và stop của nền đó và ghi "giữ từ breakout dd/mm"; giá đóng cửa ≤ stop thì ghi
+**"đã thủng stop"** thay cho rủi ro tới stop. Nhờ vậy nhãn "Vừa breakout" / "Mất hiệu lực" luôn đi cùng đúng pivot / stop
+đã tạo ra nó (sửa theo báo cáo kiểm thử 11/10/2026).
 
 ### 8.2 Stop tham chiếu
 

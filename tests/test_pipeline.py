@@ -61,7 +61,8 @@ def test_a_second_start_the_same_day_skips_what_is_done(db):
                          [(f"T{i:02d}",) for i in range(10)])
         conn.execute("INSERT INTO news_articles (article_id, title, url, source_id, source_level, collected_at) "
                      "VALUES ('a', 't', 'u', 'dnse_openapi', 3, '2026-10-05T01:00:00+00:00')")
-        conn.execute("INSERT INTO market_snapshot (as_of_date, ticker, row_json, created_at) VALUES ('2026-10-02', 'T00', '{}', 'x')")
+        conn.execute("INSERT INTO market_snapshot (as_of_date, ticker, row_json, created_at) "
+                     "VALUES ('2026-10-02', 'T00', '{}', '2026-10-02T09:30:00+00:00')")       # built after the screen run
         conn.execute("INSERT INTO reference_prices (ticker, session_date, reference, ceiling, floor, published_at, source_id, observed_at) VALUES ('T00', '2026-10-05', 10, 11, 9, '2026-10-02 20:46:00', "
                      "'dnse_openapi', '2026-10-05T00:30:00+00:00')")       # read at 07:30 VN, 1.5 hours ago
         conn.execute("UPDATE index_daily SET matched_volume = 1, session_observed_at = 'x' WHERE trade_date = '2026-10-02'")
@@ -123,3 +124,17 @@ def test_a_running_start_blocks_another_until_it_is_stale(tmp_path):
     assert pl.acquire_lock(now + timedelta(hours=4), CFG, lock) is None      # left over from a crash
     pl.release_lock(lock)
     assert not lock.exists()
+
+
+def test_the_market_table_is_rebuilt_after_a_newer_screen_run(db):
+    """Built at 16:56 and screened at 17:16, it showed the previous run's RS (tester report B04)."""
+    with connect(db) as conn:
+        conn.executemany("INSERT INTO prices_daily (ticker, trade_date, close, volume, source_id, observed_at) "
+                         "VALUES (?, '2026-10-02', 10, 1, 'dnse_openapi', 'x')", [(f"T{i:02d}",) for i in range(10, 100)])
+        conn.execute("INSERT INTO screen_runs (run_id, created_at, as_of_date, params_json, funnel_json) "
+                     "VALUES ('r', '2026-10-02T10:16:00+00:00', '2026-10-02', '{}', '{}')")
+        conn.execute("INSERT INTO market_snapshot (as_of_date, ticker, row_json, created_at) "
+                     "VALUES ('2026-10-02', 'T00', '{}', '2026-10-02T09:56:00+00:00')")
+    plan = pl.plan_steps(datetime(2026, 10, 5, 9, 0, tzinfo=VN), db, index_dates=SESSIONS, cfg=CFG)
+    step = next(s for s in plan.steps if s.key == "market")
+    assert step.run and "lượt lọc mới" in step.why

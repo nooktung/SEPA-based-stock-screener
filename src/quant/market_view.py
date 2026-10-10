@@ -40,13 +40,15 @@ from src.quant.themes import load_themes
 INDUSTRY_LEVEL_COLUMN = {1: "sector", 2: "industry_group", 3: "industry"}
 
 
-def _latest_run(conn) -> tuple[dict[str, float], dict[str, float], set[str]]:
-    """RS of every liquid ticker, industry RS percentiles and hot themes, from the latest screen run."""
-    row = conn.execute("SELECT funnel_json FROM screen_runs ORDER BY created_at DESC LIMIT 1").fetchone()
+def _latest_run(conn) -> tuple[dict[str, float], dict[str, float], set[str], str | None]:
+    """RS of every rated ticker, industry RS percentiles, hot themes and the run's session date,
+    from the latest screen run. The date travels with each row (`rs_from`): a snapshot built
+    before a newer run would otherwise show the older RS under the newer date (tester, 09/10)."""
+    row = conn.execute("SELECT funnel_json, as_of_date FROM screen_runs ORDER BY created_at DESC LIMIT 1").fetchone()
     funnel = json.loads(row[0] or "{}") if row else {}
     industries = {i["name"]: i.get("rs_percentile") for i in funnel.get("industries") or []}
     hot = {t["name"] for t in funnel.get("themes") or [] if t.get("hot")}
-    return funnel.get("rs_ratings") or {}, industries, hot
+    return funnel.get("rs_ratings") or {}, industries, hot, (row[1] if row else None)
 
 
 def ticker_row(ticker: str, exchange: str, frame: pd.DataFrame, rs: float | None, flagged: bool,
@@ -75,7 +77,7 @@ def ticker_row(ticker: str, exchange: str, frame: pd.DataFrame, rs: float | None
         if len(frame) < min_hist and code != "TT7":
             c.assessable = False                       # a recent listing: only TT7 is measurable
         elif code == "TT8" and rs is None:
-            c.assessable = False                       # RS is rated only above the liquidity floor
+            c.assessable = False                       # no RS: flagged data or not enough history
     row["tt_passed"] = sum(1 for c in criteria.values() if c.assessable and c.passed)
     row["missing"] = [k for k, c in criteria.items() if c.assessable and not c.passed]
     row["not_assessable"] = [k for k, c in criteria.items() if not c.assessable]
@@ -99,10 +101,12 @@ def build_snapshot(as_of: date | None = None, path: Path | None = None,
     frames, exchanges, stale = _load_universe_frames(as_of, int(settings["min_history_sessions"]) + 120, path)
     level = int((settings.get("industry") or {}).get("level", 2))
     with connect(path) as conn:
-        rs_all, industry_rs, hot = _latest_run(conn)
+        rs_all, industry_rs, hot, rs_from = _latest_run(conn)
         names = {t: n for t, n in conn.execute("SELECT ticker, name FROM tickers")}
         ind_rows = {r["ticker"]: r for r in conn.execute("SELECT * FROM ticker_industry")}
         graded = {r[0] for r in conn.execute("SELECT DISTINCT ticker FROM financial_metrics WHERE period_type = 'Q'")}
+        flag_notes = dict(conn.execute("SELECT scope_key, note FROM data_freshness "
+                                       "WHERE dataset = 'prices_daily' AND is_stale = 1").fetchall())
     themes = load_themes()
     rows = []
     for t, frame in frames.items():
@@ -110,6 +114,9 @@ def build_snapshot(as_of: date | None = None, path: Path | None = None,
             continue
         row = ticker_row(t, exchanges[t], frame, rs_all.get(t), t in stale, settings)
         row["name"] = names.get(t)
+        row["rs_from"] = rs_from
+        if row["flagged"]:
+            row["flag_note"] = flag_notes.get(t)
         ir = ind_rows.get(t)
         ind_name = (ir[INDUSTRY_LEVEL_COLUMN.get(level, "industry_group")] or ir["sector"]) if ir else None
         row["industry"] = {"name": ind_name, "rs_percentile": industry_rs.get(ind_name)}

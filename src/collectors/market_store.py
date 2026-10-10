@@ -289,8 +289,9 @@ def mark_freshness(
     stale: bool = False,
     updated_at: str | None = None,
     path: Path | None = None,
+    note: str | None = None,
 ) -> None:
-    """Record when a dataset was last refreshed, and whether it is stale.
+    """Record when a dataset was last refreshed, whether it is stale, and why (`note`).
 
     A failed collection marks stale and leaves last_updated_at pointing at the
     previous success -- so the age of the data stays visible instead of being
@@ -300,13 +301,14 @@ def mark_freshness(
         if stale:
             conn.execute(
                 """
-                INSERT INTO data_freshness (dataset, scope_key, last_updated_at, ttl_hours, is_stale)
-                VALUES (?, ?, NULL, ?, 1)
+                INSERT INTO data_freshness (dataset, scope_key, last_updated_at, ttl_hours, is_stale, note)
+                VALUES (?, ?, NULL, ?, 1, ?)
                 ON CONFLICT(dataset, scope_key) DO UPDATE SET
                     ttl_hours=excluded.ttl_hours,
-                    is_stale=1
+                    is_stale=1,
+                    note=excluded.note
                 """,
-                (dataset, scope_key, ttl_hours),
+                (dataset, scope_key, ttl_hours, note),
             )
         else:
             conn.execute(
@@ -316,7 +318,8 @@ def mark_freshness(
                 ON CONFLICT(dataset, scope_key) DO UPDATE SET
                     last_updated_at=excluded.last_updated_at,
                     ttl_hours=excluded.ttl_hours,
-                    is_stale=0
+                    is_stale=0,
+                    note=NULL
                 """,
                 (dataset, scope_key, updated_at or utcnow(), ttl_hours),
             )

@@ -135,6 +135,7 @@ def plan_steps(now: datetime, path: Path | None = None, index_dates: Sequence[da
         news_last = conn.execute("SELECT MAX(collected_at) FROM news_articles").fetchone()[0]
         ref_last = conn.execute("SELECT MAX(observed_at) FROM reference_prices").fetchone()[0]
         snap = conn.execute("SELECT MAX(as_of_date) FROM market_snapshot").fetchone()[0]
+        snap_built = conn.execute("SELECT MAX(created_at) FROM market_snapshot").fetchone()[0]
         price_max = conn.execute("SELECT MAX(trade_date) FROM prices_daily").fetchone()[0]
         state_n = conn.execute("SELECT COUNT(*) FROM monitor_state WHERE trade_date = ?",
                                (session.isoformat() if session else "",)).fetchone()[0]
@@ -200,9 +201,15 @@ def plan_steps(now: datetime, path: Path | None = None, index_dates: Sequence[da
     plan.steps.append(Step("news", "Tin tức", ["news"], "~8 phút", run=not fresh_news,
                            why=(f"đã thu lúc {last.astimezone(VN_TZ):%H:%M %d/%m}" if fresh_news else "chưa thu gần đây")))
     plan.steps.append(Step("logos", "Logo mã mới", ["logos"], "vài giây", why="chỉ tải mã chưa có"))
-    snap_ok = bool(snap and price_max and snap >= price_max) and prices_ok
+    # Its RS comes from the latest screen run: rebuild after a new run too (it once showed the
+    # previous run's RS because it was built at 16:56 and the screen ran at 17:16).
+    built = _parse_ts(snap_built)
+    rs_fresh = not screen or bool(built and _parse_ts(screen["created_at"]) and built >= _parse_ts(screen["created_at"]))
+    snap_ok = bool(snap and price_max and snap >= price_max) and prices_ok and rs_fresh and not need_screen
     plan.steps.append(Step("market", "Bảng Toàn thị trường", ["market"], "~15 giây", run=not snap_ok,
-                           why=(f"đã có giá {_dm(date.fromisoformat(snap))}" if snap_ok else "dựng lại theo giá mới")))
+                           why=(f"đã có giá {_dm(date.fromisoformat(snap))}" if snap_ok
+                                else "dựng lại theo lượt lọc mới" if snap and not (rs_fresh and not need_screen)
+                                else "dựng lại theo giá mới")))
     return plan
 
 

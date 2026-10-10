@@ -201,6 +201,8 @@ def test_stocks_api_lists_every_monitored_name_with_its_source_and_flow(db):
 
     with connect(db) as conn:
         conn.execute("INSERT INTO tickers (ticker, exchange, name, created_at, updated_at) VALUES ('BBB','HNX','CTCP B','x','x')")
+        conn.execute("INSERT INTO prices_daily (ticker, trade_date, close, volume, source_id, observed_at) "
+                     "VALUES ('BBB', '2026-09-25', 10000, 500, 'dnse_openapi', 'x')")    # "Của tôi" needs a priced share
         _flow(conn, "AAA", "2026-09-25", 300, 100)
         _flow(conn, "AAA", "2026-09-24", 50, 150)
     add("BBB", "theo dõi", db)
@@ -263,10 +265,11 @@ def test_market_api_serves_the_latest_snapshot_with_current_membership(db):
 
     assert server.api_market({}, db)["rows"] == []                        # nothing built yet: say how
     assert "python -m src.main market" in server.api_market({}, db)["note"]
-    store_snapshot([{"ticker": "AAA", "trade_date": "2026-09-25", "close": 40_000}], db)
+    store_snapshot([{"ticker": "AAA", "trade_date": "2026-09-25", "close": 40_000, "rs_from": "2026-09-24"}], db)
     add("AAA", None, db)
     r = server.api_market({}, db)
-    assert r["as_of"] == "2026-09-25" and r["rs_from"] == "2026-09-25"
+    # the run the snapshot's RS came from, not the latest run's date (tester report B04)
+    assert r["as_of"] == "2026-09-25" and r["rs_from"] == "2026-09-24" and "2026-09-24" in r["note"]
     row = r["rows"][0]
     assert row["grp"] == "A" and row["mine"] and row["leader_of"] is None
 
@@ -355,3 +358,23 @@ def test_index_api_shows_matched_volume_and_breadth(db):
     assert weeks["bars"][-1]["volume"] == 1000 * 3 + 800 + 700
     live = server.api_screen({}, db)["run"]["live_market"]                          # the header VN-Index card
     assert live["session"]["decliners"] == 183 and live["session"]["ceilings"] == 12
+
+
+def test_domestic_side_is_blank_when_foreign_volume_exceeds_matched(db):
+    """VHM 09/10/2026 showed 0 / 0: foreign volume includes put-through deals (tester report B16)."""
+    with connect(db) as conn:
+        _flow(conn, "AAA", "2026-09-25", 1_500, 400)          # matched volume of that session: 1000
+    row = server.api_flow({"ticker": "AAA"}, db)["rows"][0]
+    assert row["domestic_buy"] is None and row["domestic_sell"] == 600
+
+
+def test_an_older_run_shows_the_change_since_its_screening_day(db):
+    """Viewing a past run showed today's price only (tester report B12)."""
+    with connect(db) as conn:
+        conn.execute("INSERT INTO screen_runs (run_id, created_at, as_of_date, params_json, funnel_json) "
+                     "VALUES ('r2','2026-09-27','2026-09-26','{}','{}')")       # a newer run
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
+                     "VALUES ('AAA','2026-09-26', ?, 'x')", (json.dumps({"close": 44_000}),))
+    old = {r["ticker"]: r for r in server.api_stocks({"run_id": "r1"}, db)}["AAA"]
+    assert old["since_screen"] == {"date": "2026-09-25", "close": 40_000, "pct": 10.0}
+    assert all(r.get("since_screen") is None for r in server.api_stocks({}, db))   # the latest run: nothing to add

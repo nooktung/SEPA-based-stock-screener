@@ -105,20 +105,29 @@ Tỷ lệ phiên có giao dịch = số phiên có V > 0 / 60 phiên gần nhấ
 ```
 
 - **Ngưỡng lọc**: Giá trị TB ≥ **3 tỷ đ** (cả 3 sàn) **và** tỷ lệ phiên có giao dịch ≥ **90%**.
+- Bộ lọc chỉ nạp ~1,5 năm gần nhất. Mã có < 252 phiên có giá trong khoảng đó: nếu tổng lịch sử lưu ≥ 252 phiên thì ghi
+  **"giao dịch thưa / tạm ngừng"**, còn lại ghi **"mới niêm yết"** (trước 11/10/2026 cả hai cùng ghi "lịch sử < 252 phiên").
+- **Cờ dữ liệu cần kiểm tra**: biến động một phiên vượt biên độ sàn trong 300 phiên gần nhất. Các phiên **trước và đúng
+  ngày lên sàn hiện tại** (`listed_date`) dùng biên độ UPCoM (rộng nhất), vì mã đã giao dịch ở sàn khác (MCH, BVB, VVS
+  từng bị gắn cờ oan). Lý do gắn cờ được lưu và hiển thị.
 - **Nhãn hạng** (chỉ là nhãn, không ảnh hưởng nhóm hay điểm): **Cao** ≥ 10 tỷ; **Khá** 8–10 tỷ; **Thấp** 3–8 tỷ.
 
 ---
 
 ## 4. RS Rating
 
-Độ mạnh giá so với toàn bộ các mã đủ thanh khoản. Công thức của IBD là bí mật → dùng bản tái tạo [THỨ CẤP]:
+Độ mạnh giá so với **mọi mã đủ dữ liệu** (~785 mã, kể cả mã dưới ngưỡng thanh khoản) — giống IBD xếp trên toàn thị
+trường, nên RS 90 là top 10% thị trường (lựa chọn của bạn 11/10/2026; trước đó chỉ xếp trong ~186 mã đủ thanh khoản).
+Công thức của IBD là bí mật → dùng bản tái tạo [THỨ CẤP]:
 
 ```
 Biến thể A (đang dùng):  điểm thô = 0,4·R(63) + 0,2·R(126) + 0,2·R(189) + 0,2·R(252)
                          với R(n) = C / C(−n) − 1     (63 phiên ≈ 3 tháng … 252 ≈ 12 tháng)
 Biến thể B (dự phòng):   2·Q1 + Q2 + Q3 + Q4   (lợi nhuận từng quý riêng, quý gần nhất ×2)
 
-RS = thứ hạng phần trăm của điểm thô trong nhóm mã đủ thanh khoản, làm tròn, giới hạn 1…99
+RS = thứ hạng phần trăm của điểm thô trong nhóm mã đủ dữ liệu, làm tròn, giới hạn 1…99
+Mọi trang (Danh sách, Toàn thị trường, chi tiết) dùng RS của cùng một lượt lọc; bảng Toàn thị trường dựng lại
+sau mỗi lượt lọc mới và ghi rõ RS của lượt nào.
 ```
 
 - Cần ≥ 253 phiên lịch sử; thiếu thì không có RS.
@@ -165,7 +174,25 @@ Tất cả cách đo nền là **[TRIỂN KHAI]** của các mô tả trong sác
    - **Pivot** = giá cao nhất kể từ đáy của nhịp cuối + 1 bước giá.
    - **Cạn khối lượng** = TB khối lượng 5 phiên < **0,7 ×** TB 50 phiên [UNVERIFIED].
    - **Stop** = max(đáy nhịp cuối, pivot × (1 − 8%)) [SÁCH: stop tối đa 7–8%].
+   - Pivot **làm tròn lên**, stop **làm tròn xuống** theo bước giá của sàn (giá đã điều chỉnh quyền có thể nằm giữa hai
+     bước giá, vd HDB 23.080 sau chia 30% cổ phiếu).
    - Nếu C > pivot + 5% → **EXTENDED**; nếu C < đáy nền → **BROKEN** (thủng nền).
+
+### 6.1b Giữ pivot / stop sau sự kiện [TRIỂN KHAI] (sửa theo báo cáo kiểm thử 11/10/2026)
+
+Nền được đọc lại mỗi phiên, nên phiên breakout trở thành đỉnh mới và pivot "leo" lên trên giá vừa breakout
+(GMD breakout qua 52.770 ngày 07/10 rồi danh sách ghi pivot 55.100); sau khi thủng stop, stop mới bị tính xuống ngay
+giá hiện tại (VIC). Vì vậy:
+
+```
+Nếu trong 5 phiên gần nhất có phiên i mà (nền đọc tới phiên i−1 là nền thật: VCP/phẳng/cốc/cốc tay cầm/nền) và
+   C(i) > pivot(i−1) ≥ C(i−1)  (breakout)   hoặc   C(i) < stop(i−1) ≤ C(i−1)  (thủng stop)
+→ giữ nguyên nền đó (pivot, stop, nhãn) và ghi "giữ từ breakout / phiên thủng stop dd/mm"
+   trừ khi đã có một nền mới hình thành bắt đầu sau phiên i.
+Đã thủng stop = C hôm nay ≤ stop → hiện "đã thủng stop", không hiện "rủi ro tới stop".
+```
+5 phiên = cửa sổ của nhãn "Vừa breakout" / "Mất hiệu lực", nên nhãn và con số luôn nói về cùng một nền
+(`sepa_screen.base.hold_sessions`). Nhóm A/B/C vẫn quyết định theo nền đọc hôm nay.
 
 ### 6.2 Gán nhãn nền (thứ tự ưu tiên)
 
@@ -205,7 +232,7 @@ tối đa 100
 ## 7. Rủi ro
 
 ```
-Rủi ro tới stop      = (pivot − stop) / pivot × 100%
+Rủi ro tới stop      = (pivot − stop) / pivot × 100%     (rủi ro nếu mua ở pivot; để trống khi đã thủng stop)
 Lỗ tệ nhất khi kẹt T+2 (từ giá tham chiếu) = 1 − (1 − b)³        b = biên độ sàn
 Lỗ tệ nhất nếu mua ở giá trần             = 1 − (1 − b)³ / (1 + b)
 ```
@@ -385,6 +412,13 @@ Không trạng thái nào là lệnh mua / bán.
 ## 13. Sự kiện theo dõi hằng ngày
 
 So trạng thái **hôm nay** với **phiên trước**. KL tương đối = V hôm nay / TB V của 50 phiên trước đó.
+
+**Quanh ngày giao dịch không hưởng quyền (GDKHQ)** [TRIỂN KHAI] (sửa 11/10/2026): DNSE điều chỉnh **giá** quá khứ khi
+chia/thưởng cổ phiếu nhưng **không điều chỉnh khối lượng** (HDB 09/10: giá ÷ 1,3, khối lượng giữ nguyên), nên trung bình
+50 phiên lẫn hai đơn vị cổ phiếu. Khi có ngày GDKHQ đã ghi nhận (bảng `price_adjustments`) trong cửa sổ 50 phiên:
+TB khối lượng chỉ tính **từ ngày GDKHQ** (cần ≥ 10 phiên; thiếu thì "KL không so được"). Breakout trong ngày GDKHQ và
+2 phiên sau không được xếp **hợp lệ** (thành BREAKOUT_WEAK, ghi lý do). Không đoán quyền là chia cổ phiếu hay cổ tức
+tiền.
 "Đóng cửa ở giá trần" = C ≥ giá trần − 0,5 đ (giá trần thật nếu đã lưu; nếu chưa có thì suy từ C(−1) × biên độ, sai số 1 bước giá).
 
 | Sự kiện | Điều kiện | Nguồn |

@@ -373,6 +373,7 @@ CREATE TABLE IF NOT EXISTS data_freshness (
     last_updated_at   TEXT,
     ttl_hours         INTEGER NOT NULL,
     is_stale          INTEGER NOT NULL DEFAULT 0,
+    note              TEXT,              -- why the series is flagged (2026-10-11)
     PRIMARY KEY (dataset, scope_key)
 );
 

@@ -185,7 +185,7 @@ def _backfill_one(
     except ProviderError as exc:
         outcome.stale = True
         outcome.note = f"{type(exc).__name__}: {exc}"
-        mark_freshness(dataset, symbol, stale=True, path=path)
+        mark_freshness(dataset, symbol, stale=True, path=path, note=f"không tải được dữ liệu: {exc}"[:300])
         return outcome
 
     outcome.source_id = bars[0].provenance.source_id if bars else None
@@ -193,7 +193,7 @@ def _backfill_one(
     if not bars:
         outcome.stale = True
         outcome.note = "vendor returned nothing for the requested range"
-        mark_freshness(dataset, symbol, stale=True, path=path)
+        mark_freshness(dataset, symbol, stale=True, path=path, note="nguồn không trả dữ liệu cho khoảng thời gian yêu cầu")
         return outcome
 
     writer(bars, path=path)
@@ -219,7 +219,7 @@ def _backfill_one(
         outcome.note = (f"{len(outcome.gaps)} overnight move(s) beyond the {exchange} band, latest "
                         f"{outcome.gaps[-1][0]} ({outcome.gaps[-1][1]:+.1f}%) -- unadjusted corporate "
                         "action or re-listing; excluded from screening until checked")
-        mark_freshness(dataset, symbol, stale=True, path=path)
+        mark_freshness(dataset, symbol, stale=True, path=path, note=gap_note(outcome.gaps, exchange))
     else:
         mark_freshness(dataset, symbol, stale=False, path=path)
     if outcome.source_id:
@@ -250,11 +250,19 @@ def close_to_close_bounds(exchange: str) -> tuple[float, float] | None:
 
 
 def recent_gaps(symbol: str, exchange: str, sessions: int, path: Path | None = None) -> list[tuple[date, float]]:
-    """Overnight moves in the last `sessions` bars that one session cannot produce."""
+    """Overnight moves in the last `sessions` bars that one session cannot produce.
+
+    Up to and including the day the stock listed on its current exchange
+    (`tickers.listed_date`), it traded elsewhere -- usually UPCoM, whose band is
+    the widest -- so those sessions are judged by UPCoM's bounds. Judged by
+    today's band, MCH (UPCoM -> HOSE 25/12/2025), BVB and VVS were flagged for
+    ordinary UPCoM sessions (tester report 2026-10-11, B07).
+    """
     bounds = close_to_close_bounds(exchange)
     if bounds is None:
         return []
     down, up = bounds
+    wide_down, wide_up = close_to_close_bounds("UPCOM") or bounds
     with connect(path) as conn:
         rows = conn.execute(
             "SELECT trade_date, close FROM ("
@@ -262,13 +270,23 @@ def recent_gaps(symbol: str, exchange: str, sessions: int, path: Path | None = N
             "  ORDER BY trade_date DESC LIMIT ?) ORDER BY trade_date",
             (symbol.upper(), sessions),
         ).fetchall()
+        listed = conn.execute("SELECT listed_date FROM tickers WHERE ticker = ?", (symbol.upper(),)).fetchone()
+    listed_on = str(listed[0])[:10] if listed and listed[0] else None
     out: list[tuple[date, float]] = []
     for (_, prev), (d, cur) in zip(rows, rows[1:]):
         if prev and cur:
             change = (cur - prev) / prev * 100.0
-            if change <= -down or change >= up:
+            lo, hi = (wide_down, wide_up) if listed_on and d <= listed_on else (down, up)
+            if change <= -lo or change >= hi:
                 out.append((date.fromisoformat(d), round(change, 2)))
     return out
+
+
+def gap_note(gaps: list[tuple[date, float]], exchange: str) -> str:
+    """Why a series is flagged, in Vietnamese, for the dashboard."""
+    day, change = gaps[-1]
+    return (f"{len(gaps)} phiên biến động vượt biên độ {exchange}, gần nhất {day:%d/%m/%Y} ({change:+.1f}%) — "
+            "có thể là quyền chưa được điều chỉnh hoặc lần lên sàn mới; chưa đưa vào bộ lọc cho tới khi kiểm tra")
 
 
 def recheck_gaps(settings: BackfillSettings | None = None, path: Path | None = None) -> dict[str, int]:
@@ -280,8 +298,9 @@ def recheck_gaps(settings: BackfillSettings | None = None, path: Path | None = N
             has = conn.execute("SELECT 1 FROM prices_daily WHERE ticker = ? LIMIT 1", (ticker,)).fetchone()
         if not has:
             continue
-        if recent_gaps(ticker, exchange, settings.gap_check_sessions, path):
-            mark_freshness(DATASET_PRICES_DAILY, ticker, stale=True, path=path)
+        gaps = recent_gaps(ticker, exchange, settings.gap_check_sessions, path)
+        if gaps:
+            mark_freshness(DATASET_PRICES_DAILY, ticker, stale=True, path=path, note=gap_note(gaps, exchange))
             flagged += 1
         else:
             mark_freshness(DATASET_PRICES_DAILY, ticker, stale=False, path=path)
@@ -383,7 +402,8 @@ def deepen_history(
                     note(ticker, bars[0].trade_date.isoformat())
                     if exchange:
                         outcome.gaps = recent_gaps(ticker, exchange, settings.gap_check_sessions, path)
-                    mark_freshness(DATASET_PRICES_DAILY, ticker, stale=bool(outcome.gaps), path=path)
+                    mark_freshness(DATASET_PRICES_DAILY, ticker, stale=bool(outcome.gaps), path=path,
+                                   note=gap_note(outcome.gaps, exchange) if outcome.gaps and exchange else None)
         report.outcomes.append(outcome)
         if progress:
             progress(k, len(tickers), outcome)

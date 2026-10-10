@@ -238,3 +238,16 @@ def test_no_module_calls_the_claude_api():
     offenders = [p for p in src.rglob("*.py") if "import anthropic" in p.read_text(encoding="utf-8")
                  or "from anthropic" in p.read_text(encoding="utf-8")]
     assert offenders == []
+
+
+def test_a_ticker_found_only_in_the_summary_is_a_mention_not_the_subject(db, tmp_path):
+    """"Một cổ phiếu bị khối ngoại xả 9.600 tỷ" (MCH) was filed as VHM news (tester report B06)."""
+    from src.processors.news_pipeline import reclassify_roles
+
+    run(db, [art("Một cổ phiếu bất ngờ bị khối ngoại xả hơn 9.600 tỷ đồng", "https://cafef.vn/rss1.chn",
+                 source="cafef_rss", body="Trong khi đó GMD được mua ròng mạnh.")], tmp_path)
+    with connect(db) as conn:
+        assert [tuple(r) for r in conn.execute("SELECT ticker, role FROM event_tickers")] == [("GMD", "mention")]
+        # links stored before roles existed are re-marked; a ticker-page source keeps "subject"
+        conn.execute("UPDATE event_tickers SET role = 'subject'")
+    assert reclassify_roles(db) == 1 and reclassify_roles(db) == 0

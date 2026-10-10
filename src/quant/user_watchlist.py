@@ -31,6 +31,9 @@ def add(ticker: str, note: str | None = None, path: Path | None = None) -> dict:
         row = conn.execute("SELECT ticker, exchange, name FROM tickers WHERE ticker = ?", (t,)).fetchone()
         if row is None:
             raise WatchlistError(f"không có mã {t} trong danh sách cổ phiếu HOSE/HNX/UPCoM")
+        # Listed but never traded here (ZZZ: in DNSE's list, no prices): nothing to show or monitor.
+        if conn.execute("SELECT 1 FROM prices_daily WHERE ticker = ? LIMIT 1", (t,)).fetchone() is None:
+            raise WatchlistError(f"mã {t} chưa có dữ liệu giá nên không theo dõi được")
         clean = (note or "").strip()[:MAX_NOTE] or None
         conn.execute(
             "INSERT INTO user_watchlist (ticker, added_at, note) VALUES (?, ?, ?) "

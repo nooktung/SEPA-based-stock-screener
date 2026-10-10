@@ -259,10 +259,11 @@ def process_articles(
 
         event_type = classify_event(article.title, summary, settings["event_rules"])
         for ticker in sorted(relevant):
-            role_relevance = (settings["relevance_subject"] if ticker in headline_tags
-                              else settings["relevance_mention"])
+            subject = ticker in headline_tags
+            role_relevance = settings["relevance_subject"] if subject else settings["relevance_mention"]
             created = _attach_to_event(article, ticker, event_type, float(role_relevance), level,
-                                       text_for_typing, digest, settings, now, path)
+                                       text_for_typing, digest, settings, now, path,
+                                       role="subject" if subject else "mention")
             report.events_created += int(created)
             report.events_updated += int(not created)
             report.by_ticker[ticker] = report.by_ticker.get(ticker, 0) + 1
@@ -271,7 +272,7 @@ def process_articles(
 
 def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevance: float, level: int,
                      text: str, digest: str | None, settings: Mapping[str, Any], now: datetime,
-                     path: Path | None) -> bool:
+                     path: Path | None, role: str = "subject") -> bool:
     """Join an existing near-duplicate event for this ticker, or create one. True if created."""
     published = article.published_at or now
     window = timedelta(days=int(settings["dedup_window_days"]))
@@ -315,8 +316,8 @@ def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevan
              level, assertion_for(level, settings), relevance, _credibility(level, settings), 1.0,
              float(settings["company_impact_by_type"].get(event_type, 0.3)),
              float(settings["time_sensitivity_by_type"].get(event_type, 0.3))))
-        conn.execute("INSERT OR IGNORE INTO event_tickers (event_id, ticker, role) VALUES (?, ?, 'subject')",
-                     (event_id, ticker))
+        conn.execute("INSERT OR IGNORE INTO event_tickers (event_id, ticker, role) VALUES (?, ?, ?)",
+                     (event_id, ticker, role))
         conn.execute("UPDATE news_articles SET event_id = ? WHERE article_id = ?", (event_id, article.article_id))
         return True
 
@@ -425,3 +426,27 @@ def annotate_event(event_id: str, annotation: Mapping[str, Any], path: Path | No
             "time_horizon = ?, assertion_type = ? WHERE event_id = ?",
             (str(annotation["what_happened"]), str(annotation["why_it_matters"]), direction,
              annotation.get("expected_impact"), horizon, requested, event_id))
+
+
+def reclassify_roles(path: Path | None = None, thresholds: Mapping[str, Any] | None = None) -> int:
+    """Mark stored ticker links as "mention" where the ticker is not the subject (idempotent).
+
+    Before 2026-10-11 every link was stored as "subject". A link stays "subject" when the
+    event's source is the ticker's own news page (`ticker_page_sources`) or its headline
+    names the ticker; otherwise the ticker was only found in the summary.
+    """
+    settings = news_settings(thresholds)
+    pages = {str(s) for s in settings.get("ticker_page_sources", [])}
+    ambiguous = {str(a).upper() for a in settings.get("ambiguous_tickers", [])}
+    changed = 0
+    with connect(path) as conn:
+        universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
+        names = {r[0]: r[1] or "" for r in conn.execute("SELECT ticker, name FROM tickers")}
+        rows = conn.execute("SELECT t.event_id, t.ticker, e.headline, e.primary_source_id FROM event_tickers t "
+                            "JOIN news_events e ON e.event_id = t.event_id WHERE t.role = 'subject'").fetchall()
+        for event_id, ticker, headline, source in rows:
+            if source in pages or ticker in tag_tickers(headline or "", universe, names, ambiguous):
+                continue
+            conn.execute("UPDATE event_tickers SET role = 'mention' WHERE event_id = ? AND ticker = ?", (event_id, ticker))
+            changed += 1
+    return changed

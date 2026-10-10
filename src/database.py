@@ -111,6 +111,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
                              ("ceilings", "INTEGER"), ("floors", "INTEGER"),
                              ("session_source_id", "TEXT"), ("session_observed_at", "TEXT")):
             conn.execute(f"ALTER TABLE index_daily ADD COLUMN {column} {kind}")
+    # 2026-10-11: why a series is flagged, shown beside the flag.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(data_freshness)")}
+    if cols and "note" not in cols:
+        conn.execute("ALTER TABLE data_freshness ADD COLUMN note TEXT")
     # 2026-10-09: the snapshot's highest / lowest value (index-check).
     cols = {r[1] for r in conn.execute("PRAGMA table_info(index_daily)")}
     if cols and "session_high" not in cols:
