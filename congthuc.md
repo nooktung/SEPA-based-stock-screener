@@ -431,9 +431,12 @@ market-index; mã tăng đã gồm mã trần, mã giảm đã gồm mã sàn (K
 
 **4 trạng thái** (xét sự kiện quyết định gần nhất trong **5 phiên**):
 1. **Mất hiệu lực**: sự kiện gần nhất là breakout thất bại, thủng stop, hoặc mất tiêu chí Trend Template.
-2. **Vừa breakout**: sự kiện gần nhất là breakout hợp lệ.
-3. **Ở vùng pivot**: xu hướng Đạt/Gần đạt + có nền + ở vùng pivot.
+   "Đạt lại tiêu chí xu hướng" sau đó **xoá** sự kiện mất tiêu chí trước nó (từ 11/10/2026).
+2. **Vừa breakout**: sự kiện gần nhất là breakout hợp lệ **và** giá hiện tại ≥ pivot đang hiển thị (từ 11/10/2026).
+3. **Ở vùng pivot**: xu hướng Đạt/Gần đạt + có nền + ở vùng pivot + **chưa thủng stop**.
 4. **Đang theo dõi**: còn lại.
+
+Giá đóng cửa ≤ stop → câu "Điểm vào" ghi "Đã thủng stop — chờ nền mới" và không bao giờ là "Ở vùng pivot".
 
 Không trạng thái nào là lệnh mua / bán.
 
