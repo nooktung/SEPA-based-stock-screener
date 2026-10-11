@@ -468,3 +468,13 @@ td.num .two { align-items: flex-end; }
   .lcard { grid-template-columns: 1fr; }
   .lsvg { max-width: 220px; }
 }
+
+/* Invariant check line under the VN-Index card (src/web/checks.py) */
+.vni-wrap { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.checks-line { background: none; border: 0; padding: 0 4px; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.checks-line.warn { color: var(--down); }
+.checks-pop { position: absolute; top: 100%; right: 0; z-index: 30; width: min(640px, 92vw); max-height: 60vh; overflow: auto;
+  background: var(--card, var(--bg)); border: 1px solid var(--line, #d0d5dd); border-radius: 10px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.checks-pop table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.checks-pop td, .checks-pop th { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line, #eaecf0); }
+.more-btn { display: block; margin: 10px auto; }

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import mimetypes
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -758,11 +759,40 @@ def mylist_write(body: dict[str, Any], path: Path | None = None) -> Any:
     raise ValueError("action phải là add hoặc remove")
 
 
+STOP_IN_TEXT = re.compile(r"stop tham chiếu ([\d.,]+)")
+
+
 def api_alerts(q: dict[str, str], path: Path | None = None) -> Any:
+    """Recent events. A stop breach whose stop is not the ticker's stop shown today (or the
+    ticker has none: no forming base since 2026-10-11) is `stale_stop`: the stop of an
+    earlier base, labelled so on the page."""
     limit = min(int(q.get("limit", 200)), 1000)
-    return _rows("SELECT a.ticker, a.alert_type, a.what_changed, a.why_it_matters, a.created_at, t.exchange "
+    rows = _rows("SELECT a.ticker, a.alert_type, a.what_changed, a.why_it_matters, a.created_at, t.exchange "
                  "FROM alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
                  "ORDER BY a.what_changed DESC LIMIT ?", (limit,), path)
+    tickers = sorted({r["ticker"] for r in rows if r["alert_type"] == "STOP_BREACHED"})
+    stops: dict[str, Any] = {}
+    if tickers:
+        marks = ",".join("?" * len(tickers))
+        for r in _rows(f"SELECT s.ticker, s.state_json FROM monitor_state s JOIN (SELECT ticker, MAX(trade_date) d "
+                       f"FROM monitor_state WHERE ticker IN ({marks}) GROUP BY ticker) x "
+                       f"ON x.ticker = s.ticker AND x.d = s.trade_date", tuple(tickers), path):
+            stops[r["ticker"]] = (json.loads(r["state_json"] or "{}") or {}).get("stop")
+    for r in rows:
+        if r["alert_type"] != "STOP_BREACHED":
+            continue
+        r["current_stop"] = stops.get(r["ticker"])
+        m = STOP_IN_TEXT.search(r["what_changed"] or "")
+        was = int(re.sub(r"[.,]", "", m.group(1))) if m else None
+        r["stale_stop"] = was is not None and (r["current_stop"] is None or was != round(r["current_stop"]))
+    return rows
+
+
+def api_checks(q: dict[str, str], path: Path | None = None) -> Any:
+    """The latest invariant report (python -m src.main check), summarised for the page. Read-only."""
+    from src.web.checks import latest_report, summary  # noqa: PLC0415
+
+    return summary(latest_report())
 
 
 def api_news(q: dict[str, str], path: Path | None = None) -> Any:
@@ -789,6 +819,7 @@ ROUTES: dict[str, Callable[..., Any]] = {
     "/api/index": api_index,
     "/api/bars": api_bars,
     "/api/alerts": api_alerts,
+    "/api/checks": api_checks,
     "/api/news": api_news,
 }
 

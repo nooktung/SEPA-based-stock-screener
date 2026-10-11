@@ -80,3 +80,18 @@ def test_store_replaces_the_date_and_keeps_only_recent_snapshots(db):
     with connect(db) as conn:
         dates = [d for (d,) in conn.execute("SELECT DISTINCT as_of_date FROM market_snapshot ORDER BY as_of_date")]
     assert dates == ["2026-10-01", "2026-10-02"]
+
+
+def test_a_stock_trading_on_few_days_is_not_called_a_new_listing(db):
+    """BHP has years of history but few sessions in the window: "giao dịch thưa", not "mới niêm yết" (N04)."""
+    with connect(db) as conn:
+        conn.execute("INSERT INTO tickers (ticker, exchange, name, created_at, updated_at) VALUES ('EEE','UPCOM','CTCP E','x','x')")
+        old = pd.bdate_range(end="2024-06-28", periods=300)
+        recent = pd.bdate_range(end=END, periods=100)
+        conn.executemany(
+            "INSERT INTO prices_daily (ticker, trade_date, open, high, low, close, volume, source_id, observed_at) "
+            "VALUES ('EEE',?,?,?,?,?,1000,'dnse_openapi','x')",
+            [(d.date().isoformat(), 10_000, 10_000, 10_000, 10_000) for d in list(old) + list(recent)])
+    rows = snapshot(db)
+    assert rows["EEE"]["history"] == "SPARSE" and rows["DDD"]["history"] == "NEW"
+    assert "history" not in rows["AAA"]

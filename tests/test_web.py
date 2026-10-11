@@ -435,3 +435,27 @@ def test_state_checks_cover_each_rule():
                                    "contractions": [1.0] * 9}, "HOSE", s))
     assert set(found) == {"breached_flag", "stop_needs_base", "on_tick"}
     assert dict(state_violations({**ok, "contractions": [5.0] * 7}, "HOSE", s)).keys() == {"legs"}
+
+
+def test_a_stop_breach_of_an_earlier_base_is_marked(db):
+    """Old "thủng stop" events stay visible, labelled when their stop is not today's (plan, round 2)."""
+    with connect(db) as conn:
+        conn.execute("INSERT INTO alerts (alert_id, ticker, created_at, alert_type, what_changed) VALUES "
+                     "('s1','AAA','x','STOP_BREACHED','[2026-09-24] Đóng cửa 43.100 dưới mức stop tham chiếu 44.500 (đáy nhịp)')")
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
+                     "VALUES ('AAA','2026-09-25', ?, 'x')", (json.dumps({"close": 40_000, "stop": None}),))
+    row = next(r for r in server.api_alerts({}, db) if r["alert_type"] == "STOP_BREACHED")
+    assert row["stale_stop"] is True and row["current_stop"] is None
+    with connect(db) as conn:
+        conn.execute("UPDATE monitor_state SET state_json = ?", (json.dumps({"close": 40_000, "stop": 44_500}),))
+    assert next(r for r in server.api_alerts({}, db) if r["alert_type"] == "STOP_BREACHED")["stale_stop"] is False
+
+
+def test_the_checks_route_serves_the_latest_report(db):
+    from src.web import checks
+    assert server.api_checks({}, db) is None                      # nothing written yet
+    checks.write_report({"session": "2026-09-25", "checked": 3, "violations": [{"ticker": "AAA", "rule": "on_tick",
+                         "text": "x", "detail": "stop 1", "session": "2026-09-25"}], "transition": [], "info": []})
+    out = server.api_checks({}, db)
+    assert out["violations"] == 1 and out["session"] == "2026-09-25" and out["rows"][0]["ticker"] == "AAA"
+    assert "/api/checks" in server.ROUTES and "/api/checks" not in server.WRITE_ROUTES

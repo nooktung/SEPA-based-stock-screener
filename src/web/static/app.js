@@ -104,6 +104,25 @@ function renderMarket(run) {
   $("#vni").title = note || "";
 }
 
+// The invariant check (python -m src.main check, src/web/checks.py): one line by the VN-Index card,
+// the rows on click. Numbers still from the earlier base rules are counted apart ("đang chuyển").
+async function loadChecks() {
+  let c;
+  try { c = await get("/api/checks"); } catch { return; }
+  const el = $("#checks-line");
+  if (!c || !el) return;
+  el.hidden = false;
+  el.className = `checks-line small ${c.violations ? "warn" : "muted"}`;
+  el.innerHTML = `Kiểm tra dữ liệu ${dm(c.session)}: <b>${c.violations}</b> vi phạm${c.transition ? ` · ${c.transition} mã đang chuyển` : ""}`;
+  const rows = [...c.rows.map((r) => ({ ...r, kind: "Vi phạm" })), ...c.transition_rows.map((r) => ({ ...r, kind: "Đang chuyển" })),
+    ...c.info_rows.map((r) => ({ ...r, kind: "Ghi nhận" }))];
+  $("#checks-pop").innerHTML = rows.length ? `<table><thead><tr><th>Mã</th><th>Loại</th><th>Quy tắc</th><th>Chi tiết</th></tr></thead><tbody>${rows.map((r) =>
+    `<tr data-t="${esc(r.ticker)}"><td><span class="tk">${esc(r.ticker)}</span></td><td>${esc(r.kind)}</td><td>${esc(r.text)}</td><td class="muted">${esc(vnText(r.detail))}</td></tr>`).join("")}</tbody></table>
+    <p class="sub">"Đang chuyển": pivot / stop còn tính theo cách trước ngày 11/10/2026, giữ tới hết thời gian giữ (5 phiên).</p>`
+    : `<p class="muted">Không có vi phạm (${c.checked} mã được kiểm tra).</p>`;
+  el.onclick = () => { $("#checks-pop").hidden = !$("#checks-pop").hidden; };
+}
+
 // Advancers / unchanged / decliners of the session (DNSE market-index). Advancers include
 // the stocks at the ceiling and decliners those at the floor.
 function breadthLine(s) {
@@ -286,8 +305,14 @@ const tickerCell = (r) => `<div class="tkw">${logoTile(r.ticker)}<div class="tkc
 const basisTitle = (r) => (r.change_basis === "ref" ? `So với giá tham chiếu ${fmt(r.reference)} (như bảng giá)${String(r.reference_method || r.method || "").startsWith("avg_price") ? ` — giá bình quân phiên ${dmy(r.reference_averaged || r.averaged)} làm tròn 100 đ, theo quy tắc UPCoM` : ""}`
   : r.exchange === "UPCOM" ? "So với giá đóng cửa phiên trước — chưa có giá tham chiếu của phiên này. Bảng giá UPCoM tính so với giá bình quân phiên trước nên % có thể khác"
   : "So với giá đóng cửa phiên trước — HOSE / HNX lấy giá này làm tham chiếu (trừ ngày giao dịch không hưởng quyền), nên trùng bảng giá");
-const priceCell = (r) => `<div class="two"><b>${fmt(r.close)}</b><span class="${tone(r.change_pct)}${r.change_basis === "close" && r.exchange === "UPCOM" ? " basis-close" : ""}" title="${esc(basisTitle(r))}">${pct(r.change_pct, 2)}</span>${r.since_screen
-  ? `<span class="small muted" title="Giá đóng cửa ngày lọc ${dmy(r.since_screen.date)}: ${fmt(r.since_screen.close)}">từ ngày lọc <span class="${tone(r.since_screen.pct)}">${pct(r.since_screen.pct, 1)}</span></span>` : ""}</div>`;
+// A price older than the newest session, or a state older than the price (a ticker that left the
+// monitored list keeps its last state while its price goes on), says which session it is (tester N02).
+const dateNote = (r) => (r.state_date
+  ? `<span class="stale" title="Mã không còn được theo dõi hằng ngày: giá theo phiên ${dmy(r.trade_date)}, còn pivot / trạng thái theo phiên ${dmy(r.state_date)}">trạng thái ${dm(r.state_date)}</span>`
+  : r.trade_date && state.lastSession && r.trade_date < state.lastSession
+    ? `<span class="stale" title="Giá của phiên ${dmy(r.trade_date)}; phiên mới nhất là ${dmy(state.lastSession)}">giá ${dm(r.trade_date)}</span>` : "");
+const priceCell = (r) => `<div class="two"><b>${fmt(r.close)}</b><span class="${tone(r.change_pct)}${r.change_basis === "close" && r.exchange === "UPCOM" ? " basis-close" : ""}" title="${esc(basisTitle(r))}">${pct(r.change_pct, 2)}</span>${dateNote(r)}${r.since_screen
+  ? `<span class="small muted" title="Giá đóng cửa ngày lọc ${dmy(r.since_screen.date)}: ${fmt(r.since_screen.close)} — giá đã điều chỉnh theo quyền (chia / thưởng cổ phiếu), nên có thể đổi khi có quyền mới">từ ngày lọc <span class="${tone(r.since_screen.pct)}">${pct(r.since_screen.pct, 1)}</span></span>` : ""}</div>`;
 const techOf = (r) => r.tech || {};
 const RT_ARROW = { STRONG_POS: "⇈", POS: "↑", NEUTRAL: "=", NEG: "↓", STRONG_NEG: "⇊" };
 const rtBadge = (x) => (x && x.key) ? `<span class="rt rt-${esc(x.key)}" title="TradingView: ${esc(x.tv_word || "")}${x.positive != null ? ` · ${x.positive} tích cực / ${x.negative} tiêu cực / ${x.neutral} trung tính` : ""}">${RT_ARROW[x.key]} ${esc(x.label)}</span>` : '<span class="muted">–</span>';
@@ -309,7 +334,10 @@ const midCell = (v, d, lo, hi) => {
 };
 const fl = (r) => r.flow || {};
 // A recent listing has only TT7 measurable: "1/8" would read as weak (tester B23).
-const ttText = (r) => ((r.not_assessable || []).length >= 6 ? "mới niêm yết · chưa đủ lịch sử" : `${r.tt_passed}/8 tiêu chí`);
+// A stock that trades on few days is not a new listing (tester N04: BHP); the snapshot says which.
+const ttText = (r) => ((r.not_assessable || []).length >= 6
+  ? (r.history === "SPARSE" ? "giao dịch thưa · chưa đủ phiên để đo" : "mới niêm yết · chưa đủ lịch sử")
+  : `${r.tt_passed}/8 tiêu chí`);
 // Foreign volume includes put-through deals: when it exceeds the matched volume the domestic side is unknown, not 0.
 const domSide = (v, f) => (v == null || f == null || f > v ? null : v - f);
 const domBuy = (r) => domSide(fl(r).volume, fl(r).buy_volume);
@@ -325,7 +353,8 @@ const COLS = {
     { k: "tt", label: "Xu hướng", title: "8 tiêu chí xu hướng (Trend Template): xanh = đạt, đỏ = chưa đạt, xám = chưa đủ dữ liệu",
       cell: (r) => `<div class="two">${dotsOf(r)}<span class="muted">${ttText(r)}</span></div>`, sort: (r) => r.tt_passed },
     { k: "base", label: "Nền giá", title: "Dạng nền đang hình thành và khoảng cách tới pivot (điểm phá nền)",
-      cell: (r) => `<div class="two"><span>${esc(BASE_TEXT[r.base_kind] || r.base_kind || "–")}</span>${r.pivot ? `<span class="muted">pivot ${fmt(r.pivot)} · <span class="${r.distance > 0 ? "pos" : ""}">${pct(r.distance)}</span></span>` : ""}</div>`,
+      cell: (r) => `<div class="two"><span>${esc(BASE_TEXT[r.base_kind] || r.base_kind || "–")}</span>${r.pivot ? `<span class="muted">pivot ${fmt(r.pivot)} · <span class="${r.distance > 0 ? "pos" : ""}">${pct(r.distance)}</span></span>` : ""}${r.stop_breached
+        ? `<span class="neg small" title="Giá đóng cửa ở hoặc dưới stop tham chiếu ${fmt(r.stop)}">thủng stop${r.stop_breached_on ? " " + dm(r.stop_breached_on) : ""}</span>` : ""}</div>`,
       sort: (r) => (r.distance == null ? null : -Math.abs(r.distance)) },
     { k: "status", label: "Trạng thái", title: "Vị trí trong quy trình SEPA — không phải tín hiệu mua", cell: (r) => stBadge((r.setup || {}).status), sort: (r) => STATUS_ORDER[(r.setup || {}).status] ?? 9, text: true },
     { k: "fnet", label: "Khối ngoại", num: true, title: "Khối ngoại mua − bán (cổ phiếu), phiên gần nhất và cộng dồn 5 phiên",
@@ -485,6 +514,7 @@ function setCounts() {
 async function loadStocks() {
   const runId = state.runId;
   state.rows = await get(`/api/stocks${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`);
+  state.lastSession = state.rows.reduce((m, r) => (r.trade_date && r.trade_date > m ? r.trade_date : m), "");
   state.mine = new Set(state.rows.filter((r) => r.mine).map((r) => r.ticker));
   setCounts();
   renderTable(true);
@@ -517,29 +547,40 @@ function baseHtml(s) {
     <span>Dạng nền <b>${esc(BASE_TEXT[s.base_kind] || s.base_kind)}</b></span>
     <span>Pivot <b>${fmt(s.pivot)}</b> · giá cách pivot <b>${pct(s.distance_to_pivot_pct)}</b>${s.held_since
       ? ` <small class="muted" title="Sau breakout hoặc khi thủng stop, pivot và stop của nền đó được giữ ${HOLD_TEXT} để nhãn trạng thái và con số luôn khớp nhau">· giữ từ ${s.held_by === "STOP" ? "phiên thủng stop" : "breakout"} ${dmy(s.held_since)}</small>` : ""}</span>
-    <span>Stop tham chiếu <b>${fmt(s.stop)}</b>${s.stop_breached ? ' · <b class="neg">đã thủng stop</b>' : ""}</span>
-    <span>Các nhịp co hẹp <b>${legs.length ? `${legs.length} nhịp, gần nhất ${legs.slice(-4).map((x) => fmt(x, 0)).join(" → ")}%` : "–"}</b></span>
+    <span>Stop tham chiếu <b>${s.stop ? fmt(s.stop) : "–"}</b>${s.stop_breached ? ` · <b class="neg">đã thủng stop${s.stop_breached_on ? " " + dmy(s.stop_breached_on) : ""}</b>` : ""}${s.stop
+      ? "" : ' <small class="muted">chỉ có khi đang có nền đạt chuẩn (có điểm mua ở pivot)</small>'}</span>
+    ${s.legacy_hold ? `<span class="muted small">Pivot và stop giữ theo cách tính trước ngày 11/10/2026 tới hết thời gian giữ (${HOLD_TEXT} từ ${dmy(s.held_since)})</span>` : ""}
+    <span>Các nhịp co hẹp chính <b>${legs.length ? `${legs.length} nhịp: ${legs.slice(-4).map((x) => fmt(x, 0)).join(" → ")}%` : "–"}</b></span>
     <span>Khối lượng cạn <b>${s.volume_dryup === true ? "có" : s.volume_dryup === false ? "chưa" : "–"}</b> · hôm nay <b>${s.volume_ratio ? fmt(s.volume_ratio, 2) + " lần trung bình" : "–"}</b></span>
     <span>So với VN-Index 63 phiên <b>${s.rs_vs_index_63d == null ? "–" : (s.rs_vs_index_63d > 0 ? "+" : "") + fmt(s.rs_vs_index_63d, 1) + " điểm %"}</b></span>
     <span class="muted">Đánh giá theo phiên ${dmy(s.trade_date)}</span></div>`;
 }
 
 function baseChecksHtml(base) {
-  if (!base || !(base.checks || []).length) return "";
+  if (!base) return "";
   const icon = (ok) => ok === true ? '<span class="ok">✓</span>' : ok === false ? '<span class="ko">✗</span>' : '<span class="na">?</span>';
-  return `<div class="checks"><h3 class="sub-h">Vì sao là "${esc(BASE_TEXT[base.kind] || base.kind)}"</h3>
+  const over = base.overhead;
+  // Supply overhead: the left-side high above the pivot (tester M04). Information from 5%, a warning from 10%.
+  const overHtml = over ? `<p class="${over.level === "warn" ? "warn" : "muted"} small">${over.level === "warn" ? "⚠ " : ""}Đỉnh nền bên trái ${fmt(over.top)} cao hơn pivot ${fmt(base.pivot)} ${fmt(over.pct, 1)}%: vùng cung treo — giá có thể gặp lực bán khi lên tới đó.</p>` : "";
+  const spikes = (base.spike_dates || []).length ? `<p class="muted small">Đã bỏ phiên giật ${base.spike_dates.map(dmy).join(", ")} (mở cửa ở giá cao nhất rồi đảo chiều) khi tìm đỉnh nền.</p>` : "";
+  const span = base.start_date ? (base.top_date && base.top_date !== base.start_date
+    ? `Nền tính từ đỉnh trái ${dmy(base.start_date)} (${base.sessions} phiên, sâu ${fmt(base.depth_pct, 1)}%); nhịp co hẹp đo từ đỉnh cao nhất ${dmy(base.top_date)} (${fmt(base.top)}).`
+    : `Nền tính từ đỉnh cao nhất ${dmy(base.start_date)} (${fmt(base.top)}) tới nay: ${base.sessions} phiên, sâu ${fmt(base.depth_pct, 1)}%.`) : "";
+  if (!(base.checks || []).length) return overHtml + spikes;
+  return `<div class="checks"><h3 class="sub-h">${esc(base.checks_title || `Vì sao là "${BASE_TEXT[base.kind] || base.kind}"`)}</h3>
     ${base.checks.map((c) => `<div class="check">${icon(c.ok)} <span>${esc(c.text)}</span></div>`).join("")}
-    <p class="sub">Các ngưỡng hình dạng (chữ U, xu hướng trước nền, tay cầm) là cách đo triển khai [TRIỂN KHAI] — vẫn nên tự xem biểu đồ.
-    Nền tính từ đỉnh cao nhất ${dmy(base.start_date)} (${fmt(base.top)}) tới nay: ${base.sessions} phiên, sâu ${fmt(base.depth_pct, 1)}%.</p></div>`;
+    <p class="sub">Các ngưỡng hình dạng (chữ U, xu hướng trước nền, tay cầm) là cách đo triển khai [TRIỂN KHAI] — vẫn nên tự xem biểu đồ. ${span}</p>
+    ${overHtml}${spikes}</div>`;
 }
 
-function questionsHtml(q) {
+function questionsHtml(q, baseKind) {
   if (!q || !q.status) return `<p class="muted">Chưa có đánh giá. Chạy: python -m src.main monitor</p>`;
   const mark = (v) => v === "PASS" ? '<span class="ok">✓</span>' : v === "NEAR" ? '<span class="na">~</span>' : '<span class="ko">✗</span>';
   const trendText = { PASS: "Đạt đủ 8/8 tiêu chí (Stage 2)", NEAR: "Gần đạt (nhóm B)", NO: "Chưa đạt" };
   return `<div class="checks">
     <div class="check">${mark(q.trend)} <span><b>Xu hướng:</b> ${esc(trendText[q.trend] || q.trend)}</span></div>
-    <div class="check">${mark(q.setup)} <span><b>Nền giá:</b> ${q.setup === "PASS" ? "đang tạo nền" : "chưa có nền đạt chuẩn"}</span></div>
+    <div class="check">${mark(q.setup === "PASS" && baseKind === "BASE" ? "NEAR" : q.setup)} <span><b>Nền giá:</b> ${q.setup !== "PASS" ? "chưa có nền đạt chuẩn"
+      : baseKind === "BASE" ? "có vùng tích lũy, chưa đạt mẫu hình chuẩn (cốc, VCP, nền phẳng)" : "đang tạo nền"}</span></div>
     <div class="check">${mark(q.entry === "IN_ZONE" ? "PASS" : "NO")} <span><b>Điểm vào:</b> ${esc(q.entry_text || "")}</span></div>
     <p class="q-status">${stBadge(q.status)}
       ${q.decided_by ? `<span class="muted"> theo sự kiện ${esc(EVENT_TEXT[q.decided_by[1]] || q.decided_by[1])} ngày ${dmy(q.decided_by[0])}</span>` : ""}</p>
@@ -606,13 +647,23 @@ const SOURCE_TEXT = { cafef: "CafeF", cafef_rss: "CafeF", vietstock: "Vietstock"
 const newsType = (t) => NEWS_TYPE_TEXT[t] || t;
 const mentionTag = (e) => (e.role === "mention" ? '<span class="badge muted-badge" title="Mã chỉ được nhắc tới trong bài, tin không nói về mã này">nhắc tới</span>' : "");
 
-// Event texts stored before 2026-10-11 used English formats ("39,020", "1.62×", "2026-10-09"): show them the Vietnamese way.
+// Event texts stored before 2026-10-11 used English formats ("39,020", "1.62×", "2026-10-09") and the
+// base codes ("nền BASE", "CUP_HANDLE"): show them the Vietnamese way (tester B14, B15).
+const lowerFirst = (t) => (t.length > 1 && t[1] === t[1].toLowerCase() ? t[0].toLowerCase() + t.slice(1) : t);
+const BASE_CODES = /([Nn])ền (VCP|FLAT_BASE|CUP_HANDLE|CUP|BASE|NEAR_HIGH|SHARP_PULLBACK|EXTENDED|TOO_DEEP|BROKEN)\b/g;
 function vnText(t) {
   return String(t || "")
     .replace(/(\d{4})-(\d{2})-(\d{2})/g, "$3/$2/$1")
     .replace(/(\d),(\d{3})(?!\d)/g, "$1.$2").replace(/(\d),(\d{3})(?!\d)/g, "$1.$2")
-    .replace(/(\d)\.(\d{1,2})(×|%| lần)/g, "$1,$2$3");
+    .replace(/(\d)\.(\d{1,2})(×|%| lần)/g, "$1,$2$3")
+    .replace(BASE_CODES, (_, n, k) => (k === "BASE" ? `${n}ền` : n === "N" ? BASE_TEXT[k] : lowerFirst(BASE_TEXT[k])))
+    .replace(/\b(FLAT_BASE|CUP_HANDLE|NEAR_HIGH|SHARP_PULLBACK|TOO_DEEP)\b/g, (k) => lowerFirst(BASE_TEXT[k]));
 }
+// A stop breach recorded against an earlier base, whose stop is not the one shown today.
+const oldStopTag = (a, stopNow) => (a.alert_type === "STOP_BREACHED" && (a.stale_stop ?? (() => {
+  const m = /stop tham chiếu ([\d.,]+)/.exec(a.what_changed || "");
+  return m && Number(m[1].replace(/[.,]/g, "")) !== Math.round(stopNow || 0);
+})()) ? ' <span class="badge muted-badge" title="Mức stop của sự kiện này là của nền trước đó, khác stop đang hiển thị">stop của nền trước</span>' : "");
 function alertText(w) {
   const m = /^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$/.exec(w || "");
   return m ? `${dmy(m[1])} · ${vnText(m[2])}` : vnText(w);
@@ -764,14 +815,26 @@ function drawChart(d) {
   const base = d.base || {};
   const markers = [];
   const pivot = base.pivot ?? (d.state || {}).pivot, stop = base.stop ?? (d.state || {}).stop;
-  if (L.pivot && pivot) candles.createPriceLine({ price: pivot, color: "#0ea5e9", lineWidth: 1, lineStyle: 2, title: "pivot" });
-  if (L.pivot && stop) candles.createPriceLine({ price: stop, color: "#f43f5e", lineWidth: 1, lineStyle: 2, title: "stop" });
+  const lastBar = d.bars[d.bars.length - 1].trade_date;
+  const fromBase = barOf(base.start_date) || d.bars[0].trade_date;
+  // Price levels run from the base's start, not across the whole chart (tester M04 note). Only pivot and
+  // stop carry a label on the price axis; the other levels are named in the legend (M12: eight labels
+  // pushed each other off their lines).
+  const segment = (value, color, style, title) => price.addLineSeries({ color, lineWidth: 1, lineStyle: style,
+    priceLineVisible: false, lastValueVisible: !!title, title: title || "", crosshairMarkerVisible: false })
+    .setData(fromBase === lastBar ? [{ time: lastBar, value }] : [{ time: fromBase, value }, { time: lastBar, value }]);
+  const breached = stop && base.stop_breached;
+  const stopTitle = breached ? `stop đã thủng${base.stop_breached_on ? " " + dm(base.stop_breached_on) : ""}` : "stop";
+  if (L.pivot && pivot) segment(pivot, "#0ea5e9", 2, "pivot");
+  // A broken stop is no longer a level under the price (tester M01): grey and dotted, and it says so.
+  if (L.pivot && stop) segment(stop, breached ? "#9aa4b2" : "#f43f5e", breached ? 1 : 2, stopTitle);
+  const nearKey = (v) => [pivot, stop].some((k) => k && Math.abs(v / k - 1) < 0.005);   // merged into pivot / stop
   // "Sát đỉnh" and similar reads have a top but no measured base (no low): nothing to draw.
   if (L.base && base.top && base.start_date && base.low != null && base.low_date) {
     const guide = dark ? "#9aa4b2" : "#667085";
-    candles.createPriceLine({ price: base.top, color: guide, lineWidth: 1, lineStyle: 1, title: "đỉnh nền" });
-    candles.createPriceLine({ price: base.low, color: guide, lineWidth: 1, lineStyle: 1, title: "đáy nền" });
-    if (base.mid) candles.createPriceLine({ price: base.mid, color: guide, lineWidth: 1, lineStyle: 3, title: "giữa nền" });
+    if (!(L.pivot && nearKey(base.top))) segment(base.top, guide, 0, "");
+    if (!(L.pivot && nearKey(base.low))) segment(base.low, guide, 0, "");
+    if (base.mid && !(L.pivot && nearKey(base.mid))) segment(base.mid, guide, 3, "");
     if ((base.swings || []).length > 1) {
       price.addLineSeries({ color: dark ? "#e5e7eb" : "#111827", lineWidth: 1, lineStyle: 2, priceLineVisible: false,
         lastValueVisible: false, crosshairMarkerVisible: false })
@@ -854,6 +917,8 @@ function drawChart(d) {
   const rsiAt = new Map(((d.osc && d.osc.RSI) || []).map((p) => [p.time, p.value]));
   const oscAt = (k) => new Map(((d.osc && d.osc[k]) || []).map((p) => [p.time, p.value]));
   const macdAt = oscAt("MACD"), sigAt = oscAt("SIGNAL"), histAt = oscAt("HIST");
+  const baseLegend = L.base && base.top && base.low != null
+    ? `<span class="muted">nền: đỉnh <b>${px(base.top)}</b> · giữa <b>${px(base.mid)}</b> · đáy <b>${px(base.low)}</b></span>` : "";
   const legend = (i) => {
     const b = d.bars[i], prev = d.bars[i - 1];
     // Daily candles: against that session's reference price when it was read, like the boards.
@@ -868,7 +933,7 @@ function drawChart(d) {
         <span>Đóng <b>${px(b.close)}</b> <span class="${tone(chg)}">${pct(chg, 2)}</span></span><span>KL <b>${fmt(b.volume)}</b></span></div>
       <div class="lg-row">${mas}${L.rsi ? `<span><i style="background:${OSC_COLORS.RSI}"></i>RSI <b>${fmt(rsiAt.get(b.trade_date), 1)}</b></span>` : ""}
         ${L.macd ? `<span><i style="background:${OSC_COLORS.MACD}"></i>MACD <b>${mv(macdAt)}</b></span><span><i style="background:${OSC_COLORS.SIGNAL}"></i>Signal <b>${mv(sigAt)}</b></span><span>Hist <b>${mv(histAt)}</b></span>` : ""}
-        ${L.pivot && pivot ? `<span><i style="background:#0ea5e9"></i>pivot <b>${px(pivot)}</b></span>` : ""}${L.pivot && stop ? `<span><i style="background:#f43f5e"></i>stop <b>${px(stop)}</b></span>` : ""}</div>`;
+        ${L.pivot && pivot ? `<span><i style="background:#0ea5e9"></i>pivot <b>${px(pivot)}</b></span>` : ""}${L.pivot && stop ? `<span><i style="background:${breached ? "#9aa4b2" : "#f43f5e"}"></i>${esc(stopTitle)} <b>${px(stop)}</b></span>` : ""}${baseLegend}</div>`;
   };
   legend(d.bars.length - 1);
   price.subscribeCrosshairMove((p) => {
@@ -934,7 +999,9 @@ function drawLevels(price, candles, d) {
   const L = state.layers;
   state.projectedEnd = null;
   const texts = [], shapes = [];
-  const lineOpts = { lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  // Channel and trendlines never stretch the price axis (tester M08: ABB's axis ran to 26,000 for a 17,500 price).
+  const lineOpts = { lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    autoscaleInfoProvider: () => null };
   const pts = (rail) => rail.map(([time, value]) => ({ time, value }));
   const later = (a, b) => (!a || b > a ? b : a);
   // Anchor / break dates name the bar: a session, a week (its first session) or a month.
@@ -947,23 +1014,27 @@ function drawLevels(price, candles, d) {
       const sup = z.side === "SUPPORT";
       const [line, fill] = LEVEL_COLORS[z.side];
       shapes.push({ type: "band", low: z.zone_low, high: z.zone_high, fill });
-      candles.createPriceLine({ price: z.center, color: line, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: sup ? "hỗ trợ" : "kháng cự" });
+      // No axis label: the zone is named in the text under the chart (M12).
+      candles.createPriceLine({ price: z.center, color: line, lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "" });
       // touch_count is the number of sessions whose range crossed the zone, not the number of
       // reversals at it (audit 2026-10-04): say so, and name what the zone was built from.
       const kinds = [...new Set((z.sources || []).map((s) => ZONE_SOURCE[s]).filter(Boolean))].join(", ");
       texts.push(`${sup ? "Hỗ trợ" : "Kháng cự"} gần nhất <b>${px(z.zone_low)}–${px(z.zone_high)}</b> (${pct(z.distance_from_price)})`
         + `${kinds ? ` — hình thành từ ${kinds}` : ""}; giá đi qua vùng này trong ${z.touch_count} / ${d.daily_count || d.bars.length} phiên, gần nhất ${dmy(z.last_tested)}`);
     }
+    if (lv.at_zone) texts.push(`Giá đang nằm trong vùng <b>${px(lv.at_zone.zone_low)}–${px(lv.at_zone.zone_high)}</b> (${lv.at_zone.side === "SUPPORT" ? "từng là hỗ trợ" : "từng là kháng cự"}).`);
     if (!(lv.zones || []).length) texts.push("Chưa xác định được vùng hỗ trợ / kháng cự gần giá.");
   }
   if (L.channel) {
     const ch = lv.channel, tl = lv.trendlines || {};
     if (ch) {
-      const [line, fill] = LEVEL_COLORS.channel;
+      // A broken channel is history, drawn faint and dashed (tester M07).
+      const [line, fill] = ch.broken_on ? ["rgba(236,72,153,0.45)", "rgba(236,72,153,0.05)"] : LEVEL_COLORS.channel;
+      const rail = ch.broken_on ? { lineWidth: 1, lineStyle: 2 } : {};
       shapes.push({ type: "poly", points: [...ch.upper, ...[...ch.lower].reverse()], fill });
-      price.addLineSeries({ ...lineOpts, color: line }).setData(pts(ch.upper));
+      price.addLineSeries({ ...lineOpts, ...rail, color: line }).setData(pts(ch.upper));
       price.addLineSeries({ ...lineOpts, color: line, lineWidth: 1, lineStyle: 2 }).setData(pts(ch.middle));
-      price.addLineSeries({ ...lineOpts, color: line }).setData(pts(ch.lower));
+      price.addLineSeries({ ...lineOpts, ...rail, color: line }).setData(pts(ch.lower));
       state.projectedEnd = later(state.projectedEnd, ch.upper[ch.upper.length - 1][0]);
       const b = tl[ch.base];
       texts.push(`Kênh giá dựng trên ${ch.base === "SUPPORT" ? "trendline nối 2 đáy" : "trendline nối 2 đỉnh"} ${at(b.anchors[0][0])} → ${at(b.anchors[1][0])}, dốc ${pct(b.slope_pct_month)}/tháng, rộng ${fmt(ch.width_pct, 1)}%: `
@@ -971,10 +1042,15 @@ function drawLevels(price, candles, d) {
     }
     for (const [kind, t] of Object.entries(tl)) {
       if (ch && ch.base === kind) continue;
-      price.addLineSeries({ ...lineOpts, color: LEVEL_COLORS.trendline }).setData(pts([t.start, t.end]));
+      price.addLineSeries({ ...lineOpts, color: t.broken_on ? "rgba(132,204,22,0.5)" : LEVEL_COLORS.trendline,
+        ...(t.broken_on ? { lineWidth: 1, lineStyle: 2 } : {}) }).setData(pts([t.start, t.end]));
       if (!t.broken_on) state.projectedEnd = later(state.projectedEnd, t.end[0]);
+      // A close beyond the line by less than its tolerance has not broken it yet: say so (HDB 22,400 over 22,228).
+      const beyond = t.close_vs_line_pct != null && (kind === "SUPPORT" ? t.close_vs_line_pct < 0 : t.close_vs_line_pct > 0);
       texts.push(`Trendline ${kind === "SUPPORT" ? "nối 2 đáy" : "nối 2 đỉnh"} ${at(t.anchors[0][0])} → ${at(t.anchors[1][0])}, dốc ${pct(t.slope_pct_month)}/tháng, ${t.touches} lần chạm: `
-        + (t.broken_on ? `<b>đã bị phá ${on(t.broken_on)}</b>.` : `${tf === "D" ? "hôm nay" : "hiện"} ở ${px(t.value_today)}.`));
+        + (t.broken_on ? `<b>đã bị phá ${on(t.broken_on)}</b>.`
+          : `${tf === "D" ? "hôm nay" : "hiện"} ở ${px(t.value_today)}` + (beyond
+            ? ` — giá đang ${kind === "SUPPORT" ? "dưới" : "trên"} đường ${fmt(Math.abs(t.close_vs_line_pct), 1)}%, chưa tới ngưỡng xác nhận phá ${fmt(t.tolerance_pct, 1)}%.` : ".")));
     }
     if (!ch && !Object.keys(tl).length) texts.push("Chưa tìm được trendline hợp lệ (cần 2 đỉnh / 2 đáy mà giá không đóng cửa xuyên qua ở giữa).");
   }
@@ -1210,10 +1286,11 @@ async function openDetail(ticker) {
   $("#d-criteria").innerHTML = criteriaHtml(crit) + (d.state ? `<p class="sub">TT1–TT7 theo phiên ${dmy(d.state.trade_date)}; TT8 (RS) theo lần lọc.</p>` : "");
   $("#d-base").innerHTML = baseHtml(d.state) + baseChecksHtml(d.base);
   $("#d-tech").innerHTML = techHtml((d.state || {}).tech);
-  $("#d-questions").innerHTML = questionsHtml((d.state && d.state.setup && d.state.setup.status) ? d.state.setup : ((sc && sc.base_json) || {}).setup);
+  $("#d-questions").innerHTML = questionsHtml((d.state && d.state.setup && d.state.setup.status) ? d.state.setup : ((sc && sc.base_json) || {}).setup,
+    (d.state || {}).base_kind || (d.base || {}).kind);
   $("#d-alerts").innerHTML = d.alerts.length ? d.alerts.map((a) => `<div class="item">
-      <span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span>${esc(alertText(a.what_changed))}
-      <div class="why">${esc(a.why_it_matters || "")}</div></div>`).join("") : `<p class="muted">Chưa có sự kiện.</p>`;
+      <span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span>${esc(alertText(a.what_changed))}${oldStopTag(a, (d.state || {}).stop)}
+      <div class="why">${esc(vnText(a.why_it_matters || ""))}</div></div>`).join("") : `<p class="muted">Chưa có sự kiện.</p>`;
   const bj = (sc && sc.base_json) || {};
   $("#d-fund").innerHTML = fundHtml(d.fundamentals || bj.fundamentals, bj.demoted);
   $("#d-industry").innerHTML = industryHtml(d.industry, bj.industry && bj.industry.name ? bj.industry : null);
@@ -1294,16 +1371,38 @@ async function toggleMine(ticker, note) {
 }
 
 // ---------------------------------------------------------------- other tabs
+// Events: filtered by ticker, type and period, 50 rows at a time (tester B26: 200 rows, no filter).
+const ALERT_PAGE = 50;
+state.alerts = { rows: [], q: "", type: "", period: "20", shown: ALERT_PAGE };
+const alertDay = (a) => ((/^\[(\d{4}-\d{2}-\d{2})\]/.exec(a.what_changed || "") || [])[1] || "");
 async function loadAlerts() {
-  const rows = await get("/api/alerts");
+  state.alerts.rows = await get("/api/alerts?limit=1000");
+  state.alerts.shown = ALERT_PAGE;
+  renderAlerts();
+}
+function renderAlerts() {
+  const A = state.alerts;
+  const days = [...new Set(A.rows.map(alertDay))].sort().reverse();
+  const since = A.period === "all" ? "" : days[Number(A.period) - 1] || days[days.length - 1] || "";
+  const q = A.q.trim().toUpperCase();
+  const rows = A.rows.filter((a) => (!q || a.ticker.includes(q)) && (!A.type || a.alert_type === A.type) && alertDay(a) >= since);
+  $("#alerts-type").innerHTML = ddButton("", "Sự kiện", A.type ? EVENT_TEXT[A.type] || A.type : "Tất cả", !!A.type);
+  $("#alerts-period").innerHTML = ddButton("", "Thời gian", { 5: "5 phiên", 20: "20 phiên", 60: "60 phiên", all: "Tất cả" }[A.period], A.period !== "20");
+  $("#alerts-count").innerHTML = `<b>${rows.length}</b> sự kiện`;
   const tbody = $("#alerts-table tbody");
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="4" class="empty">Chưa có sự kiện. Chạy: python -m src.main monitor</td></tr>`; return; }
-  tbody.innerHTML = rows.map((a) => {
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty">${A.rows.length ? "Không có sự kiện phù hợp bộ lọc." : "Chưa có sự kiện. Chạy: python -m src.main monitor"}</td></tr>`;
+    $("#alerts-more").hidden = true;
+    return;
+  }
+  tbody.innerHTML = rows.slice(0, A.shown).map((a) => {
     const m = /^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$/.exec(a.what_changed || "");
     return `<tr data-t="${esc(a.ticker)}"><td class="muted">${m ? dmy(m[1]) : ""}</td><td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
       <td><span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span></td>
-      <td class="wrap">${esc(vnText(m ? m[2] : a.what_changed))}<div class="muted small">${esc(a.why_it_matters || "")}</div></td></tr>`;
+      <td class="wrap">${esc(vnText(m ? m[2] : a.what_changed))}${oldStopTag(a, a.current_stop)}<div class="muted small">${esc(vnText(a.why_it_matters || ""))}</div></td></tr>`;
   }).join("");
+  $("#alerts-more").hidden = rows.length <= A.shown;
+  $("#alerts-more").textContent = `Xem thêm (${Math.min(ALERT_PAGE, rows.length - A.shown)} / còn ${rows.length - A.shown})`;
 }
 
 async function loadIndustries() {
@@ -1317,7 +1416,7 @@ async function loadIndustries() {
       <td class="num">${t.count} / ${t.configured}</td>
       <td class="num ${tone(t.return_1m)}">${pct(t.return_1m)}</td><td class="num ${tone(t.return_3m)}">${pct(t.return_3m)}</td>
       <td class="num">${pct(t.above_ma50_pct, 0, false)}</td><td>${tks(t.leaders)}</td></tr>`).join("")
-    : `<tr><td colspan="7" class="empty">Chưa có sóng ngành trong lượt lọc này (config/themes.yaml), chạy lại: python -m src.main screen</td></tr>`;
+    : `<tr><td colspan="7" class="empty">Chưa có sóng ngành nào trong lượt lọc này.</td></tr>`;
   const rows = data.industries || [];
   const tbody = $("#industries-table tbody");
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="6" class="empty">Chưa có phân ngành trong lượt lọc này. Chạy: python -m src.main industry, rồi screen.</td></tr>`; return; }
@@ -1346,6 +1445,8 @@ function showTab(t) {
   $$(".panel").forEach((p) => p.classList.remove("active"));
   $(`#tab-${t.dataset.tab}`).classList.add("active");
   if (t.dataset.group) {
+    // A filter or a search belongs to the page it was set on (tester B25: "hai phong" followed to "Của tôi").
+    if (state.group !== t.dataset.group) { FILTERS.forEach((f) => { state[f.key] = ""; }); state.q = ""; $("#search").value = ""; }
     state.group = t.dataset.group;
     state.grp = ""; state.sortKey = "";
     $("#mine-form").hidden = state.group !== "mine";
@@ -1386,6 +1487,24 @@ async function init() {
   $("#page-desc").textContent = $(".tab.active").dataset.desc;
 
   $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t)));
+  $("#alerts-search").addEventListener("input", (e) => { state.alerts.q = e.target.value; state.alerts.shown = ALERT_PAGE; renderAlerts(); });
+  $("#alerts-more").addEventListener("click", () => { state.alerts.shown += ALERT_PAGE; renderAlerts(); });
+  $("#alerts-type").addEventListener("click", (e) => {
+    const b = e.target.closest(".dd");
+    if (!b) return;
+    const types = [...new Set(state.alerts.rows.map((a) => a.alert_type))];
+    openDropdown(b, { items: [{ value: "", text: "Tất cả" }, ...types.map((v) => ({ value: v, text: EVENT_TEXT[v] || v,
+      count: state.alerts.rows.filter((a) => a.alert_type === v).length }))], value: state.alerts.type,
+    onPick: (v) => { state.alerts.type = v; state.alerts.shown = ALERT_PAGE; renderAlerts(); } });
+  });
+  $("#alerts-period").addEventListener("click", (e) => {
+    const b = e.target.closest(".dd");
+    if (!b) return;
+    openDropdown(b, { items: [["5", "5 phiên gần nhất"], ["20", "20 phiên gần nhất"], ["60", "60 phiên gần nhất"], ["all", "Tất cả"]]
+      .map(([value, text]) => ({ value, text })), value: state.alerts.period, searchable: false,
+    onPick: (v) => { state.alerts.period = v; state.alerts.shown = ALERT_PAGE; renderAlerts(); } });
+  });
+  loadChecks();
   $$(".view-seg button").forEach((b) => b.addEventListener("click", () => {
     state.view = b.dataset.view; store.set("sepa.view.v2", state.view);
     if (!COLS[state.view].some((c) => c.k === state.sortKey)) state.sortKey = "";

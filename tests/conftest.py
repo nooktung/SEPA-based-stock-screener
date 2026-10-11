@@ -44,8 +44,10 @@ def _no_stored_trading_calendar(monkeypatch, tmp_path):
 
 @pytest.fixture(autouse=True)
 def _audit_reports_in_tmp(monkeypatch, tmp_path):
-    """index-check reports go to a temporary folder, never data/audit."""
+    """index-check and invariant reports go to a temporary folder, never data/audit."""
     import src.collectors.index_check as ic
+    import src.web.checks as checks
 
     monkeypatch.setattr(ic, "REPORT_DIR", tmp_path / "audit")
+    monkeypatch.setattr(checks, "REPORT_DIR", tmp_path / "audit")
     yield

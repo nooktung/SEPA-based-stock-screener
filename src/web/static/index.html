@@ -44,7 +44,7 @@
       <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
     <div class="nav-group">Thị trường</div>
     <button class="tab" data-tab="industries" role="tab"
-      data-title="Ngành và sóng ngành" data-desc="Sức mạnh các sóng ngành bạn định nghĩa (config/themes.yaml) và các ngành theo phân loại Vietstock.">
+      data-title="Ngành và sóng ngành" data-desc="Sức mạnh các sóng ngành bạn tự định nghĩa và các ngành theo phân loại Vietstock.">
       <span class="ico">◎</span>Ngành &amp; sóng</button>
     <button class="tab" data-tab="alerts" role="tab"
       data-title="Sự kiện" data-desc="Breakout, thủng stop, mất tiêu chí… của các mã đang theo dõi, mới nhất trước.">
@@ -68,7 +68,11 @@
       <p id="page-desc" class="muted"></p>
     </div>
     <div class="top-end">
-      <div id="vni" class="vni" role="button" tabindex="0" aria-label="Mở biểu đồ VN-Index"></div>
+      <div class="vni-wrap">
+        <div id="vni" class="vni" role="button" tabindex="0" aria-label="Mở biểu đồ VN-Index"></div>
+        <button id="checks-line" class="checks-line small muted" type="button" hidden></button>
+        <div id="checks-pop" class="checks-pop" hidden></div>
+      </div>
       <div class="run" title="Danh sách được lọc toàn thị trường vào ngày này; giá và chỉ báo vẫn cập nhật hằng ngày">
         <span>Danh sách lọc ngày</span>
         <button id="run-btn" class="dd dd-plain" type="button" aria-haspopup="listbox" aria-expanded="false">
@@ -126,10 +130,15 @@
 
     <!-- events -->
     <section id="tab-alerts" class="panel">
+      <div class="toolbar">
+        <div class="search"><span aria-hidden="true">⌕</span><input id="alerts-search" type="search" placeholder="Lọc theo mã, VD: HDB" aria-label="Lọc sự kiện theo mã"></div>
+        <span id="alerts-type"></span><span id="alerts-period"></span><span id="alerts-count" class="muted"></span>
+      </div>
       <div class="table-wrap"><table id="alerts-table">
         <thead><tr><th>Phiên</th><th>Mã</th><th>Sự kiện</th><th>Chi tiết</th></tr></thead>
         <tbody></tbody>
       </table></div>
+      <button id="alerts-more" class="linkbtn more-btn" type="button" hidden>Xem thêm</button>
     </section>
 
     <!-- news -->

@@ -52,8 +52,10 @@ def _latest_run(conn) -> tuple[dict[str, float], dict[str, float], set[str], str
 
 
 def ticker_row(ticker: str, exchange: str, frame: pd.DataFrame, rs: float | None, flagged: bool,
-               settings: Mapping[str, Any]) -> dict[str, Any]:
-    """One ticker's row: price facts always, indicators only on data that is not flagged."""
+               settings: Mapping[str, Any], stored_sessions: int | None = None) -> dict[str, Any]:
+    """One ticker's row: price facts always, indicators only on data that is not flagged.
+    `stored_sessions`: every session stored for it, which tells a recent listing from a stock
+    that trades on few days (tester N04: BHP read "mới niêm yết")."""
     close = frame["close"].astype("float64")
     last = float(close.iloc[-1])
     prev = float(close.iloc[-2]) if len(close) > 1 else None
@@ -72,6 +74,8 @@ def ticker_row(ticker: str, exchange: str, frame: pd.DataFrame, rs: float | None
         return row
 
     min_hist = int(settings["min_history_sessions"])
+    if len(frame) < min_hist:
+        row["history"] = "SPARSE" if (stored_sessions or 0) >= min_hist else "NEW"
     criteria = trend_template(frame, rs, settings)
     for code, c in criteria.items():
         if len(frame) < min_hist and code != "TT7":
@@ -107,12 +111,14 @@ def build_snapshot(as_of: date | None = None, path: Path | None = None,
         graded = {r[0] for r in conn.execute("SELECT DISTINCT ticker FROM financial_metrics WHERE period_type = 'Q'")}
         flag_notes = dict(conn.execute("SELECT scope_key, note FROM data_freshness "
                                        "WHERE dataset = 'prices_daily' AND is_stale = 1").fetchall())
+        stored = dict(conn.execute("SELECT ticker, COUNT(*) FROM prices_daily WHERE trade_date <= ? GROUP BY ticker",
+                                   (as_of.isoformat(),)).fetchall())
     themes = load_themes()
     rows = []
     for t, frame in frames.items():
         if frame.empty or t not in exchanges:
             continue
-        row = ticker_row(t, exchanges[t], frame, rs_all.get(t), t in stale, settings)
+        row = ticker_row(t, exchanges[t], frame, rs_all.get(t), t in stale, settings, stored.get(t))
         row["name"] = names.get(t)
         row["rs_from"] = rs_from
         if row["flagged"]:
