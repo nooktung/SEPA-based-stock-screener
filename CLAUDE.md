@@ -284,6 +284,14 @@ code when none is stored. Display only.
   implemented show no edge over a random liquid stock; valid breakouts of 8/8
   stocks help only in an UPTREND market and hurt under pressure. Thresholds
   were deliberately **not** changed -- the user decides.
+  Rerun 2026-10-11 (1,463 tickers, `data/backtest/sepa_2026-10-11.md`, the old base
+  rules on the same data in `..._oldrules.md`), now with a stop exit beside the fixed
+  horizons: edge, where any, is at T+60 and in UPTREND / MIXED markets; breakouts under
+  pressure lose under both rule sets (-3.25% T+20 with base rules 2); flat-base breakouts
+  improved (+2.39% T+20, +6.52% T+60, both |t| >= 2); VCPs are 8x more frequent with a
+  lower mean; "weak" breakouts do as well as "valid" ones; RS >= 90 first entries lag;
+  the newest 30% of signals is mostly negative. The 8% stop ends ~55-60% of trades within
+  60 sessions, trims losses in bad regimes and cuts winners in good ones.
 
 ### Phase 3 notes
 
