@@ -265,6 +265,20 @@ code when none is stored. Display only.
   `recent_gaps` uses UPCoM bounds up to `tickers.listed_date` (exchange moves);
   `data_freshness.note` says why a series is flagged. News links found only in
   an RSS summary are `role = 'mention'`. `start --update-only` ends the 15:30 job.
+- Tester report 2 (2026-10-11, `Bao_cao_kiem_thu_lan_2_SEPA_Viet_Nam.docx`), base rules 2
+  (`screener.BASE_RULES`, stored as `base_rules` / `rules`): contractions are the major ones
+  (`major_contractions`: lower highs, higher lows; KSV 37 -> 1); pivot = the last contraction's
+  high, or the final tight area's when it sits in the upper half of the base (user decision);
+  the base starts at its left-side high within `left_high_tolerance_pct` unless deeper than a cup;
+  an opening spike (`spike_bar`) is measured at its close (ABB: flat base, pivot 18,300); stop risk
+  <= 8% (floor rounded up); no stop without a forming base (user decision). States stored by
+  the earlier rules keep their held pivot / stop until the hold ends (`monitor.legacy_hold`);
+  `monitor --keep-events` re-reads states without rewriting a session's alerts. Status: a breached
+  stop is never AT_PIVOT, TREND_TEMPLATE_RESTORED cancels its loss, BREAKOUT needs close >= pivot.
+  `python -m src.main check` (src/web/checks.py, pipeline + 15:30 job, `GET /api/checks`) checks
+  the invariants on the real data. Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
+  are ambiguous news codes (`news.ticker_aliases`); `industry --names` reads Vietnamese names
+  from Vietstock's profile title once.
 - Backtest (`backtest-sepa`, 1,209 tickers, 2016-2026): most rules as
   implemented show no edge over a random liquid stock; valid breakouts of 8/8
   stocks help only in an UPTREND market and hurt under pressure. Thresholds
@@ -431,7 +445,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 788 tests currently pass.
+- Run `python -m pytest -q` after every change. 851 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

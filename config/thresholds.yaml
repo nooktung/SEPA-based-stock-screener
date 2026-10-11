@@ -231,7 +231,15 @@ news:
   # Three-letter words that are also tickers. Matched only with the company
   # name or an explicit "mã"/"cổ phiếu" cue nearby, never on their own.
   # (checked against the universe 2026-09-27: these are tickers AND everyday words)
-  ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP]
+  # HCM, GAS, OIL, BIG added 2026-10-11 (tester N03: "Công an TP.HCM bắt..." was filed under HCM,
+  # Chứng khoán HSC -- 72 links, most of them the city). A cue is also "HCM: ..." at the start of a
+  # headline (a company disclosure) or "(HCM)".
+  ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP, HCM, GAS, OIL, BIG]
+  # Other names a company goes by, counted like its name for an ambiguous code (lower case, whole words).
+  ticker_aliases:
+    HCM: ["hsc", "chứng khoán tp.hcm", "chứng khoán tp. hcm", "chứng khoán thành phố hồ chí minh"]
+    GAS: ["pv gas", "pvgas", "tổng công ty khí việt nam"]
+    OIL: ["pv oil", "pvoil", "tổng công ty dầu việt nam"]
   # Sources whose articles come from a ticker's own news page: that ticker is their subject even
   # when the headline does not name it. Elsewhere (RSS) a ticker found only in the summary is a
   # "mention" -- "Một cổ phiếu bị khối ngoại xả 9.600 tỷ" (MCH) was filed under VHM (tester, B06).

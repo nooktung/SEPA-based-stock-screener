@@ -349,7 +349,7 @@ def news(args: list[str]) -> int:
     from src.collectors.base import ProviderError
     from src.collectors.providers.web_news import PoliteFetcher, extract_body
     from src.collectors.registry import instantiate
-    from src.processors.news_pipeline import news_settings, process_articles, reclassify_roles
+    from src.processors.news_pipeline import news_settings, process_articles, reclassify_roles, retag_ambiguous
     from src.database import connect
     from src.quant.monitor import monitored_tickers
 
@@ -386,6 +386,9 @@ def news(args: list[str]) -> int:
     moved = reclassify_roles()              # links stored before roles existed (idempotent)
     if moved:
         print(f"  {moved} liên kết tin chỉ nhắc tới mã (không phải tin của mã) được đánh dấu lại")
+    dropped = retag_ambiguous()             # links of ambiguous codes the current rules no longer make
+    if dropped:
+        print("  bỏ liên kết tin gắn nhầm mã: " + ", ".join(f"{t} {n}" for t, n in sorted(dropped.items())))
     print(f"\nTin theo mã ({days} ngày, {len(focus)} mã theo dõi):")
     since_iso = since.isoformat()
     with connect() as conn:
@@ -489,6 +492,42 @@ def fundamentals(args: list[str]) -> int:
     return 0
 
 
+def _industry_names(cfg: dict) -> int:
+    """One request per ticker whose name DNSE gives without diacritics (~190 of 1,663 on 2026-10-11)."""
+    import time
+
+    from src.collectors.base import ProviderError
+    from src.collectors.providers.vietstock_industry_provider import fetch_profile
+    from src.collectors.providers.web_news import PoliteFetcher
+    from src.collectors.universe import has_diacritics, set_display_name
+    from src.database import connect
+    from src.quant.industry import store_industry
+
+    with connect() as conn:
+        tickers = [t for t, n in conn.execute("SELECT ticker, name FROM tickers WHERE active = 1 ORDER BY ticker")
+                   if not has_diacritics(n)]
+    print(f"Đọc tên công ty có dấu từ Vietstock cho {len(tickers)} mã (một lượt, cách nhau "
+          f"{float(cfg.get('request_interval_seconds', 2.5))} giây)")
+    fetcher = PoliteFetcher(float(cfg.get("request_interval_seconds", 2.5)), 20.0)
+    started, named, failed = time.monotonic(), 0, 0
+    for n, t in enumerate(tickers, 1):
+        try:
+            name, path_ = fetch_profile(t, fetch=fetcher)
+        except ProviderError as exc:
+            failed += 1
+            print(f"  {t}: {exc}")
+            continue
+        if path_ is not None:
+            store_industry(path_)
+            named += has_diacritics(name)
+        elif set_display_name(t, name):
+            named += 1
+        if n % 25 == 0:
+            print(f"  [{n}/{len(tickers)}] {time.monotonic() - started:.0f}s", flush=True)
+    print(f"Xong: {named} mã có tên có dấu, {len(tickers) - named - failed} mã không đọc được tên, {failed} lỗi")
+    return 0
+
+
 def industry(args: list[str]) -> int:
     import argparse
     import time
@@ -503,11 +542,15 @@ def industry(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.main industry")
     parser.add_argument("--tickers", nargs="*", help="default: every ticker that clears the liquidity gate")
     parser.add_argument("--refresh", action="store_true", help="re-read even if the classification is recent")
+    parser.add_argument("--names", action="store_true",
+                        help="read the profile page of every ticker whose stored name has no diacritics, once")
     opts = parser.parse_args(args)
 
     init_db()
     sync_reference_data()
     cfg = screen_settings()["industry"]
+    if opts.names:
+        return _industry_names(cfg)
     tickers = [t.upper() for t in opts.tickers] if opts.tickers else liquid_tickers()
     known = load_industries()
     fetcher = PoliteFetcher(float(cfg.get("request_interval_seconds", 2.5)), 20.0)

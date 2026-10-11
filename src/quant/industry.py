@@ -100,6 +100,9 @@ def industry_strength(frames: Mapping[str, pd.DataFrame], raw_rs: Mapping[str, f
 # ---------------------------------------------------------------------------
 
 def store_industry(path_: IndustryPath, db: Path | None = None) -> None:
+    from src.collectors.universe import set_display_name  # noqa: PLC0415
+
+    set_display_name(path_.ticker, path_.name, db)         # the page title's name, with diacritics
     lv = [path_.level(d) for d in (1, 2, 3)]
     with connect(db) as conn:
         conn.execute(

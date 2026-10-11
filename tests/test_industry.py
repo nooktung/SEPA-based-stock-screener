@@ -90,3 +90,14 @@ def test_refresh_after_configured_days():
 def test_industry_path_levels():
     p = IndustryPath("X", (("20", "a"), ("2010", "b")), "u")
     assert p.level(2) == ("2010", "b") and p.level(3) is None
+
+
+def test_the_company_name_comes_from_the_page_title():
+    from src.collectors.providers.vietstock_industry_provider import fetch_profile, parse_company_name
+    page = ("<html><head><title>HCM: CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC - Hồ sơ doanh nghiệp | "
+            "VietstockFinance</title></head><body>" + MST + "</body></html>")
+    assert parse_company_name(page, "HCM") == "CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC"
+    assert parse_company_name(page, "SSI") is None                   # another ticker's page: no name
+    assert fetch_industry("HCM", fetch=lambda url: page).name == "CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC"
+    name, path_ = fetch_profile("HCM", fetch=lambda url: "<title>HCM: CTCP Chứng khoán X - Hồ sơ doanh nghiệp</title>")
+    assert name == "CTCP Chứng khoán X" and path_ is None              # no breadcrumb: the name still counts

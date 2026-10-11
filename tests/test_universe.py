@@ -110,3 +110,19 @@ def test_sync_refuses_empty_universe(tmp_path):
     init_db(db)
     with pytest.raises(ProviderDataMissing):
         sync_universe([], db)
+
+
+def test_a_name_with_diacritics_is_kept_over_the_same_without(tmp_path, cfg):
+    """DNSE names some companies without diacritics ("CTCP Chung khoan TP Ho Chi Minh"; tester B18)."""
+    from src.collectors.universe import set_display_name
+    db = tmp_path / "u.db"
+    init_db(db)
+    sync_universe(filter_instruments(LISTING, cfg), db)
+    assert set_display_name("SSI", "CTCP Chứng khoán SSI", db) and not set_display_name("SSI", "CTCP Chung khoan SSI", db)
+    sync_universe(filter_instruments(LISTING, cfg), db)              # DNSE's plain "SSI" again
+    with connect(db) as conn:
+        assert conn.execute("SELECT name FROM tickers WHERE ticker='SSI'").fetchone()[0] == "CTCP Chứng khoán SSI"
+    renamed = [dict(r, name="CTCP Chứng khoán SSI mới") if r["symbol"] == "SSI" else r for r in LISTING]
+    sync_universe(filter_instruments(renamed, cfg), db)              # a new name with diacritics replaces it
+    with connect(db) as conn:
+        assert conn.execute("SELECT name FROM tickers WHERE ticker='SSI'").fetchone()[0] == "CTCP Chứng khoán SSI mới"

@@ -99,6 +99,23 @@ def fetch_instruments(client: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def has_diacritics(name: str | None) -> bool:
+    return bool(name) and any(ord(ch) > 127 for ch in name)
+
+
+def set_display_name(ticker: str, name: str | None, path: Path | None = None) -> bool:
+    """Store a company name written with Vietnamese diacritics (from Vietstock's profile page).
+
+    DNSE gives some names without them ("CTCP Chung khoan TP Ho Chi Minh"; tester B18); a name
+    without diacritics is never stored here, and sync_universe keeps this one."""
+    if not has_diacritics(name):
+        return False
+    with connect(path) as conn:
+        cur = conn.execute("UPDATE tickers SET name = ?, updated_at = ? WHERE ticker = ? AND (name IS NULL OR name <> ?)",
+                           (name, utcnow(), ticker.upper(), name))
+    return cur.rowcount > 0
+
+
 def sync_universe(members: list[UniverseMember], path: Path | None = None) -> dict[str, int]:
     """Upsert members into `tickers` and deactivate codes no longer listed.
 
@@ -118,7 +135,9 @@ def sync_universe(members: list[UniverseMember], path: Path | None = None) -> di
                 VALUES (?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(ticker) DO UPDATE SET
                     exchange=excluded.exchange,
-                    name=excluded.name,
+                    -- a name with diacritics (set_display_name) is not replaced by one without them
+                    name=CASE WHEN tickers.name GLOB '*[^ -~]*' AND excluded.name NOT GLOB '*[^ -~]*'
+                              THEN tickers.name ELSE excluded.name END,
                     listed_date=excluded.listed_date,
                     active=1,
                     updated_at=excluded.updated_at

@@ -191,11 +191,15 @@ RS Rating = thứ hạng phần trăm của điểm thô trong MỌI MÃ ĐỦ D
 
 ### 7.1 Cách xác định nền
 
-1. Tìm **đỉnh cao nhất** trong tối đa **325 phiên** (65 tuần) gần nhất → đây là **"Bắt đầu nền"**.
-2. Nền = toàn bộ các phiên từ đỉnh đó tới hôm nay.
+1. Tìm **đỉnh cao nhất** trong tối đa **325 phiên** (65 tuần) gần nhất. Phiên **giật** (mở cửa ở giá cao nhất, đóng
+   cửa ở nửa dưới phiên, cao hơn mọi phiên lân cận ≥ 3%) được tính bằng giá đóng cửa và web ghi "đã bỏ phiên giật".
+2. **"Bắt đầu nền"** = đỉnh trái: phiên sớm nhất có đỉnh cách đỉnh cao nhất ≤ 3% và đã điều chỉnh ≥ 3% sau đó, miễn nền
+   tính từ đó không sâu quá 33%. Nền = các phiên từ đó tới hôm nay.
 3. **Đáy nền** = giá thấp nhất trong nền. **Độ sâu** = (đỉnh − đáy) / đỉnh.
-4. **Các nhịp co hẹp** được tìm bằng thuật toán zigzag: mỗi lần giá đảo chiều ≥ 3% tính là
-   một nhịp. Độ sâu mỗi nhịp = (đỉnh nhịp − đáy nhịp) / đỉnh nhịp.
+4. **Các nhịp co hẹp chính** đo từ đỉnh cao nhất: đáy thấp nhất sau đỉnh, rồi đỉnh cao nhất sau đáy đó… (đỉnh thấp dần,
+   đáy cao dần); mỗi nhịp sâu ≥ 3%. Sau nhịp cuối, một **vùng chặt** (điều chỉnh < 3%, ≥ 3 phiên, ở nửa trên nền) là nhịp
+   cuối cùng. Độ sâu mỗi nhịp = (đỉnh nhịp − đáy nhịp) / đỉnh nhịp. (Trước 11/10/2026 dùng zigzag 3%, đếm cả dao động
+   nhỏ: KSV 37 nhịp.)
 5. **Khối lượng cạn** = KL trung bình 5 phiên gần nhất < 70% KL trung bình 50 phiên **[UNVERIFIED]**.
 
 ### 7.2 Thứ tự gán nhãn
@@ -224,8 +228,9 @@ hơn nhịp trước; khối lượng cạn dần **[SÁCH]**.
 |---|---|
 | Số nhịp co hẹp | 2 – 6 ("hai đến bốn, đôi khi năm hoặc sáu" [SÁCH]) |
 | Nhịp đầu tiên | sâu 10% – 35% **[UNVERIFIED]** |
-| Mỗi nhịp nông hơn nhịp trước | được phép lệch tối đa 1 điểm % |
+| Mỗi nhịp nông hơn nhịp trước | được phép lệch tối đa 1 điểm % (nhịp chính luôn thỏa) |
 | Nhịp cuối | ≤ 10% **[TRIỂN KHAI]** |
+| Nhịp cuối ở nửa trên của nền | đỉnh nhịp cuối ≥ giữa nền **[TRIỂN KHAI]** |
 | Ký hiệu kiểu Minervini | ví dụ `19W 19/7 4T` = nền 19 tuần, nhịp sâu nhất 19%, nông nhất 7%, 4 nhịp |
 
 ### 7.4 Cốc tay cầm / cốc chưa có tay cầm (O'Neil)
@@ -273,7 +278,7 @@ Tối đa 100. Các nhãn khác (sát đỉnh, đã chạy xa, thủng nền…)
 
 | Nhãn | Pivot |
 |---|---|
-| VCP, Nền | đỉnh cao nhất **sau đáy của nhịp co hẹp cuối** + 1 bước giá |
+| VCP, Nền | **đỉnh của nhịp co hẹp cuối** (hoặc của vùng chặt cuối ở nửa trên nền) + 1 bước giá |
 | Nền phẳng | đỉnh cao nhất **của cả nền** + 1 bước giá [TRANG GỐC IBD] |
 | Cốc tay cầm | **đỉnh tay cầm (miệng cốc phải)** + 1 bước giá [O'Neil] |
 | Cốc chưa có tay cầm | **đỉnh bên trái của cốc** + 1 bước giá [IBD] |
@@ -288,10 +293,11 @@ IBD dùng "+10 cent"; ở Việt Nam đổi thành **+1 bước giá**:
 
 **Vùng mua**: tối đa 5% trên pivot; quá 5% = "đã chạy xa" **[THỨ CẤP]**.
 
-Pivot làm tròn **lên**, stop làm tròn **xuống** theo bước giá. Trong **5 phiên** sau một phiên breakout (hoặc thủng stop),
+Pivot làm tròn **lên**, stop làm tròn **xuống** nhưng không thấp hơn pivot − 8% làm tròn **lên**, nên rủi ro luôn ≤ 8%.
+Nếu đỉnh trái của nền cao hơn pivot từ 5% web ghi "vùng cung treo", từ 10% thì cảnh báo. Trong **5 phiên** sau một phiên breakout (hoặc thủng stop),
 dashboard giữ nguyên pivot và stop của nền đó và ghi "giữ từ breakout dd/mm"; giá đóng cửa ≤ stop thì ghi
-**"đã thủng stop"** thay cho rủi ro tới stop. Nhờ vậy nhãn "Vừa breakout" / "Mất hiệu lực" luôn đi cùng đúng pivot / stop
-đã tạo ra nó (sửa theo báo cáo kiểm thử 11/10/2026).
+**"đã thủng stop dd/mm"** thay cho rủi ro tới stop, và biểu đồ vẽ stop đó nét chấm màu xám. Nhờ vậy nhãn "Vừa breakout" /
+"Mất hiệu lực" luôn đi cùng đúng pivot / stop đã tạo ra nó (sửa theo báo cáo kiểm thử 11/10/2026).
 
 ### 8.2 Stop tham chiếu
 
@@ -303,8 +309,9 @@ Minervini: cắt lỗ thường 7–8%, **tối đa 10%** **[SÁCH]**. Hệ th�
 | Nền phẳng | cao hơn trong hai mức: đáy nền, hoặc pivot − 8% |
 | Cốc tay cầm | cao hơn trong hai mức: đáy tay cầm, hoặc pivot − 8% |
 | Cốc chưa có tay cầm | pivot − 8% |
+| Sát đỉnh, đã chạy xa, vừa giảm mạnh, quá sâu, thủng nền | **không có stop** (không có điểm mua ở pivot) |
 
-**Rủi ro** (cột "Rủi ro") = (pivot − stop) / pivot.
+**Rủi ro** (cột "Rủi ro") = (pivot − stop) / pivot, luôn ≤ 8%.
 
 ### 8.3 Rủi ro kẹt T+2 (đặc thù Việt Nam)
 

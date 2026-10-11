@@ -160,23 +160,41 @@ không tính là trượt.
 
 Tất cả cách đo nền là **[TRIỂN KHAI]** của các mô tả trong sách (Minervini, O'Neil, IBD).
 
-### 6.1 Xác định nền
+### 6.1 Xác định nền (quy tắc nền 2, từ 11/10/2026 theo báo cáo kiểm thử lần 2)
 
-1. Cửa sổ: **325 phiên** gần nhất (65 tuần). **Đỉnh nền** = giá cao nhất trong cửa sổ. **Nền** = các phiên từ đỉnh đó đến nay.
-2. Nếu nền < **15 phiên** (đỉnh mới trong 3 tuần): pivot = đỉnh + 1 bước giá; khoảng cách = C/pivot − 1:
+1. Cửa sổ: **325 phiên** gần nhất (65 tuần). **Đỉnh nền** = giá cao nhất trong cửa sổ, **bỏ phiên giật** [TRIỂN KHAI]:
+   một phiên mở cửa cách giá cao nhất ≤ 1 bước giá, đóng cửa ở nửa dưới biên độ phiên và có giá cao vượt mọi phiên
+   trong ±10 phiên ít nhất 3% được tính bằng **giá đóng cửa** khi tìm đỉnh (ABB 09/07/2026: mở cửa giá trần 18.900, đóng
+   17.200). Phiên đã bỏ được ghi trên giao diện.
+2. **Ngày bắt đầu nền = đỉnh trái** [TRIỂN KHAI]: lùi từ đỉnh nền về phiên sớm nhất có giá cao ≥ đỉnh × (1 − 3%) **và**
+   sau phiên đó giá đã điều chỉnh ≥ 3% trước khi lên đỉnh; dừng lùi khi nền tính từ đó sâu hơn 33% (độ sâu tối đa của
+   cốc). Ví dụ ABB: nền bắt đầu 10/07 (18.000), đỉnh 18.200 ngày 18/09. Đỉnh 18.000 một năm trước rồi giảm 40% và hồi
+   lên 18.200 là hai nền, không lùi.
+3. Nếu nền < **15 phiên** (đỉnh mới trong 3 tuần): pivot = đỉnh + 1 bước giá; khoảng cách = C/pivot − 1:
    - > +5% → **EXTENDED** (đã chạy xa)
    - < −10% → **SHARP_PULLBACK** (vừa lập đỉnh rồi giảm mạnh)
    - còn lại → **NEAR_HIGH** (sát đỉnh, chưa có nền)
-3. Nếu nền ≥ 15 phiên:
-   - Đáy nền = giá thấp nhất trong nền; **độ sâu** = (1 − đáy/đỉnh)·100%.
-   - **Zigzag 3%**: chuỗi đỉnh/đáy luân phiên, đảo chiều khi giá đi ngược ≥ 3% (đỉnh dùng giá cao, đáy dùng giá thấp).
-   - **Các nhịp co hẹp** = độ sâu của mỗi nhịp từ đỉnh xuống đáy liền sau: (1 − đáy/đỉnh)·100%.
-   - **Pivot** = giá cao nhất kể từ đáy của nhịp cuối + 1 bước giá.
+4. Nếu nền ≥ 15 phiên:
+   - Đáy nền = giá thấp nhất trong nền (tính từ ngày bắt đầu); **độ sâu** = (1 − đáy/đỉnh)·100%.
+   - **Nhịp co hẹp chính** (đo từ đỉnh nền): H₀ = đỉnh; Lₖ = đáy thấp nhất sau Hₖ; Hₖ₊₁ = đỉnh cao nhất sau Lₖ … Một
+     nhịp được tính khi sâu ≥ **3%** và dài ≥ **2 phiên** (đỉnh và đáy khác phiên). Dừng khi nhịp tiếp theo nông hơn 3%.
+     Đỉnh thấp dần, đáy cao dần, nên mỗi nhịp không sâu hơn nhịp trước (trước đây đếm mọi dao động 3% kiểu zigzag: KSV
+     37 "nhịp"; nay 1–3 nhịp trên dữ liệu thật).
+   - **Vùng chặt cuối**: sau nhịp chính cuối, đoạn điều chỉnh < 3% kéo dài ≥ **3 phiên** và có đỉnh ở **nửa trên** của
+     nền được tính là nhịp cuối cùng. Ở nửa dưới thì không (đó là nhịp hồi trong nền: HCM 23.750 nằm dưới đỉnh trái 13%).
+   - **Pivot** = đỉnh của nhịp cuối (vùng chặt nếu có) + 1 bước giá [skill 02 §3.1: "pivot = max(high) của nhịp co hẹp
+     cuối"]; nếu không có nhịp nào: đỉnh nền + 1 bước giá. Trước 11/10/2026: giá cao nhất kể từ đáy nhịp cuối.
    - **Cạn khối lượng** = TB khối lượng 5 phiên < **0,7 ×** TB 50 phiên [UNVERIFIED].
-   - **Stop** = max(đáy nhịp cuối, pivot × (1 − 8%)) [SÁCH: stop tối đa 7–8%].
-   - Pivot **làm tròn lên**, stop **làm tròn xuống** theo bước giá của sàn (giá đã điều chỉnh quyền có thể nằm giữa hai
-     bước giá, vd HDB 23.080 sau chia 30% cổ phiếu).
+   - **Stop** = max(đáy nhịp cuối, pivot × (1 − 8%)) [SÁCH: stop tối đa 7–8%]; đáy nhịp cuối là đáy vùng chặt khi pivot
+     lấy từ vùng chặt.
+   - Pivot **làm tròn lên**; stop **làm tròn xuống** nhưng **không thấp hơn pivot × 0,92 làm tròn lên**, nên rủi ro từ
+     pivot luôn ≤ 8% (trước đây làm tròn xuống cả mức pivot −8%: ABB 8,42%).
+   - **Chỉ nền đang hình thành** (VCP, nền phẳng, cốc, cốc tay cầm, nền) **có stop**; EXTENDED, NEAR_HIGH,
+     SHARP_PULLBACK, TOO_DEEP, BROKEN không có (không có điểm mua ở pivot thì stop không bảo vệ gì — lựa chọn của bạn
+     11/10/2026).
    - Nếu C > pivot + 5% → **EXTENDED**; nếu C < đáy nền → **BROKEN** (thủng nền).
+5. **Cung treo** (thông tin, không đổi nhóm): đỉnh nền / pivot − 1. Từ **5%** ghi thông tin, từ **10%** cảnh báo
+   (với VCP và cốc tay cầm, pivot thấp hơn đỉnh trái 3–8% là bình thường).
 
 ### 6.1b Giữ pivot / stop sau sự kiện [TRIỂN KHAI] (sửa theo báo cáo kiểm thử 11/10/2026)
 
@@ -189,8 +207,15 @@ Nếu trong 5 phiên gần nhất có phiên i mà (nền đọc tới phiên i�
    C(i) > pivot(i−1) ≥ C(i−1)  (breakout)   hoặc   C(i) < stop(i−1) ≤ C(i−1)  (thủng stop)
 → giữ nguyên nền đó (pivot, stop, nhãn) và ghi "giữ từ breakout / phiên thủng stop dd/mm"
    trừ khi đã có một nền mới hình thành bắt đầu sau phiên i.
-Đã thủng stop = C hôm nay ≤ stop → hiện "đã thủng stop", không hiện "rủi ro tới stop".
+Một lần đóng cửa vượt pivot của nền có đỉnh nằm ngay trong 5 phiên đó không tính là breakout (nền đọc lại sau phiên
+breakout lấy chính phiên đó làm đỉnh).
+Đã thủng stop = C hôm nay ≤ stop → hiện "đã thủng stop dd/mm" (ngày đóng cửa xuống tới stop), không hiện "rủi ro
+tới stop"; trên biểu đồ stop vẽ nét chấm màu xám.
 ```
+**Giai đoạn chuyển sang quy tắc nền 2:** mã đang giữ pivot / stop tính theo cách cũ (trạng thái lưu không có
+`base_rules`) giữ tiếp các số đó tới hết 5 phiên giữ, hoặc tới khi đóng cửa dưới stop (giữ sau breakout), hoặc khi có
+sự kiện quyền điều chỉnh giá sau ngày bắt đầu giữ. Bộ kiểm tra bất biến (`python -m src.main check`) xếp các mã này vào
+nhóm "đang chuyển".
 5 phiên = cửa sổ của nhãn "Vừa breakout" / "Mất hiệu lực", nên nhãn và con số luôn nói về cùng một nền
 (`sepa_screen.base.hold_sessions`). Nhóm A/B/C vẫn quyết định theo nền đọc hôm nay.
 
@@ -199,11 +224,14 @@ Nếu trong 5 phiên gần nhất có phiên i mà (nền đọc tới phiên i�
 | Nhãn | Điều kiện | Pivot | Stop |
 |---|---|---|---|
 | **CUP_HANDLE** (cốc tay cầm) | đạt mọi quy tắc cốc (6.3) **và** có tay cầm hợp lệ | đỉnh tay cầm (miệng cốc phải) + 1 bước giá | max(đáy tay cầm, pivot −8%) |
-| **VCP** | 2–6 nhịp; nhịp đầu sâu 10–35%; mỗi nhịp sau ≤ nhịp trước + 1 điểm %; nhịp cuối ≤ 10% | như 6.1 | như 6.1 |
+| **VCP** | 2–6 nhịp chính (kể cả vùng chặt cuối); nhịp đầu sâu 10–35%; mỗi nhịp sau ≤ nhịp trước + 1 điểm % (luôn đúng với nhịp chính); nhịp cuối ≤ 10%; **nhịp cuối bắt đầu ở nửa trên của nền** [TRIỂN KHAI] | như 6.1 | như 6.1 |
 | **FLAT_BASE** (nền phẳng) | độ sâu ≤ 15% và ≥ 25 phiên [TRANG GỐC IBD] | đỉnh nền + 1 bước giá | max(đáy nền, pivot −8%) |
 | **CUP** (cốc chưa có tay cầm) | đạt mọi quy tắc cốc, chưa có tay cầm | đỉnh nền (miệng cốc trái) + 1 bước giá | pivot −8% |
 | **BASE** (nền chung) | độ sâu ≤ 33% | như 6.1 | như 6.1 |
-| **TOO_DEEP** | sâu hơn 33% | — | — |
+| **TOO_DEEP** | sâu hơn 33% | như 6.1 (chỉ để tham khảo) | không có |
+
+Mỗi nhãn được giải thích bằng bộ tiêu chí của chính nó (nền phẳng không còn hiện tiêu chí tay cầm). Nhãn "nền" (BASE) hiện
+"chưa đạt mẫu hình chuẩn — kiểm tra theo quy tắc cốc / VCP" và câu hỏi "Nền giá" có dấu ~ thay cho ✓.
 
 ### 6.3 Quy tắc hình cốc (chỉ xét khi độ sâu ≤ 33% và nền ≥ 35 phiên)
 
@@ -214,7 +242,7 @@ Nếu trong 5 phiên gần nhất có phiên i mà (nền đọc tới phiên i�
 | Sườn trái (chữ U không phải V) | từ đỉnh xuống tới 1/4 dưới của cốc mất ≥ 15 phiên | [TRIỂN KHAI] |
 | Đáy tròn | ≥ 10 phiên đóng cửa trong 1/4 dưới của cốc | [TRIỂN KHAI] |
 | Xu hướng tăng trước nền | từ đáy thấp nhất trong 130 phiên trước đỉnh (lấy lần gần nhất nếu bằng nhau) lên đỉnh: tăng ≥ 30% và kéo dài ≥ 20 phiên | [SÁCH] ~30% / [TRIỂN KHAI] cách đo |
-| Hồi lên nửa trên | C ≥ giữa cốc = đáy + (đỉnh − đáy)/2 | [SÁCH] |
+| Hồi lên nửa trên | C ≥ giữa cốc = đáy + (đỉnh − đáy)/2; câu chữ nói đúng kết quả ("còn ở nửa dưới …" khi chưa đạt) | [SÁCH] |
 | **Tay cầm** | miệng cốc phải = giá cao nhất sau đáy cốc (phải ≥ giữa cốc); tay cầm = các phiên sau đó, ≥ 5 phiên; sâu 0–12% tính từ miệng phải; đáy tay cầm ≥ giữa cốc; TB khối lượng tay cầm < TB khối lượng cả cốc | [THỨ CẤP] / [TRIỂN KHAI] |
 
 ### 6.4 Điểm chất lượng nền (chỉ để xếp hạng, 0–100) [TRIỂN KHAI]
@@ -516,6 +544,11 @@ Mọi mẫu cần phiên sau xác nhận. Tỷ lệ đảo chiều hiển thị 
 ## 16. Biểu đồ: vùng giá, trendline, kênh, khung tuần/tháng
 
 ### 16.1 Vùng hỗ trợ / kháng cự [TRIỂN KHAI]
+
+Từ 11/10/2026: vùng gần nhất mỗi phía được chọn trong **mọi** vùng (trước đây chỉ trong 3 vùng mạnh nhất, nên hỗ trợ
+"gần nhất" của DRI cách giá 24%), cách giá ≥ **1%** (`chart_levels.zones.min_distance_pct`); vùng đang chứa giá được ghi
+riêng. Tâm vùng làm tròn tới bước giá gần nhất, cận dưới làm tròn xuống, cận trên làm tròn lên. Mức lỗ 8% ở "Kiểm tra vị
+thế" làm tròn lên theo bước giá.
 
 1. **Mức ứng viên**: đỉnh / đáy swing (cao/thấp nhất ±3 nến, chỉ dùng sau khi đã xác nhận đủ 3 nến bên phải);
    mức bị phá: phiên đóng cửa vượt đỉnh 20 / 60 phiên trước → đỉnh đó là một mức; thủng đáy 20 / 60 phiên → đáy đó là một mức.

@@ -251,3 +251,41 @@ def test_a_ticker_found_only_in_the_summary_is_a_mention_not_the_subject(db, tmp
         # links stored before roles existed are re-marked; a ticker-page source keeps "subject"
         conn.execute("UPDATE event_tickers SET role = 'subject'")
     assert reclassify_roles(db) == 1 and reclassify_roles(db) == 0
+
+
+# -- ambiguous codes (tester report 2, N03) ------------------------------------------
+
+HCM_UNIVERSE = {"HCM", "GAS", "SSI"}
+HCM_NAMES = {"HCM": "CTCP Chứng khoán Thành phố Hồ Chí Minh", "GAS": "Tổng Công ty Khí Việt Nam - CTCP"}
+HCM_AMBIGUOUS, HCM_ALIASES = {"HCM", "GAS"}, {"HCM": ["hsc"], "GAS": ["pv gas"]}
+
+
+@pytest.mark.parametrize("text, tagged", [
+    ("Công an TP.HCM bắt nhiều giám đốc làm giả số liệu môi trường", False),
+    ("Hơn 700 gian hàng quy tụ tại một triển lãm ở Tp.HCM", False),
+    ("HCM: Báo cáo kết quả đợt chào bán cổ phiếu ra công chúng", True),       # a disclosure
+    ("Chứng khoán TP.HCM (HCM) báo lãi quý 3 tăng 20%", True),
+    ("HSC chốt danh sách cổ đông, cổ phiếu HCM tăng trần", True),
+    ("1 tuần sau khi rời PV GAS, cựu CEO xuất hiện", True),                    # the company's own name
+])
+def test_hcm_needs_a_cue_or_the_company_name(text, tagged):
+    assert ("HCM" in tag_tickers(text, HCM_UNIVERSE, HCM_NAMES, HCM_AMBIGUOUS, HCM_ALIASES)
+            or "GAS" in tag_tickers(text, HCM_UNIVERSE, HCM_NAMES, HCM_AMBIGUOUS, HCM_ALIASES)) is tagged
+
+
+def test_stored_links_the_current_rules_no_longer_make_are_dropped(db, tmp_path):
+    from src.processors.news_pipeline import retag_ambiguous
+    with connect(db) as conn:
+        conn.execute("INSERT OR IGNORE INTO tickers (ticker, exchange, name, created_at, updated_at) "
+                     "VALUES ('HCM', 'HOSE', 'CTCP Chung khoan TP Ho Chi Minh', 'x', 'x')")
+        for i, headline in enumerate(("Công an TP.HCM bắt nhiều giám đốc", "HCM: Nghị quyết HĐQT số 38",
+                                      "Một doanh nghiệp vừa tăng vốn gấp 3 lần")):
+            conn.execute("INSERT INTO news_events (event_id, event_type, headline, occurred_at, first_seen_at, "
+                         "article_count, primary_source_id, best_source_level, assertion_type) "
+                         "VALUES (?, 'OTHER', ?, '2026-10-09', '2026-10-09', 1, 'cafef_rss', 3, 'INFERENCE')",
+                         (f"e{i}", headline))
+            conn.execute("INSERT INTO event_tickers (event_id, ticker, role) VALUES (?, 'HCM', 'subject')", (f"e{i}",))
+    assert retag_ambiguous(db) == {"HCM": 1}                  # the city; the disclosure stays; e2: reason not stored
+    with connect(db) as conn:
+        assert sorted(r[0] for r in conn.execute("SELECT event_id FROM event_tickers WHERE ticker = 'HCM'")) == ["e1", "e2"]
+    assert retag_ambiguous(db) == {}

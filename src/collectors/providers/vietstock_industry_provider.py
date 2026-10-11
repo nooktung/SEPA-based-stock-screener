@@ -12,6 +12,11 @@ tree as a breadcrumb of links, found on 2026-09-27:
 Codes are 2 / 4 / 6 digits (sector / industry group / industry). A page
 without the breadcrumb raises ProviderDataMissing; no industry is guessed.
 The block appears twice (desktop and mobile); only the desktop copy is read.
+
+The page title also carries the company's name with its Vietnamese diacritics,
+"HCM: CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC - Hồ sơ doanh nghiệp |
+VietstockFinance", which DNSE gives for some tickers without them ("CTCP Chung
+khoan TP Ho Chi Minh"; tester report B18). It is read from the same request.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from src.collectors.providers.web_news import PoliteFetcher
 BASE = "https://finance.vietstock.vn/{t}/ho-so-doanh-nghiep.htm"
 SOURCE_ID = "vietstock_industry"
 _LINK = re.compile(r'href=["\']?/nganh/(\d+)-[^>]*>([^<]+)</a>')
+_TITLE = re.compile(r"<title>(.*?)</title>", re.S | re.I)
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,7 @@ class IndustryPath:
     ticker: str
     levels: tuple[tuple[str, str], ...]     # ((code, name), ...) broadest first
     source_url: str
+    name: str | None = None                 # the company's name from the page title
 
     def level(self, depth: int) -> tuple[str, str] | None:
         """(code, name) at depth 1 = sector, 2 = industry group, 3 = industry."""
@@ -59,10 +66,36 @@ def parse_industry_page(page: str) -> tuple[tuple[str, str], ...]:
     return levels
 
 
+def parse_company_name(page: str, ticker: str) -> str | None:
+    """The name in "<TICKER>: <name> - Hồ sơ doanh nghiệp | VietstockFinance", or None."""
+    m = _TITLE.search(page)
+    if not m:
+        return None
+    title = " ".join(html.unescape(m.group(1)).split())
+    prefix = f"{ticker.upper()}:"
+    if not title.upper().startswith(prefix):
+        return None
+    name = re.split(r"\s+-\s+Hồ sơ doanh nghiệp", title[len(prefix):])[0].strip()
+    return name or None
+
+
 def fetch_industry(ticker: str, fetch: Callable[[str], str] | None = None) -> IndustryPath:
     fetch = fetch or PoliteFetcher(2.5, 20.0)
     url = BASE.format(t=ticker.upper())
-    return IndustryPath(ticker.upper(), parse_industry_page(fetch(url)), url)
+    page = fetch(url)
+    return IndustryPath(ticker.upper(), parse_industry_page(page), url, parse_company_name(page, ticker))
+
+
+def fetch_profile(ticker: str, fetch: Callable[[str], str] | None = None) -> tuple[str | None, IndustryPath | None]:
+    """(company name, industry) from one profile page; either may be missing."""
+    fetch = fetch or PoliteFetcher(2.5, 20.0)
+    url = BASE.format(t=ticker.upper())
+    page = fetch(url)
+    name = parse_company_name(page, ticker)
+    try:
+        return name, IndustryPath(ticker.upper(), parse_industry_page(page), url, name)
+    except ProviderDataMissing:
+        return name, None
 
 
 class VietstockIndustryProvider(FinancialDataProvider):
