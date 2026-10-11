@@ -66,3 +66,59 @@ def test_regime_series_matches_the_screen_definition():
     assert r.iloc[-1] == "UPTREND" and r.iloc[:199].isna().all()
     down = _frame(list(np.linspace(1400, 1000, 260)))
     assert regime_by_date(down, S).iloc[-1] == "CORRECTION"
+
+
+# -- the stop exit (2026-10-11) -------------------------------------------------------
+
+from src.backtest.engine import BacktestConfig, Signal  # noqa: E402
+from src.backtest.sepa import evaluate_with_stop, stop_exits  # noqa: E402
+from src.backtest.swing import Bars  # noqa: E402
+
+
+def _bars(opens, closes, lows=None, band=7.0):
+    o, c = np.asarray(opens, dtype="float64"), np.asarray(closes, dtype="float64")
+    lo = np.asarray(lows, dtype="float64") if lows is not None else np.minimum(o, c) * 0.995
+    hi = np.maximum(o, c) * 1.005
+    f = pd.DataFrame({"open": o, "high": hi, "low": lo, "close": c, "volume": 1e6},
+                     index=pd.bdate_range(end="2026-09-25", periods=len(c)))
+    return f, Bars.of(f, band, 0.6)
+
+
+def test_a_close_at_the_stop_sells_at_the_next_open():
+    #          buy   +1     +2     +3 (close 91 < stop 92)  +4 open 90
+    _, bars = _bars([100, 101, 100, 99, 90, 95, 96], [101, 100, 99, 91, 94, 96, 97])
+    out = stop_exits(bars, 0, 92.0, (5,), 2)
+    assert out[5] == (pytest.approx(-10.0), True)                  # out at the open after the stop close
+
+
+def test_a_stop_before_t_plus_2_sells_at_the_first_sellable_close():
+    """Shares bought on B arrive on the afternoon of B+2: only that close is reachable."""
+    _, bars = _bars([100, 95, 93, 94, 95], [90, 93, 94, 95, 96])     # the buy day itself closes under 92
+    assert stop_exits(bars, 0, 92.0, (3,), 2)[3] == (pytest.approx(-6.0), True)
+
+
+def test_without_a_stop_the_trade_runs_to_the_horizon():
+    _, bars = _bars([100, 101, 102, 103, 104, 105], [101, 102, 103, 104, 105, 106])
+    assert stop_exits(bars, 0, 92.0, (3, 5), 2) == {3: (pytest.approx(4.0), False), 5: (pytest.approx(6.0), False)}
+
+
+def test_a_floor_locked_session_cannot_be_sold():
+    #  close 91 under the stop, then a session locked at the floor (high = low, -7%): sold the session after
+    closes = [101, 100, 91, 84.63, 86, 87]
+    opens = [100, 101, 99, 84.63, 85, 86]
+    lows = [99, 99, 90, 84.63, 84, 85]
+    f, _ = _bars(opens, closes, lows)
+    bars = Bars.of(f.assign(high=np.where(np.arange(len(f)) == 3, f["low"], f["high"])), 7.0, 0.6)
+    assert stop_exits(bars, 0, 92.0, (5,), 2)[5] == (pytest.approx(-15.0), True)
+
+
+def test_the_stop_exit_uses_the_breakouts_base_stop_or_the_8_percent_rule():
+    f, bars = _bars([100] * 3 + [100, 97, 96, 95, 95, 95], [100] * 3 + [98, 96, 95, 95, 95, 95])
+    cfg = BacktestConfig((5,), "next_open", "close", 0.15, 0.10, 0.10, 30, 200, 0.3)
+    day = f.index[2].date()
+    base_stop = Signal("AAA", "breakout_VCP", "VALID", day, None, {"stop": 97.5})
+    o, stopped = evaluate_with_stop(base_stop, f, bars, cfg, 8.0, 2)
+    assert stopped[5] and o.returns[5] < 0                          # 96 closes under the base stop 97.5
+    plain = Signal("AAA", "tt_entry", "LEADER", day, None, {})
+    o, stopped = evaluate_with_stop(plain, f, bars, cfg, 8.0, 2)
+    assert not stopped[5]                                             # 95 is above 100 - 8%

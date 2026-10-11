@@ -676,6 +676,21 @@ Một dòng cho mỗi mã có giá (~1.470), dựng lại hằng ngày (~15 giâ
 
 ---
 
+## 20a. Backtest các quy tắc SEPA (`python -m src.main backtest-sepa`)
+
+Tín hiệu ghi theo ngày biết được, chỉ dùng dữ liệu tới hết ngày đó; mua giá mở cửa phiên sau; phí 0,6% khứ hồi; so với
+một mã thanh khoản bất kỳ cùng ngày (lấy mẫu 5 phiên một lần); `*` khi |t| ≥ 2; ngoài mẫu = 30% tín hiệu mới nhất.
+Hai cách thoát lệnh (từ 11/10/2026):
+
+```
+Cố định  : bán giá đóng cửa sau N phiên (5, 10, 20, 60), dù giữa chừng đã thủng stop.
+Có stop  : như trên, nhưng sau phiên ĐÓNG CỬA ≤ stop thì bán giá mở cửa phiên kế tiếp.
+           stop = stop của nền (breakout; rủi ro từ pivot ≤ 8%), các tín hiệu khác = giá mua × (1 − 8%).
+           Mua phiên B → sớm nhất chiều B+2 mới bán (chỉ khớp được giá đóng cửa B+2); phiên khóa sàn không bán được.
+           Mốc so sánh (mã thanh khoản bất kỳ) cũng có stop 8%.
+```
+Giới hạn: chỉ các mã đang niêm yết (thiên lệch sống sót), giá không cộng cổ tức tiền, trạng thái thị trường rút gọn.
+
 ## 20b. Mẫu đánh ngắn hạn ≤ 2 tuần — CHỈ backtest, chưa hiện trên dashboard
 
 Theo yêu cầu của bạn (09/10/2026). Mọi ngưỡng ở `swing` trong `config/thresholds.yaml`, đều [TRIỂN KHAI]. Tín hiệu biết được

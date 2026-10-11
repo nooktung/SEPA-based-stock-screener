@@ -16,6 +16,16 @@ deducted by the engine):
                            VALID / WEAK (the monitor's rules: volume, close position, not extended)
     breakout_valid_tt      valid breakouts of stocks passing 8/8 on the day, status = market regime
 
+Two exits are measured for every signal (2026-10-11):
+
+    fixed      sell at the close N sessions after the buy, whatever happened on the way
+    stop       the same, but out early after the first CLOSE at or below the stop -- a
+               breakout's base stop (risk <= 8% from the pivot), else the buy price - 8%
+               (Minervini's maximum loss). Vietnam's rules apply: shares bought on B can be
+               sold from the afternoon of B+2 (only that session's close is reachable then);
+               a stop seen at a close is sold at the next sellable open; a session locked at
+               the floor cannot be sold (src/backtest/swing.py `Bars`).
+
 Limits stated up front: the universe is today's listings (no delisted names:
 survivorship bias flatters every number); DNSE prices omit cash dividends; the
 market regime here is the simplified one (index vs MAs and distribution days,
@@ -34,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from src.backtest.engine import BacktestConfig, Outcome, Signal, evaluate_signal, split_sample, summarise
+from src.backtest.swing import Bars, _next_sellable
 from src.database import connect
 from src.quant import indicators as ind
 from src.quant.screener import read_base, screen_settings
@@ -218,12 +229,69 @@ def _breakouts(panel: Panel, ticker: str, pass_t: np.ndarray, settings: Mapping[
                  and close[i] <= before.pivot * (1 + zone / 100.0))
         stamp = frame.index[i]
         status = "VALID" if valid else "WEAK"
-        meta = {"volume_ratio": round(float(ratio), 2), "close_position": round(float(close_pos), 2)}
+        meta = {"volume_ratio": round(float(ratio), 2), "close_position": round(float(close_pos), 2),
+                "stop": before.stop}
         out.append(Signal(ticker, f"breakout_{before.kind}", status, stamp.date(), regime(stamp), meta))
         j = pos.get(stamp)
         if valid and j is not None and pass_t[j]:
             out.append(Signal(ticker, "breakout_valid_tt", regime(stamp) or "UNKNOWN", stamp.date(), regime(stamp), meta))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Exit at the stop
+# ---------------------------------------------------------------------------
+
+def stop_exits(bars: Bars, entry: int, stop: float, horizons: Sequence[int],
+               first_sell: int) -> dict[int, tuple[float, bool]]:
+    """Gross % return per horizon, and whether the stop ended the trade.
+
+    Held up to `horizon` sessions after the buy on `entry` (bought at its open). The first
+    close at or below `stop` ends it: sold at the next sellable session's open, or, when
+    that is the first session the shares can be sold (`first_sell` after the buy, the
+    afternoon of T+2), at its close. Not stopped: sold at the close `horizon` sessions on,
+    moved past floor-locked sessions like the fixed exit.
+    """
+    price = bars.open[entry]
+    n = len(bars.close)
+    last = min(n - 1, entry + max(horizons))
+    below = np.flatnonzero(bars.close[entry:last + 1] <= stop)
+    hit = entry + int(below[0]) if len(below) else None
+    out: dict[int, tuple[float, bool]] = {}
+    for h in horizons:
+        if hit is not None and hit <= entry + h:
+            first = entry + first_sell
+            d = _next_sellable(bars, max(hit + 1, first))
+            if d is None:
+                continue
+            fill = bars.close[d] if d == first else bars.open[d]
+            out[h] = ((fill / price - 1.0) * 100.0, True)
+        else:
+            d = _next_sellable(bars, entry + h)
+            if d is None:
+                continue
+            out[h] = ((bars.close[d] / price - 1.0) * 100.0, False)
+    return out
+
+
+def evaluate_with_stop(signal: Signal, frame: pd.DataFrame, bars: Bars, config: BacktestConfig,
+                       max_loss_pct: float, first_sell: int) -> tuple[Outcome, dict[int, bool]]:
+    """The signal's outcome with the stop exit, net of the same costs as the fixed exit."""
+    outcome = Outcome(signal=signal)
+    stamp = pd.Timestamp(signal.signal_date)
+    if stamp not in frame.index:
+        return outcome, {}
+    entry = frame.index.get_loc(stamp) + 1
+    if entry >= len(frame) or bars.open[entry] <= 0:
+        return outcome, {}
+    price = float(bars.open[entry])
+    stop = signal.metadata.get("stop") or price * (1 - max_loss_pct / 100.0)
+    outcome.entry_date, outcome.entry_price = frame.index[entry].date(), price
+    stopped: dict[int, bool] = {}
+    for h, (gross, was_stopped) in stop_exits(bars, entry, float(stop), config.horizons, first_sell).items():
+        outcome.returns[h] = gross - config.round_trip_cost_pct
+        stopped[h] = was_stopped
+    return outcome, stopped
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +307,10 @@ class SepaBacktest:
     tickers: int
     first: date | None
     last: date | None
+    # the same signals with the stop exit; share of trades the stop ended, per key and horizon
+    stop_stats: dict[str, Any] = field(default_factory=dict)
+    stop_out_sample: dict[str, Any] = field(default_factory=dict)
+    stopped_share: dict[str, dict[int, float]] = field(default_factory=dict)
 
 
 def run_sepa_backtest(path: Path | None = None, limit: int | None = None, step: int = 5,
@@ -267,8 +339,27 @@ def run_sepa_backtest(path: Path | None = None, limit: int | None = None, step: 
     outcomes: list[Outcome] = [evaluate_signal(s, frames[s.ticker], config) for s in signals]
     ins, outs = split_sample(outcomes, config)
     dates = [s.signal_date for s in signals]
+
+    from src.market_calendar import price_limit_pct  # noqa: PLC0415
+
+    swing = load_config().thresholds.raw["swing"]
+    tol, first_sell = float(swing["ceiling_tolerance_pct"]), int(swing["first_sell_session"])
+    bars = {t: Bars.of(f, float(price_limit_pct(exchanges[t]) or 7.0), tol) for t, f in frames.items()}
+    max_loss = float(settings["base"]["max_stop_pct"])
+    with_stop: list[Outcome] = []
+    counts: dict[str, dict[int, list[int]]] = {}
+    for sig in signals:
+        o, stopped = evaluate_with_stop(sig, frames[sig.ticker], bars[sig.ticker], config, max_loss, first_sell)
+        with_stop.append(o)
+        for h, flag in stopped.items():
+            c = counts.setdefault(sig.key, {}).setdefault(h, [0, 0])
+            c[0] += int(flag)
+            c[1] += 1
+    _, stop_outs = split_sample(with_stop, config)
     return SepaBacktest(summarise(outcomes, config), summarise(ins, config), summarise(outs, config),
-                        config, len(frames), min(dates) if dates else None, max(dates) if dates else None)
+                        config, len(frames), min(dates) if dates else None, max(dates) if dates else None,
+                        summarise(with_stop, config), summarise(stop_outs, config),
+                        {k: {h: c[0] / c[1] * 100.0 for h, c in by_h.items() if c[1]} for k, by_h in counts.items()})
 
 
 def render_report(bt: SepaBacktest) -> str:
@@ -309,4 +400,41 @@ def render_report(bt: SepaBacktest) -> str:
                      + f" | {vs[0]} | {vs[1]} | {'–' if oos is None else f'{oos:+.2f}%'} |")
     lines += ["", f"Mẫu tối thiểu: {cfg.min_sample_size} tín hiệu; dưới mức này con số chỉ mô tả mẫu, "
               "không nói gì về quy tắc. Ngoài mẫu = {:.0%} tín hiệu mới nhất.".format(cfg.out_of_sample_fraction)]
+    if bt.stop_stats:
+        lines += _stop_table(bt)
     return "\n".join(lines) + "\n"
+
+
+def _stop_table(bt: SepaBacktest) -> list[str]:
+    cfg = bt.config
+    h1, h2 = cfg.horizons[-2], cfg.horizons[-1]
+    base = bt.stop_stats.get("baseline_liquid:SAMPLED")
+
+    def mean(stats, h):
+        hs = stats.horizons.get(h) if stats else None
+        return (hs.mean_return, hs.win_rate, hs.distinguishable_from_noise) if hs and hs.sample_size else (None, None, False)
+
+    def cell(stats, h):
+        m, w, sig = mean(stats, h)
+        return "–" if m is None else f"{m:+.2f}% ({w:.0f}%){'*' if sig else ''}"
+
+    def vs(stats, h):
+        m, b = mean(stats, h)[0], mean(base, h)[0]
+        return "–" if m is None or b is None else f"{m - b:+.2f}"
+
+    lines = ["", "## Có stop (bán sau phiên đóng cửa chạm stop)", "",
+             "Như bảng trên nhưng thoát sớm sau phiên **đóng cửa** ở hoặc dưới stop: breakout dùng stop của nền "
+             "(rủi ro từ pivot ≤ 8%), các tín hiệu khác dùng giá mua − 8%. Quy tắc Việt Nam: mua phiên B thì sớm nhất "
+             "chiều B+2 mới bán được (khi đó chỉ khớp được giá đóng cửa); thấy chạm stop ở giá đóng cửa thì bán giá mở "
+             "cửa phiên kế tiếp; phiên khóa sàn không bán được. **Hơn nền** so với mã thanh khoản bình thường cũng "
+             "có stop 8%.", "",
+             f"| Tín hiệu | Trạng thái | N | T+{h1} | T+{h2} | Dừng bởi stop (T+{h2}) | Hơn nền T+{h1} | Hơn nền T+{h2} "
+             f"| Ngoài mẫu T+{h1} |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for key, st in sorted(bt.stop_stats.items(), key=lambda kv: (kv[1].pattern != "baseline_liquid", kv[0])):
+        share = bt.stopped_share.get(key, {}).get(h2)
+        oos = mean(bt.stop_out_sample.get(key), h1)[0]
+        lines.append(f"| {st.pattern} | {st.status} | {st.sample_size} | {cell(st, h1)} | {cell(st, h2)} | "
+                     f"{'–' if share is None else f'{share:.0f}%'} | {vs(st, h1)} | {vs(st, h2)} | "
+                     f"{'–' if oos is None else f'{oos:+.2f}%'} |")
+    return lines

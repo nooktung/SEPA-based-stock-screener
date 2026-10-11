@@ -446,7 +446,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 852 tests currently pass.
+- Run `python -m pytest -q` after every change. 857 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.
