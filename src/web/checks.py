@@ -126,7 +126,11 @@ def run_checks(path: Path | None = None, thresholds: Mapping[str, Any] | None = 
     from src.web.server import api_stocks  # noqa: PLC0415
 
     info: list[dict[str, Any]] = []
+    seen_days = {recent[0][1]} if recent else set()
     for run_id, as_of in recent[1:]:
+        if as_of in seen_days:
+            continue                                   # several runs of one session: the latest stands for it
+        seen_days.add(as_of)
         for row in api_stocks({"run_id": run_id}, path):
             since = row.get("since_screen") or {}
             pct = since.get("pct")

@@ -257,15 +257,14 @@ def legacy_hold(stored: Mapping[str, Any] | None, frame: pd.DataFrame, hold: int
     if stored.get("held_by") == "BREAKOUT" and stop and float(frame["close"].iloc[-1]) < float(stop):
         return None
     return {"base_kind": stored.get("base_kind"), "pivot": float(stored["pivot"]),
-            "stop": float(stop) if stop else None, "held_since": since, "held_by": stored.get("held_by"),
-            "contractions": list(stored.get("contractions") or [])}
+            "stop": float(stop) if stop else None, "held_since": since, "held_by": stored.get("held_by")}
 
 
 def apply_legacy_hold(state: TickerState, frame: pd.DataFrame, held: Mapping[str, Any]) -> None:
     close = float(frame["close"].iloc[-1])
     state.base_kind, state.pivot, state.stop = held["base_kind"], held["pivot"], held["stop"]
     state.held_since, state.held_by = held["held_since"], held["held_by"]
-    state.contractions = held["contractions"]
+    # The contractions stay today's count: the earlier rules counted every 3% wiggle (tester M11).
     state.distance_to_pivot_pct = (close / state.pivot - 1) * 100.0
     state.stop_breached = bool(state.stop) and close <= state.stop
     state.stop_breached_on = stop_breached_on(frame, BaseRead(stop=state.stop, held_since=state.held_since,
