@@ -98,6 +98,7 @@ def test_the_company_name_comes_from_the_page_title():
             "VietstockFinance</title></head><body>" + MST + "</body></html>")
     assert parse_company_name(page, "HCM") == "CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC"
     assert parse_company_name(page, "SSI") is None                   # another ticker's page: no name
+    assert parse_company_name("<title>AAH: CTCP Hợp Nhất - - Hồ sơ doanh nghiệp</title>", "AAH") == "CTCP Hợp Nhất"
     assert fetch_industry("HCM", fetch=lambda url: page).name == "CTCP Chứng khoán Thành phố Hồ Chí Minh - HSC"
     name, path_ = fetch_profile("HCM", fetch=lambda url: "<title>HCM: CTCP Chứng khoán X - Hồ sơ doanh nghiệp</title>")
     assert name == "CTCP Chứng khoán X" and path_ is None              # no breadcrumb: the name still counts

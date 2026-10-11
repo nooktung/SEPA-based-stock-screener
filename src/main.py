@@ -524,7 +524,8 @@ def _industry_names(cfg: dict) -> int:
             named += 1
         if n % 25 == 0:
             print(f"  [{n}/{len(tickers)}] {time.monotonic() - started:.0f}s", flush=True)
-    print(f"Xong: {named} mã có tên có dấu, {len(tickers) - named - failed} mã không đọc được tên, {failed} lỗi")
+    print(f"Xong: {named} mã có tên có dấu; {len(tickers) - named - failed} mã có tên vốn không dấu "
+          f"(vd CTCP Clever Group) hoặc trang không có tên; {failed} lỗi")
     return 0
 
 

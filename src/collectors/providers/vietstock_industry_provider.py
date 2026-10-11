@@ -76,7 +76,7 @@ def parse_company_name(page: str, ticker: str) -> str | None:
     if not title.upper().startswith(prefix):
         return None
     name = re.split(r"\s+-\s+Hồ sơ doanh nghiệp", title[len(prefix):])[0].strip()
-    return name or None
+    return name.rstrip(" -") or None                 # "CTCP Hợp Nhất - - Hồ sơ": an empty brand slot
 
 
 def fetch_industry(ticker: str, fetch: Callable[[str], str] | None = None) -> IndustryPath:
