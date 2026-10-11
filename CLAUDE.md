@@ -276,7 +276,8 @@ code when none is stored. Display only.
   `monitor --keep-events` re-reads states without rewriting a session's alerts. Status: a breached
   stop is never AT_PIVOT, TREND_TEMPLATE_RESTORED cancels its loss, BREAKOUT needs close >= pivot.
   `python -m src.main check` (src/web/checks.py, pipeline + 15:30 job, `GET /api/checks`) checks
-  the invariants on the real data. Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
+  the invariants on the real data: the monitored states, plus the base rules on every ticker of
+  the market (~1,224 read afresh, ~15 s). Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
   are ambiguous news codes (`news.ticker_aliases`); `industry --names` reads Vietnamese names
   from Vietstock's profile title once.
 - Backtest (`backtest-sepa`, 1,209 tickers, 2016-2026): most rules as
@@ -445,7 +446,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 851 tests currently pass.
+- Run `python -m pytest -q` after every change. 852 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

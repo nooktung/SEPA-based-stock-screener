@@ -1039,10 +1039,12 @@ def check(args: list[str]) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m src.main check")
     parser.add_argument("--no-zones", action="store_true", help="skip the support / resistance tick check")
+    parser.add_argument("--no-market", action="store_true", help="skip the base rules on every ticker of the market")
     opts = parser.parse_args(args)
-    report = run_checks(zones=not opts.no_zones)
+    report = run_checks(zones=not opts.no_zones, market=not opts.no_market)
     out = write_report(report)
-    print(f"Kiểm tra bất biến phiên {report['session']}: {report['checked']} mã, "
+    print(f"Kiểm tra bất biến phiên {report['session']}: {report['checked']} mã theo dõi + "
+          f"{report['market_checked']} mã toàn thị trường (quy tắc nền), "
           f"{len(report['violations'])} vi phạm, "
           f"{len({r['ticker'] for r in report['transition']})} mã đang chuyển (số theo quy tắc nền cũ)")
     for v in report["violations"]:

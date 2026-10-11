@@ -433,7 +433,8 @@ def test_state_checks_cover_each_rule():
     assert state_violations(ok, "HOSE", s) == []
     found = dict(state_violations({**ok, "close": 37_900, "stop": 38_010, "base_kind": "TOO_DEEP",
                                    "contractions": [1.0] * 9}, "HOSE", s))
-    assert set(found) == {"breached_flag", "stop_needs_base", "on_tick"}
+    assert set(found) == {"breached_flag", "stop_needs_base", "on_tick", "legs"}
+    assert state_violations({**ok, "base_kind": "FLAT_BASE", "contractions": []}, "HOSE", s) == []   # 0 legs is a base
     assert dict(state_violations({**ok, "contractions": [5.0] * 7}, "HOSE", s)).keys() == {"legs"}
 
 

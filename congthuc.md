@@ -179,7 +179,9 @@ Tất cả cách đo nền là **[TRIỂN KHAI]** của các mô tả trong sác
    - **Nhịp co hẹp chính** (đo từ đỉnh nền): H₀ = đỉnh; Lₖ = đáy thấp nhất sau Hₖ; Hₖ₊₁ = đỉnh cao nhất sau Lₖ … Một
      nhịp được tính khi sâu ≥ **3%** và dài ≥ **2 phiên** (đỉnh và đáy khác phiên). Dừng khi nhịp tiếp theo nông hơn 3%.
      Đỉnh thấp dần, đáy cao dần, nên mỗi nhịp không sâu hơn nhịp trước (trước đây đếm mọi dao động 3% kiểu zigzag: KSV
-     37 "nhịp"; nay 1–3 nhịp trên dữ liệu thật).
+     37 "nhịp"). Đỉnh kế tiếp là **lần cuối** giá chạm mức cao nhất đó, nên đỉnh luôn thấp hơn hẳn: mã giá thấp dao động
+     giữa hai bước giá (VHG 1.600đ, bước 100đ) là 1 nhịp, không phải 18. Toàn thị trường: tối đa 6 nhịp; 0 nhịp khi nền
+     bắt đầu từ đỉnh trái và từ đỉnh cao nhất giá chưa điều chỉnh 3%.
    - **Vùng chặt cuối**: sau nhịp chính cuối, đoạn điều chỉnh < 3% kéo dài ≥ **3 phiên** và có đỉnh ở **nửa trên** của
      nền được tính là nhịp cuối cùng. Ở nửa dưới thì không (đó là nhịp hồi trong nền: HCM 23.750 nằm dưới đỉnh trái 13%).
    - **Pivot** = đỉnh của nhịp cuối (vùng chặt nếu có) + 1 bước giá [skill 02 §3.1: "pivot = max(high) của nhịp co hẹp

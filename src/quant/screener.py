@@ -533,6 +533,9 @@ def major_contractions(highs: np.ndarray, lows: np.ndarray, min_swing_pct: float
     before it. A decline shallower than `min_swing_pct` ends the walk: nothing after it can
     be deeper. A leg also spans at least `min_leg_sessions` sessions, high bar to low bar.
     Counting every 3% zigzag wiggle instead gave KSV 37 "contractions" (tester M11).
+    Each next high is the LAST session at that highest price, so highs strictly fall: a penny
+    stock swinging between the same two ticks (VHG, 1,600 dong, 100-dong tick) is one
+    contraction, not eighteen.
     """
     n = len(highs)
     legs: list[tuple[float, int, int]] = []
@@ -546,7 +549,8 @@ def major_contractions(highs: np.ndarray, lows: np.ndarray, min_swing_pct: float
             legs.append((depth, h, lo))
         if lo >= n - 1:
             break
-        h = lo + 1 + int(np.argmax(highs[lo + 1:]))
+        after = highs[lo + 1:]
+        h = lo + 1 + len(after) - 1 - int(np.argmax(after[::-1]))
     return legs
 
 

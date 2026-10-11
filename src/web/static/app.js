@@ -119,7 +119,7 @@ async function loadChecks() {
   $("#checks-pop").innerHTML = rows.length ? `<table><thead><tr><th>Mã</th><th>Loại</th><th>Quy tắc</th><th>Chi tiết</th></tr></thead><tbody>${rows.map((r) =>
     `<tr data-t="${esc(r.ticker)}"><td><span class="tk">${esc(r.ticker)}</span></td><td>${esc(r.kind)}</td><td>${esc(r.text)}</td><td class="muted">${esc(vnText(r.detail))}</td></tr>`).join("")}</tbody></table>
     <p class="sub">"Đang chuyển": pivot / stop còn tính theo cách trước ngày 11/10/2026, giữ tới hết thời gian giữ (5 phiên).</p>`
-    : `<p class="muted">Không có vi phạm (${c.checked} mã được kiểm tra).</p>`;
+    : `<p class="muted">Không có vi phạm (${c.checked} mã theo dõi${c.market_checked ? `, quy tắc nền trên ${c.market_checked} mã toàn thị trường` : ""}).</p>`;
   el.onclick = () => { $("#checks-pop").hidden = !$("#checks-pop").hidden; };
 }
 

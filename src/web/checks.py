@@ -7,7 +7,8 @@ to an 8.4% risk (M03) and "since the screen" read across an ex-rights rescale (N
 the recent screen runs, and writes data/audit/invariants_<session>.json:
 
   risk_8pct            (pivot - stop) / pivot <= base.max_stop_pct
-  legs                 a forming base has 1..vcp.max_contractions contractions
+  legs                 no base counts more than vcp.max_contractions contractions (0 is
+                       possible: a base from a left-side high whose top has not pulled back 3%)
   breakout_above_pivot "Vừa breakout" only with the close at or above the pivot
   breached_flag        a close at or below the stop carries stop_breached
   stop_needs_base      only a forming base has a stop
@@ -16,7 +17,9 @@ the recent screen runs, and writes data/audit/invariants_<session>.json:
                        rescale, means the comparison mixed price scales
 
 A ticker still carrying a pivot / stop from the earlier base rules (no `base_rules`, or
-`legacy_hold`) is listed as "in transition", not as a violation. Read-only.
+`legacy_hold`) is listed as "in transition", not as a violation. The base rules (risk, legs,
+tick grid, no stop without a base) are also checked on every ticker of the market, read
+afresh -- the monitor covers only the focus list. Read-only.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from src.quant.screener import FORMING_BASES, round_to_tick, screen_settings
 REPORT_DIR = PROJECT_ROOT / "data" / "audit"
 TEXT = {
     "risk_8pct": "rủi ro từ pivot tới stop vượt mức tối đa",
-    "legs": "số nhịp co hẹp ngoài khoảng cho phép",
+    "legs": "số nhịp co hẹp vượt mức tối đa",
     "breakout_above_pivot": "'Vừa breakout' nhưng giá dưới pivot",
     "breached_flag": "giá ≤ stop nhưng không có cờ đã thủng",
     "stop_needs_base": "có stop dù không có nền đạt chuẩn",
@@ -61,7 +64,7 @@ def state_violations(state: Mapping[str, Any], exchange: str | None, settings: M
         if risk > float(b["max_stop_pct"]) + 1e-9:
             out.append(("risk_8pct", f"pivot {pivot:,.0f}, stop {stop:,.0f}: {risk:.2f}%"))
     legs = len(state.get("contractions") or [])
-    if kind in FORMING_BASES and not 1 <= legs <= int(b["vcp"]["max_contractions"]):
+    if legs > int(b["vcp"]["max_contractions"]):
         out.append(("legs", f"{kind}: {legs} nhịp"))
     status = (state.get("setup") or {}).get("status")
     if status == "BREAKOUT" and pivot and close is not None and close < pivot:
@@ -77,7 +80,8 @@ def state_violations(state: Mapping[str, Any], exchange: str | None, settings: M
 
 
 def run_checks(path: Path | None = None, thresholds: Mapping[str, Any] | None = None,
-               since_screen_pct: float = 25.0, runs: int = 20, zones: bool = True) -> dict[str, Any]:
+               since_screen_pct: float = 25.0, runs: int = 20, zones: bool = True,
+               market: bool = True) -> dict[str, Any]:
     from src.quant.channel import chart_levels  # noqa: PLC0415
     from src.quant.monitor import monitored_tickers  # noqa: PLC0415
 
@@ -144,12 +148,42 @@ def run_checks(path: Path | None = None, thresholds: Mapping[str, Any] | None = 
             else:
                 info.append({**item, "text": f"'từ ngày lọc' lệch hơn {since_screen_pct:.0f}% (không có quyền xen giữa)"})
 
+    market_checked = 0
+    if market and session:
+        market_checked = _market_base_checks(settings, session, violations, path)
+
     by_rule: dict[str, int] = {}
     for v in violations:
         by_rule[v["rule"]] = by_rule.get(v["rule"], 0) + 1
     return {"session": session, "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "checked": len(states), "violations": violations, "transition": transition, "info": info,
+            "checked": len(states), "market_checked": market_checked,
+            "violations": violations, "transition": transition, "info": info,
             "by_rule": by_rule, "rules": TEXT}
+
+
+def _market_base_checks(settings: Mapping[str, Any], session: str, violations: list[dict[str, Any]],
+                        path: Path | None) -> int:
+    """The base rules on every ticker with clean data, read as the market view reads it."""
+    from datetime import date  # noqa: PLC0415
+
+    from src.quant.screener import _load_universe_frames, read_base  # noqa: PLC0415
+
+    frames, exchanges, stale = _load_universe_frames(date.fromisoformat(session),
+                                                     int(settings["min_history_sessions"]) + 120, path)
+    seen = {v["ticker"] for v in violations}
+    n = 0
+    for t, f in frames.items():
+        if t in stale or t not in exchanges or len(f) < 30:
+            continue
+        b = read_base(f, exchanges[t], settings)
+        n += 1
+        state = {"close": float(f["close"].iloc[-1]), "pivot": b.pivot, "stop": b.stop, "base_kind": b.kind,
+                 "contractions": b.contractions, "stop_breached": bool(b.stop) and float(f["close"].iloc[-1]) <= b.stop}
+        for rule, detail in state_violations(state, exchanges[t], settings):
+            if rule in ("risk_8pct", "legs", "on_tick", "stop_needs_base") and t not in seen:
+                violations.append({"ticker": t, "rule": rule, "text": TEXT[rule] + " (toàn thị trường)",
+                                   "detail": detail, "session": f.index[-1].date().isoformat()})
+    return n
 
 
 def _frame(ticker: str, path: Path | None) -> pd.DataFrame | None:
@@ -189,7 +223,8 @@ def summary(report: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not report:
         return None
     return {"session": report.get("session"), "created_at": report.get("created_at"),
-            "checked": report.get("checked"), "violations": len(report.get("violations") or []),
+            "checked": report.get("checked"), "market_checked": report.get("market_checked"),
+            "violations": len(report.get("violations") or []),
             "transition": len({r["ticker"] for r in report.get("transition") or []}),
             "rows": report.get("violations") or [], "transition_rows": report.get("transition") or [],
             "info_rows": report.get("info") or []}

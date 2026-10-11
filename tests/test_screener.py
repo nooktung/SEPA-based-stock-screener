@@ -501,3 +501,12 @@ def test_supply_overhead_is_information_then_a_warning():
         + list(np.linspace(34_500, 36_200, 5)) + [36_100, 36_050, 36_150, 36_100]
     warn = explain_base(frame_from_closes(closes, spread=0.002), "HOSE", SETTINGS)["overhead"]
     assert warn["level"] == "warn" and warn["pct"] >= 10
+
+
+def test_swings_between_the_same_two_ticks_are_one_contraction():
+    """VHG (1,600 dong, 100-dong tick) read 18 contractions of 12% and 6%, all the same range."""
+    highs = np.array([2_000.0, 1_700, 1_400, 1_600, 1_400, 1_600, 1_400, 1_600, 1_500, 1_600, 1_500, 1_550])
+    lows = np.array([1_900.0, 1_500, 1_300, 1_400, 1_400, 1_400, 1_400, 1_400, 1_400, 1_500, 1_500, 1_500])
+    legs = major_contractions(highs, lows, 3.0)
+    assert [round(d) for d, _, _ in legs] == [35, 6]          # 2,000 -> 1,300, then 1,600 (its last time) -> 1,500
+    assert all(highs[b] < highs[a] for (_, a, _), (_, b, _) in zip(legs, legs[1:]))
