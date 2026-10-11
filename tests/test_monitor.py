@@ -270,3 +270,56 @@ def test_a_breakout_on_the_ex_rights_date_is_never_rated_valid():
     before = compute_state("AAA", "HOSE", f.iloc[:-1], None, 90.0, SCREEN, MON, actions=acts)
     events = {e.event_type: e for e in detect_events("AAA", "HOSE", f, today, before, SCREEN, MON, actions=acts)}
     assert BREAKOUT not in events and "GDKHQ" in events[BREAKOUT_WEAK].what_changed
+
+
+# -- moving to base rules 2 (tester report 2, 2026-10-11) ---------------------------
+
+from src.quant.monitor import apply_legacy_hold, legacy_hold  # noqa: E402
+
+
+def _old_state(held_since, held_by="BREAKOUT", **kw):
+    """A state stored by the earlier rules: no base_rules."""
+    return {"base_kind": "BASE", "pivot": 52_800.0, "stop": 50_800.0, "held_since": held_since,
+            "held_by": held_by, "contractions": [21.0, 5.0], **kw}
+
+
+def test_a_hold_from_the_earlier_rules_is_kept_while_it_lasts():
+    """GMD held 52,800 from its 07/10 breakout; the new rules read 55,600 (plan point 4)."""
+    f = frame([50_000] * 40 + [53_000, 54_000, 55_000])
+    since = f.index[-3].date().isoformat()
+    held = legacy_hold(_old_state(since), f, 5)
+    assert held and held["pivot"] == 52_800 and held["held_since"] == since
+    state = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON)
+    apply_legacy_hold(state, f, held)
+    assert state.pivot == 52_800 and state.legacy_hold and state.distance_to_pivot_pct > 0
+    # carried forward: a state that carries it keeps carrying it
+    assert legacy_hold({**_old_state(since), "base_rules": 2, "legacy_hold": True}, f, 5)
+    # the new rules' own holds are not "legacy"
+    assert legacy_hold({**_old_state(since), "base_rules": 2}, f, 5) is None
+
+
+def test_a_legacy_hold_ends_with_its_window_its_stop_or_a_rescale():
+    f = frame([50_000] * 40 + [53_000] * 6)
+    since = f.index[-6].date().isoformat()
+    assert legacy_hold(_old_state(since), f, 5) is None                        # 6 sessions: over
+    g = frame([50_000] * 40 + [53_000, 50_000])
+    assert legacy_hold(_old_state(g.index[-2].date().isoformat()), g, 5) is None   # closed under the stop
+    h = frame([50_000] * 40 + [53_000, 54_000])
+    day = h.index[-2].date().isoformat()
+    assert legacy_hold(_old_state(day), h, 5, actions=[(day, 0.5)]) is None    # a rescale since: other scale
+    assert legacy_hold(_old_state(h.index[-1].date().isoformat()), h.iloc[:-1], 5) is None   # not yet held then
+
+
+def test_keep_events_recomputes_states_and_leaves_the_sessions_alerts(db):
+    run_monitor(path=db)
+    with connect(db) as conn:
+        before = conn.execute("SELECT alert_id, what_changed FROM alerts ORDER BY alert_id").fetchall()
+        conn.execute("UPDATE monitor_state SET state_json = '{}'")
+    result = run_monitor(path=db, keep_events=True)
+    assert result.events == [] and "AAA" in result.states
+    with connect(db) as conn:
+        assert conn.execute("SELECT alert_id, what_changed FROM alerts ORDER BY alert_id").fetchall() == before
+        state = conn.execute("SELECT state_json FROM monitor_state WHERE ticker = 'AAA'").fetchone()[0]
+    assert '"base_rules": 2' in state
+    decided = result.states["AAA"].setup.get("decided_by")
+    assert decided is None or decided[0] in {r[1][1:11] for r in before}       # from the stored alerts

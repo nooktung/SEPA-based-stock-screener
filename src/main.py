@@ -6,7 +6,7 @@ Usage:
     python -m src.main universe   # fetch HOSE/HNX/UPCOM share list from DNSE into tickers
     python -m src.main backfill [--tickers SSI VIX] [--recheck-gaps] [--deepen]   # incremental daily bars
     python -m src.main screen [--as-of 2026-09-25] [--dry-run]       # SEPA screen -> focus list (<= 80)
-    python -m src.main monitor [--no-fetch]                          # daily check of the focus list
+    python -m src.main monitor [--no-fetch] [--keep-events]          # daily check of the focus list
     python -m src.main news [--days 30] [--tickers SSI] [--no-rss]   # collect + dedupe news for the focus list
     python -m src.main news-brief SSI [--days 30]                    # <= 7 ranked events, for in-session reading
     python -m src.main news-annotate <event_id> <file.json>          # store a checked interpretation
@@ -23,6 +23,7 @@ Usage:
     python -m src.main crosscheck [--days 10]                        # DNSE vs SSI: closes, volumes, foreign, index, ex-dates
     python -m src.main index-session [--days 300]                    # VN-Index matched volume, breadth + DNSE calendar
     python -m src.main index-check [--sessions 60] [--no-fetch]      # VN-Index bars vs HOSE's own values (report only)
+    python -m src.main check                                         # invariants on what the dashboard shows (report)
 """
 
 from __future__ import annotations
@@ -301,6 +302,8 @@ def monitor(args: list[str]) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m src.main monitor")
     parser.add_argument("--no-fetch", action="store_true", help="use stored bars; do not call DNSE")
+    parser.add_argument("--keep-events", action="store_true",
+                        help="recompute the states, keep the session's stored events (re-run after a rule change)")
     opts = parser.parse_args(args)
 
     load_dotenv()
@@ -319,7 +322,7 @@ def monitor(args: list[str]) -> int:
             print(f"cập nhật giá {len(scope)} mã + chỉ số: {report.status}"
                   + (f"  (stale: {', '.join(stale)})" if stale else ""))
 
-    result = run_monitor()
+    result = run_monitor(keep_events=opts.keep_events)
     brief = render_brief(result)
     out_dir = Path("data/briefs")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -983,6 +986,29 @@ def start(args: list[str]) -> int:
     return 0
 
 
+def check(args: list[str]) -> int:
+    """Invariants over the stored states and screen runs (src/web/checks.py). Exit 1 when one
+    is broken; the pipeline and scripts/daily.ps1 go on to the next step either way."""
+    import argparse
+
+    from src.web.checks import run_checks, write_report
+
+    parser = argparse.ArgumentParser(prog="python -m src.main check")
+    parser.add_argument("--no-zones", action="store_true", help="skip the support / resistance tick check")
+    opts = parser.parse_args(args)
+    report = run_checks(zones=not opts.no_zones)
+    out = write_report(report)
+    print(f"Kiểm tra bất biến phiên {report['session']}: {report['checked']} mã, "
+          f"{len(report['violations'])} vi phạm, "
+          f"{len({r['ticker'] for r in report['transition']})} mã đang chuyển (số theo quy tắc nền cũ)")
+    for v in report["violations"]:
+        print(f"  {v['ticker']:<4} {v['rule']:<22} {v['detail']}")
+    for i in report["info"]:
+        print(f"  (ghi nhận) {i['ticker']:<4} {i['detail']}")
+    print(f"Báo cáo: {out}")
+    return 1 if report["violations"] else 0
+
+
 COMMANDS = {
     "doctor": lambda args: doctor(),
     "initdb": lambda args: initdb(),
@@ -1004,6 +1030,7 @@ COMMANDS = {
     "refprices": refprices,
     "index-session": index_session,
     "index-check": index_check,
+    "check": check,
     "ssi": ssi,
     "crosscheck": crosscheck,
 }

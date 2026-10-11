@@ -21,7 +21,11 @@ Parallel channel
     line splits it.
 
 Nearest zones
-    The nearest support and nearest resistance zone from src/quant/levels.py.
+    The nearest support and nearest resistance zone, at least `zones.min_distance_pct`
+    from the price, among every zone src/quant/levels.py builds -- not only its few
+    strongest, which left DRI's "nearest" support 24% below while its recent swing lows
+    sat 7% below (tester M05). A zone the price is inside is reported as such. Prices are
+    put on the exchange's tick grid (M06: 17,433 is not a price anyone can trade at).
 
 Weekly and monthly charts (2026-10-06) run the same rules on weekly / monthly
 candles (src/quant/timeframes.py) with their own counts, in bars of that
@@ -41,8 +45,11 @@ import numpy as np
 import pandas as pd
 
 from src.market_calendar import is_trading_day, next_trading_day
-from src.quant.levels import SIDE_RESISTANCE, SIDE_SUPPORT, build_zones, nearest_zone
-from src.quant.patterns import find_pivots
+from src.quant.levels import (SIDE_RESISTANCE, SIDE_SUPPORT, Zone, ZoneConfig, collect_levels, merge_levels,
+                              score_zones)
+from src.quant.patterns import PatternConfig, find_pivots
+from src.quant.screener import round_to_tick, tick_size
+from src.quant.store import price_series
 
 
 @dataclass
@@ -55,6 +62,10 @@ class Trendline:
     touches: int                   # swings of its kind within tolerance of the line
     broken_on: str | None          # first close beyond the line after the second anchor
     value_today: float | None      # the line at the last session (None when broken before it)
+    # Last close against the line, % (None once broken): a close beyond it by less than
+    # tolerance_pct has not broken it yet, and the chart says so (tester M07: HDB 22,400 > 22,228).
+    close_vs_line_pct: float | None = None
+    tolerance_pct: float = 0.0
 
 
 @dataclass
@@ -155,6 +166,8 @@ def trendline(frame: pd.DataFrame, kind: str, cfg: Mapping[str, Any],
         touches=touches,
         broken_on=dates[broken] if broken is not None else None,
         value_today=None if broken is not None else round(at(n - 1), 2),
+        close_vs_line_pct=None if broken is not None or not at(n - 1) else round((close[-1] / at(n - 1) - 1) * 100.0, 2),
+        tolerance_pct=float(cfg["tolerance_pct"]),
     )
     geometry = {"i": i, "end_x": end_x, "slope": slope, "at": at, "last_bar": min(end_x, n - 1),
                 "dates": dates, "end_date": end_date, "low": lo, "high": hi, "close": close}
@@ -204,14 +217,54 @@ def trend_overlays(frame: pd.DataFrame, cfg: Mapping[str, Any], tf: str = "D") -
     return {"trendlines": lines, "channel": channel}
 
 
-def chart_levels(frame: pd.DataFrame, thresholds: Mapping[str, Any]) -> dict[str, Any]:
-    """Nearest zones, both trendlines and the channel of the more recent one, for the dashboard."""
+def _all_zones(frame: pd.DataFrame) -> tuple[list[Zone], float]:
+    """Every zone levels.py builds (build_zones keeps only the strongest few), and the price."""
+    config, patterns = ZoneConfig.from_thresholds(), PatternConfig.from_thresholds()
+    as_of = frame.index[-1].date()
+    zones = score_zones(merge_levels(collect_levels(frame, as_of, config, patterns), config), frame, as_of, config)
+    price = float(price_series(frame).iloc[-1])
+    for z in zones:
+        z.distance_from_price = (z.center - price) / price * 100.0
+        z.side = SIDE_RESISTANCE if z.center > price else SIDE_SUPPORT
+    return zones, price
+
+
+def _zone_dict(z: Zone, price: float, exchange: str | None) -> dict[str, Any]:
+    """A zone on the exchange's tick grid: centre to the nearest tick, the band widened to whole ticks."""
+    d = z.as_dict()
+    if exchange:
+        tick = tick_size(z.center, exchange)
+        d["center"] = round_to_tick(z.center, exchange, up=(z.center / tick) % 1 >= 0.5)
+        d["zone_low"] = round_to_tick(z.zone_low, exchange, up=False)
+        d["zone_high"] = round_to_tick(z.zone_high, exchange, up=True)
+        d["distance_from_price"] = round((d["center"] - price) / price * 100.0, 2)
+    return d
+
+
+def nearest_zones(frame: pd.DataFrame, min_distance_pct: float,
+                  exchange: str | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """(nearest resistance and support at least `min_distance_pct` away, the zone the price is in)."""
+    zones, price = _all_zones(frame)
+    inside = min((z for z in zones if z.contains(price)), key=lambda z: abs(z.distance_from_price), default=None)
+    out = []
+    for side in (SIDE_RESISTANCE, SIDE_SUPPORT):
+        far = [z for z in zones if z.side == side and abs(z.distance_from_price) >= min_distance_pct and z is not inside]
+        if far:
+            out.append(_zone_dict(min(far, key=lambda z: abs(z.distance_from_price)), price, exchange))
+    return out, (_zone_dict(inside, price, exchange) if inside else None)
+
+
+def chart_levels(frame: pd.DataFrame, thresholds: Mapping[str, Any], exchange: str | None = None) -> dict[str, Any]:
+    """Nearest zones, both trendlines and the channel of the more recent one, for the dashboard.
+    `exchange` puts the zones on that exchange's tick grid (None for an index: points)."""
     cfg = thresholds["chart_levels"]["trendline"]
-    zones = build_zones(frame)
-    nearest = [z for z in (nearest_zone(zones, SIDE_RESISTANCE), nearest_zone(zones, SIDE_SUPPORT)) if z]
+    zcfg = thresholds["chart_levels"].get("zones") or {}
+    zones, at_zone = nearest_zones(frame, float(zcfg.get("min_distance_pct", 0.0)), exchange)
     return {
-        "zones": [z.as_dict() for z in nearest],
+        "zones": zones,
+        "at_zone": at_zone,
         **trend_overlays(frame, cfg),
         "note": "Trendline, kênh và vùng hỗ trợ / kháng cự mô tả nơi giá từng đảo chiều, không phải dự báo. "
-                "Phần tia kéo dài về tương lai là ước tính (chỉ bỏ thứ 7, chủ nhật).",
+                "Phần tia kéo dài về tương lai là ước tính: bỏ các ngày nghỉ theo lịch giao dịch DNSE đã công bố, "
+                "xa hơn lịch đó chỉ bỏ thứ 7, chủ nhật.",
     }

@@ -360,9 +360,32 @@ sepa_screen:
     min_sessions: 20
 
   base:                             # measurable forms are [TRIỂN KHAI]; see skill 02 §3.1-3.2
-    min_swing_pct: 3.0              # zigzag reversal that counts as a contraction leg
+    # Contractions are the MAJOR ones (tester report 2, 2026-10-11; KSV had 37 zigzag legs):
+    # from the base's highest high, the lowest low after it, then the highest high after that
+    # low, and so on -- lower highs and higher lows, the shape of a VCP. A leg counts when it is
+    # at least min_swing_pct deep and spans min_leg_sessions sessions (high bar to low bar).
+    min_swing_pct: 3.0
+    min_leg_sessions: 2             # 2 = any high and a later low; 26/89 real legs were 2-session shakeouts
     max_base_sessions: 325          # 65 weeks
     min_base_sessions: 15           # 3 weeks
+    # A base starts at its left-side high: walking back from the highest high, the earliest
+    # session whose high is within this % of it, while the base from there is no deeper than
+    # cup.max_depth_pct (ABB: left high 18,000 on 10/07, right high 18,200 on 18/09) [TRIỂN KHAI].
+    left_high_tolerance_pct: 3
+    # A session whose high printed only at the open (ABB 09/07/2026: opened at the ceiling 18,900,
+    # closed 17,200) is measured at its close when locating the base's top [TRIỂN KHAI]:
+    spike_bar:
+      neighbour_sessions: 10        # its high stands above every high within +-this many sessions ...
+      isolation_pct: 3              # ... by at least this much,
+      max_close_position: 0.5       # it closed in the lower half of its range, and opened within a tick of its high
+    # After the last contraction, a pause shallower than min_swing_pct, lasting min_sessions and
+    # sitting in the upper half of the base, is the final tight area: the pivot is its high and the
+    # stop its low. In the lower half it is not (HCM's 23,750, 13% under the left high -- M04).
+    tight_area: {min_sessions: 3, upper_half: true}
+    # Supply overhead: the left-side high above the pivot. Normal in a VCP or cup with handle;
+    # shown as information from info_pct and as a warning from warn_pct [TRIỂN KHAI].
+    overhead_info_pct: 5
+    overhead_warn_pct: 10
     # After a close above the pivot or below the stop, keep that base's pivot and stop this many
     # sessions (unless a new base forms): otherwise the breakout bar becomes the new right side and
     # the pivot climbs above a stock that just broke out (tester report 2026-10-11) [TRIỂN KHAI].
@@ -375,7 +398,10 @@ sepa_screen:
       first_depth_min_pct: 10       # 10-35% UNVERIFIED (U1)
       first_depth_max_pct: 35
       last_depth_max_pct: 10        # [TRIỂN KHAI]
-      depth_tolerance_pct: 1.0      # a later leg may exceed the earlier by this much
+      depth_tolerance_pct: 1.0      # a later leg may exceed the earlier by this much (major legs always shrink)
+      # The last contraction starts in the upper half of the base, as a cup's handle must [TRIỂN KHAI]:
+      # major legs always get shallower, so this is what tells a VCP from a base still near its low.
+      last_contraction_upper_half: true
       dryup_window: 5
       dryup_ratio: 0.7              # 5-session avg volume vs 50-session avg; UNVERIFIED (U3)
     flat_base: {max_depth_pct: 15, min_sessions: 25}         # IBD [TRANG GỐC]
@@ -400,6 +426,9 @@ sepa_screen:
       # must sit in the upper half of the cup, on volume below the cup's average [TRIỂN KHAI]
     buy_zone_max_pct: 5             # above pivot by more than this = extended [THỨ CẤP]
     max_stop_pct: 8                 # stop = max(last contraction low, pivot - 8%); max 10 [SÁCH]
+    # The stop is rounded down to the tick, but never below pivot - 8% rounded UP, so the risk from
+    # the pivot never exceeds 8% (tester M03). Only a forming base has a stop: without a buy point
+    # there is nothing for it to protect (user decision 2026-10-11).
 
   # Fundamental gate (tier A data, unverified) [TRIỂN KHAI thresholds; Minervini/O'Neil
   # look for EPS growth >= 20-25% and accelerating -- skill 02 §3.3]. Net profit to the
@@ -474,6 +503,11 @@ chart_levels:
   trendline_by_tf:
     W: {lookback_sessions: 156, pivot_strength: 3, min_span_sessions: 6, tolerance_pct: 2.0, project_sessions: 8, bars_per_month: 4.33}
     M: {lookback_sessions: 120, pivot_strength: 2, min_span_sessions: 4, tolerance_pct: 3.0, project_sessions: 4, bars_per_month: 1}
+  # Nearest support / resistance on the chart and in "Kiểm tra vị thế": the closest zone on each
+  # side at least this far from the price, among every zone (not only the strongest three, which
+  # put DRI's support 24% away while its swing lows sat 7% below -- tester M05) [TRIỂN KHAI].
+  zones:
+    min_distance_pct: 1.0
 
 # Dashboard "Kiểm tra vị thế": the user's own cost price against the SEPA rules.
 # Facts only -- no buy / sell verdict.

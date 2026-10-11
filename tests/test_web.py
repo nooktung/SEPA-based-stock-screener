@@ -378,3 +378,60 @@ def test_an_older_run_shows_the_change_since_its_screening_day(db):
     old = {r["ticker"]: r for r in server.api_stocks({"run_id": "r1"}, db)}["AAA"]
     assert old["since_screen"] == {"date": "2026-09-25", "close": 40_000, "pct": 10.0}
     assert all(r.get("since_screen") is None for r in server.api_stocks({}, db))   # the latest run: nothing to add
+
+
+# -- tester report 2 (2026-10-11) ----------------------------------------------------
+
+def test_since_the_screen_uses_the_adjusted_close_of_that_day(db):
+    """GMD read -29.9% since 01/10: screen_members.close was on the price scale before its bonus shares (N01)."""
+    with connect(db) as conn:
+        conn.execute("UPDATE prices_daily SET close = close / 2, open = open / 2, high = high / 2, low = low / 2")
+        conn.execute("INSERT INTO screen_runs (run_id, created_at, as_of_date, params_json, funnel_json) "
+                     "VALUES ('r2','2026-09-27','2026-09-26','{}','{}')")
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
+                     "VALUES ('AAA','2026-09-26', ?, 'x')", (json.dumps({"close": 22_000}),))
+    old = {r["ticker"]: r for r in server.api_stocks({"run_id": "r1"}, db)}["AAA"]
+    assert old["since_screen"] == {"date": "2026-09-25", "close": 20_000, "pct": 10.0}
+
+
+def test_a_price_newer_than_the_state_is_shown_with_the_states_date(db):
+    """PET showed its 05/10 price after leaving the list while others showed 09/10 (N02)."""
+    with connect(db) as conn:
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
+                     "VALUES ('AAA','2026-09-24', ?, 'x')", (json.dumps({"close": 39_000, "pivot": 41_000}),))
+    row = server.api_stocks({}, db)[0]
+    assert row["trade_date"] == "2026-09-25" and row["close"] == 40_000 and row["state_date"] == "2026-09-24"
+    assert row["distance"] == pytest.approx((40_000 / 41_000 - 1) * 100)
+
+
+def test_float_noise_never_reaches_the_browser():
+    assert server._clean({"p": [16149.999999999998, float("nan")]}) == {"p": [16150.0, None]}
+
+
+def test_the_invariant_check_flags_rule_breaks_and_lists_older_numbers_apart(db):
+    from src.web import checks
+    with connect(db) as conn:
+        bad = {"close": 40_000, "pivot": 41_000, "stop": 37_000, "base_kind": "BASE", "contractions": [12.0],
+               "setup": {"status": "BREAKOUT"}, "stop_breached": False, "base_rules": 2}
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
+                     "VALUES ('AAA','2026-09-25', ?, 'x')", (json.dumps(bad),))
+    report = checks.run_checks(db, zones=False)
+    rules = {v["rule"] for v in report["violations"]}
+    assert {"risk_8pct", "breakout_above_pivot"} <= rules and report["transition"] == []
+    with connect(db) as conn:
+        conn.execute("UPDATE monitor_state SET state_json = ?", (json.dumps({**bad, "base_rules": None}),))
+    report = checks.run_checks(db, zones=False)
+    assert report["violations"] == [] and {r["rule"] for r in report["transition"]} >= {"risk_8pct"}
+
+
+def test_state_checks_cover_each_rule():
+    from src.quant.screener import screen_settings
+    from src.web.checks import state_violations
+    s = screen_settings()
+    ok = {"close": 40_000, "pivot": 41_000, "stop": 38_000, "base_kind": "VCP", "contractions": [20.0, 8.0],
+          "setup": {"status": "AT_PIVOT"}, "stop_breached": False}
+    assert state_violations(ok, "HOSE", s) == []
+    found = dict(state_violations({**ok, "close": 37_900, "stop": 38_010, "base_kind": "TOO_DEEP",
+                                   "contractions": [1.0] * 9}, "HOSE", s))
+    assert set(found) == {"breached_flag", "stop_needs_base", "on_tick"}
+    assert dict(state_violations({**ok, "contractions": [5.0] * 7}, "HOSE", s)).keys() == {"legs"}

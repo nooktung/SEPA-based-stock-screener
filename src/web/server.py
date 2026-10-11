@@ -35,9 +35,10 @@ VN_TZ = timezone(timedelta(hours=7))
 
 
 def _clean(value: Any) -> Any:
-    """NaN/Infinity are not JSON; browsers reject the whole response over one."""
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
+    """NaN/Infinity are not JSON; browsers reject the whole response over one. Floats are
+    rounded to 6 decimals: thousand-scaled DNSE prices arrive as 16149.999999999998 (B13)."""
+    if isinstance(value, float):
+        return round(value, 6) if math.isfinite(value) else None
     if isinstance(value, dict):
         return {k: _clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -270,11 +271,18 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
         frame = frame.drop(columns="trade_date").astype("float64")
         base_overlay = explain_base(frame, info[0]["exchange"], screen_settings())
         try:
-            levels = chart_levels(frame, load_config().thresholds)
+            levels = chart_levels(frame, load_config().thresholds, info[0]["exchange"])
         except Exception:  # noqa: BLE001 - the chart must still load without the overlays
             log.exception("chart levels for %s", ticker)
     state = _rows("SELECT trade_date, state_json FROM monitor_state WHERE ticker = ? ORDER BY trade_date DESC "
                   "LIMIT 1", (ticker,), path)
+    if state and base_overlay is not None:
+        st = json.loads(state[0]["state_json"] or "{}")
+        if st.get("legacy_hold") and state[0]["trade_date"] == bars[-1]["trade_date"]:
+            # The list shows the pivot / stop held from the earlier base rules (monitor.legacy_hold); so does the chart.
+            base_overlay.update({k: st.get(k) for k in ("pivot", "stop", "held_since", "held_by", "stop_breached",
+                                                        "stop_breached_on")})
+            base_overlay["legacy_hold"] = True
     # Reference prices of the recent sessions: the header's and the legend's % follow the boards.
     refs = refprices.lookup([(ticker, b["trade_date"]) for b in bars[-60:]], path)
     closes = {b["trade_date"]: b["close"] for b in bars[-60:]}
@@ -411,7 +419,8 @@ def api_mylist(q: dict[str, str], path: Path | None = None) -> Any:
         else:
             # Added since the last monitor run: read it now, without event history.
             st = compute_state(t, info[0]["exchange"], frame, index_close, rs_all.get(t), screen, mon)
-            st.setup = assess(members.get(t), st.base_kind, st.distance_to_pivot_pct, screen, market, [])
+            st.setup = assess(members.get(t), st.base_kind, st.distance_to_pivot_pct, screen, market, [],
+                              stop_breached=st.stop_breached)
             state = _clean(st.as_dict())
         value, _ = liquidity(frame, screen)
         tier = liquidity_tier(value, screen)
@@ -495,7 +504,7 @@ def api_position(q: dict[str, str], path: Path | None = None) -> Any:
     value, _ = liquidity(frame, screen)
     band = price_limit_pct(exchange)
     try:   # the same nearest zones the chart draws
-        zones = chart_levels(frame, load_config().thresholds)["zones"]
+        zones = chart_levels(frame, load_config().thresholds, exchange)["zones"]
     except Exception:  # noqa: BLE001 -- a zone failure must not hide the rest of the check
         zones = []
     return _clean(check_position(
@@ -504,7 +513,8 @@ def api_position(q: dict[str, str], path: Path | None = None) -> Any:
         pivot=state.get("pivot"), stop=state.get("stop"), zones=zones, alerts=alerts,
         flows=api_flow({"ticker": ticker, "sessions": "5"}, path)["rows"],
         fundamentals=grade_ticker(ticker, screen, path).as_dict(), market=market, market_note=note, news=news,
-        liquidity_tier=liquidity_tier(value, screen), locked_pct=locked_worst_case_pct(band) if band else None, cfg=cfg))
+        liquidity_tier=liquidity_tier(value, screen), locked_pct=locked_worst_case_pct(band) if band else None, cfg=cfg,
+        exchange=exchange))
 
 
 def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
@@ -546,6 +556,18 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
         f"FROM monitor_state WHERE ticker IN ({marks}) GROUP BY ticker) x ON x.ticker = s.ticker AND x.d = s.trade_date",
         tuple(order), path)}
     ind_rows = {r["ticker"]: r for r in _rows(f"SELECT * FROM ticker_industry WHERE ticker IN ({marks})", tuple(order), path)}
+    # The two newest bars of each ticker: a name that left the monitored list keeps a stopped state
+    # but not a stopped price (tester N02: PET showed 51,500 of 05/10 beside others' 09/10).
+    last_bars: dict[str, list[dict[str, Any]]] = {}
+    for r in _rows(f"SELECT ticker, trade_date, close FROM (SELECT ticker, trade_date, close, ROW_NUMBER() OVER "
+                   f"(PARTITION BY ticker ORDER BY trade_date DESC) AS rn FROM prices_daily WHERE ticker IN ({marks})) "
+                   f"WHERE rn <= 2 ORDER BY trade_date DESC", tuple(order), path):
+        last_bars.setdefault(r["ticker"], []).append(r)
+    # An older run's session close from the stored (adjusted) series: screen_members.close is on the
+    # price scale of that day, so a stock dividend since then read as a fall (N01: GMD -29.9%).
+    screened = {r["ticker"]: r["close"] for r in _rows(
+        f"SELECT ticker, close FROM prices_daily WHERE trade_date = ? AND ticker IN ({marks})",
+        (run[0]["as_of_date"], *order), path)} if old_run else {}
     level = screen_settings().get("industry", {}).get("level", 2)
     flows: dict[str, list[dict[str, Any]]] = {}
     for r in _rows(f"SELECT f.scope_key, f.trade_date, f.foreign_buy_volume, f.foreign_sell_volume, f.foreign_net_value, "
@@ -580,19 +602,31 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
 
         last5 = [net_vol(r) for r in f[:5]]
         fund = bj.get("fundamentals") or grade_ticker(t, settings, path).as_dict()
+        state_date = states[t]["trade_date"] if t in states else None
+        close, change, trade_date = st.get("close", m["close"] if m else None), st.get("change_pct"), state_date
+        pivot = st.get("pivot", m["pivot"] if m else None)
+        distance = st.get("distance_to_pivot_pct", bj.get("distance_to_pivot_pct"))
+        lb = last_bars.get(t) or []
+        newer = bool(lb) and (state_date is None or lb[0]["trade_date"] > state_date)
+        if newer:
+            close, trade_date = lb[0]["close"], lb[0]["trade_date"]
+            change = (close / lb[1]["close"] - 1) * 100.0 if len(lb) > 1 and lb[1]["close"] else None
+            distance = (close / pivot - 1) * 100.0 if pivot and close else distance
+        base_close = screened.get(t)
         out.append(_clean({
             "ticker": t, "name": (names.get(t) or {}).get("name"), "exchange": (names.get(t) or {}).get("exchange"),
             "grp": m["grp"] if m else None, "rank": m["rank"] if m else None, "score": m["score"] if m else None,
             "leader_of": leaders.get(t), "mine": t in mine, "note": (mine.get(t) or {}).get("note"), "watch": t in watch,
-            "trade_date": states[t]["trade_date"] if t in states else None,
-            "close": st.get("close", m["close"] if m else None), "change_pct": st.get("change_pct"),
+            "trade_date": trade_date, "close": close, "change_pct": change,
+            # the monitor state (pivot, status...) is of an earlier session than the price
+            "state_date": state_date if newer else None,
             "rs_rating": m["rs_rating"] if m else rs_all.get(t), "rs_tier": bj.get("rs_tier"),
             "tt_passed": sum(1 for v in crit.values() if v.get("pass")),
             "missing": [k for k, v in crit.items() if v.get("pass") is False],
             "not_assessable": [k for k, v in crit.items() if v.get("pass") is None],
-            "base_kind": st.get("base_kind") or bj.get("kind"), "pivot": st.get("pivot", m["pivot"] if m else None),
+            "base_kind": st.get("base_kind") or bj.get("kind"), "pivot": pivot,
             "stop": st.get("stop", m["stop"] if m else None),
-            "distance": st.get("distance_to_pivot_pct", bj.get("distance_to_pivot_pct")),
+            "distance": distance,
             "setup": st.get("setup") or bj.get("setup") or {},
             "liquidity_vnd": liq, "liquidity_tier": bj.get("liquidity_tier") or liquidity_tier(liq, settings),
             "fund": {k: fund.get(k) for k in ("grade", "grade_text", "reasons", "profit_yoy", "revenue_yoy")},
@@ -610,13 +644,12 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
             # the loss from a buy at the pivot to the stop. A close at or below the stop is
             # `stop_breached`, and then there is no "risk to stop" left to show.
             "risk_to_stop_pct": _risk_to_stop(st, m),
-            "stop_breached": bool(st.get("stop_breached")),
-            "held_since": st.get("held_since"), "held_by": st.get("held_by"),
+            "stop_breached": bool(st.get("stop_breached")), "stop_breached_on": st.get("stop_breached_on"),
+            "held_since": st.get("held_since"), "held_by": st.get("held_by"), "legacy_hold": bool(st.get("legacy_hold")),
             "locked_worst_case_pct": m["locked_worst_case_pct"] if m else None,
             "demoted": bj.get("demoted"),
-            "since_screen": ({"date": run[0]["as_of_date"], "close": m["close"],
-                              "pct": (round((st["close"] / m["close"] - 1) * 100.0, 2)
-                                      if st.get("close") and m["close"] else None)}
+            "since_screen": ({"date": run[0]["as_of_date"], "close": base_close,
+                              "pct": round((close / base_close - 1) * 100.0, 2) if close and base_close else None}
                              if old_run and m else None),
         }))
     return _board_change(out, path)

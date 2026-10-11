@@ -60,12 +60,16 @@ def check_position(*, cost: float, qty: float | None, frame: pd.DataFrame, trade
                    alerts: Sequence[tuple[str, str]], flows: Sequence[Mapping[str, Any]],
                    fundamentals: Mapping[str, Any] | None, market: Mapping[str, Any], market_note: str,
                    news: Sequence[Mapping[str, Any]], liquidity_tier: str | None, locked_pct: float | None,
-                   cfg: Mapping[str, Any]) -> dict[str, Any]:
+                   cfg: Mapping[str, Any], exchange: str | None = None) -> dict[str, Any]:
     close_s = frame["close"].astype("float64")
     close = float(close_s.iloc[-1])
     max_loss, warn_loss = float(cfg["max_loss_pct"]), float(cfg["warn_loss_pct"])
     pnl = (close / cost - 1) * 100.0
     max_loss_price = cost * (1 - max_loss / 100.0)
+    if exchange:
+        # On the tick grid, rounded up so the loss to it stays within max_loss (35,880 -> 35,900; B13).
+        from src.quant.screener import round_to_tick  # noqa: PLC0415 - avoids an import cycle
+        max_loss_price = round_to_tick(max_loss_price, exchange, up=True)
     big_gain = max_loss * float(cfg["breakeven_gain_multiple"])
     ma50 = float(ind.sma(close_s, 50).iloc[-1]) if len(close_s) >= 50 else None
     ma200 = float(ind.sma(close_s, 200).iloc[-1]) if len(close_s) >= 200 else None

@@ -348,3 +348,156 @@ def test_a_freshly_broken_chart_leaves_the_main_list(db):
     brk = next((m for m in result.members if m.ticker == "BRK"), None)
     assert brk is None or brk.group not in (GROUP_A, GROUP_B)
     assert any("gãy chart" in k and "BRK" in k for k in result.exclusions)
+
+
+# -- base rules 2 (tester report 2, 2026-10-11) --------------------------------------
+
+from src.quant.screener import BASE_RULES, explain_base, major_contractions  # noqa: E402
+
+
+def ohlc(rows, volume=2_000_000):
+    """Bars from explicit (open, high, low, close) rows, ending on END."""
+    idx = pd.bdate_range(end=pd.Timestamp(END), periods=len(rows))
+    o, h, l, c = (np.asarray(x, dtype="float64") for x in zip(*rows))
+    return pd.DataFrame({"open": o, "high": h, "low": l, "close": c,
+                         "volume": np.full(len(rows), float(volume))}, index=idx)
+
+
+def bars_of(closes, spread=0.004):
+    return [(c, c * (1 + spread), c * (1 - spread), c) for c in closes]
+
+
+def test_major_contractions_are_the_big_pullbacks_not_every_wiggle():
+    """KSV had 37 zigzag "contractions" in one base (M11): count the major ones only."""
+    f = frame_from_closes(vcp_closes(), spread=0.002)
+    base = f.iloc[199:]
+    legs = major_contractions(base["high"].to_numpy(), base["low"].to_numpy(), 3.0)
+    assert [round(d) for d, _, _ in legs] == [20, 10, 4]
+    noisy = frame_from_closes([40_000 * (1 - 0.15 * min(i, 30) / 30 + 0.04 * np.sin(i / 2)) for i in range(250)])
+    assert len(zigzag(noisy, 3.0)) > 12                       # the old count
+    legs = major_contractions(noisy["high"].to_numpy(), noisy["low"].to_numpy(), 3.0)
+    assert 1 <= len(legs) <= 6
+    assert all(b <= a for (a, _, _), (b, _, _) in zip(legs, legs[1:]))
+
+
+def test_a_two_session_shakeout_counts_as_a_contraction():
+    highs = np.array([100.0, 99.0, 90.0, 95.0, 94.0, 93.0])
+    lows = np.array([98.0, 91.0, 88.0, 93.0, 92.5, 92.8])
+    assert [(h, lo) for _, h, lo in major_contractions(highs, lows, 3.0)] == [(0, 2)]
+    assert major_contractions(highs, lows, 3.0, min_leg_sessions=4) == []
+
+
+def _vcp_then(tail):
+    """Advance, a 20% then a ~8% contraction, then `tail` (closes)."""
+    closes = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 32_000, 15)) \
+        + list(np.linspace(32_000, 39_000, 15)) + list(np.linspace(39_000, 36_000, 8)) + tail
+    return frame_from_closes(closes, spread=0.002)
+
+
+TIGHT_TAIL = list(np.linspace(36_000, 38_600, 6)) + [38_400, 38_300, 38_500, 38_350, 38_450]
+
+
+def test_a_tight_area_in_the_upper_half_is_the_pivot_and_its_low_the_stop():
+    f = _vcp_then(TIGHT_TAIL)
+    base = read_base(f, "HOSE", SETTINGS)
+    assert base.legs[-1]["tight"] and base.kind == "VCP", base.as_dict()
+    top = base.legs[-1]["high"]
+    assert base.pivot == round_to_tick(top + tick_size(top, "HOSE"), "HOSE", up=True)
+    assert base.stop == max(round_to_tick(base.legs[-1]["low"], "HOSE", up=False),
+                            round_to_tick(base.pivot * 0.92, "HOSE", up=True))
+
+
+def test_a_pause_in_the_lower_half_is_not_a_pivot():
+    """HCM's 23,750 sat 13% under its left high: a rebound inside the base, not its right side (M04)."""
+    closes = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 30_000, 20)) \
+        + list(np.linspace(30_000, 32_500, 6)) + [32_300, 32_200, 32_400, 32_250, 32_350]
+    base = read_base(frame_from_closes(closes, spread=0.002), "HOSE", SETTINGS)
+    assert not any(leg["tight"] for leg in base.legs)
+    assert base.pivot > 40_000                                 # the last contraction's high: the top
+
+
+def _abb_like():
+    """ABB 2026: an opening spike at the ceiling (09/07), a left high, a flat base, a right high."""
+    rows = bars_of(np.linspace(12_000, 16_500, 220), spread=0.01)
+    rows += [(18_900, 18_900, 16_500, 17_200),                 # opened at the ceiling, closed 9% off it
+             (17_200, 18_000, 17_100, 17_600)]                 # the left-side high
+    rows += bars_of([17_000, 16_900, 16_700, 17_000, 17_300] * 8, spread=0.006)
+    rows += [(17_400, 18_200, 17_300, 17_900)]                 # the right-side high
+    rows += bars_of([17_700, 17_500, 17_300, 17_600, 18_000, 17_800, 17_600, 17_500, 17_600, 17_500], spread=0.004)
+    return ohlc(rows)
+
+
+def test_an_opening_spike_is_not_the_base_top_and_the_base_starts_at_the_left_high():
+    f = _abb_like()
+    base = read_base(f, "UPCOM", SETTINGS)
+    spike_day, left_day = f.index[220].date().isoformat(), f.index[221].date().isoformat()
+    assert base.spike_dates == [spike_day] and base.start_date == left_day
+    assert base.top == 18_200 and base.kind == "FLAT_BASE", base.as_dict()
+    assert base.pivot == 18_300                                # IBD flat base: highest high + one tick
+    assert base.rules == BASE_RULES
+
+
+def test_a_left_high_before_a_deep_fall_does_not_start_the_base():
+    """An 18,000 high a year ago, a 40% fall and a climb to 18,200 are two bases, not one."""
+    closes = list(np.linspace(14_000, 18_000, 60)) + list(np.linspace(18_000, 10_800, 80)) \
+        + list(np.linspace(10_800, 18_200, 100)) + [17_600, 17_300, 17_500, 17_800, 17_400] * 4
+    base = read_base(frame_from_closes(closes, spread=0.004), "HOSE", SETTINGS)
+    assert base.start_date == base.top_date
+
+
+def test_a_climax_top_with_neighbouring_highs_is_kept():
+    rows = bars_of(np.linspace(20_000, 29_000, 250), spread=0.01)
+    rows += [(29_730, 29_730, 26_000, 26_100)]                 # opens at its high, closes at its low ...
+    rows += bars_of([28_800, 28_000, 27_000, 26_500] + [26_000] * 25, spread=0.01)   # ... 29,088 is 2% away
+    base = read_base(ohlc(rows), "HOSE", SETTINGS)
+    assert base.spike_dates == [] and base.top == 29_730
+
+
+@pytest.mark.parametrize("exchange", ["HOSE", "HNX", "UPCOM"])
+@pytest.mark.parametrize("scale", [0.31, 0.5, 0.77, 1.0, 1.24, 1.3555, 2.17, 5.3])
+def test_the_risk_from_the_pivot_never_exceeds_8_percent(exchange, scale):
+    """Stop = pivot x 0.92 rounded DOWN made ABB 8.4% (M03); it is rounded up now."""
+    closes = [c * scale for c in stage2_closes(200)]
+    closes += [closes[-1] * (1 - 0.14 * min(i, 10) / 10) for i in range(30)]     # a 14%-deep flat base
+    base = read_base(frame_from_closes(closes, spread=0.002), exchange, SETTINGS)
+    assert base.forming and base.stop, base.as_dict()
+    assert (base.pivot - base.stop) / base.pivot <= 0.08 + 1e-12
+    assert base.stop == round_to_tick(base.stop, exchange, up=False)            # on the tick grid
+
+
+def test_the_8_percent_floor_at_the_hose_tick_boundary():
+    """Pivot 54,300 x 0.92 = 49,956: the 50-dong tick below 50,000 rounds it up to 50,000."""
+    assert round_to_tick(54_300 * 0.92, "HOSE", up=True) == 50_000
+    assert (54_300 - 50_000) / 54_300 <= 0.08
+
+
+def test_no_forming_base_no_stop():
+    extended = frame_from_closes(stage2_closes() + list(np.linspace(40_000, 46_000, 10)), spread=0.002)
+    assert read_base(extended, "HOSE", SETTINGS).stop is None
+    deep = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 22_000, 60)) + [23_000] * 20
+    read = read_base(frame_from_closes(deep, spread=0.002), "HOSE", SETTINGS)
+    assert read.kind == "TOO_DEEP" and read.stop is None
+
+
+def test_explain_base_dates_the_stop_breach_and_checks_each_label_by_its_own_rules():
+    f = _abb_like()
+    out = explain_base(f, "UPCOM", SETTINGS)
+    assert out["kind"] == "FLAT_BASE"
+    assert not any("Tay cầm" in c["text"] or "cốc" in c["text"] for c in out["checks"])   # M09
+    assert out["swings"] and out["rules"] == BASE_RULES
+    broke = ohlc(list(zip(f["open"], f["high"], f["low"], f["close"])) + [(16_900, 16_900, 16_500, 16_600)])
+    out = explain_base(broke, "UPCOM", SETTINGS)
+    assert out["stop_breached"] and out["stop_breached_on"] == broke.index[-1].date().isoformat()
+
+
+def test_supply_overhead_is_information_then_a_warning():
+    """GMD's left high sat 9% above its pivot (M04): normal up to 5%, information to 10%, then a warning."""
+    assert "overhead" not in explain_base(_vcp_then(TIGHT_TAIL), "HOSE", SETTINGS)          # 3.6%
+    info = explain_base(_vcp_then(list(np.linspace(36_000, 37_400, 6)) + [37_200, 37_100, 37_300, 37_150]),
+                        "HOSE", SETTINGS)["overhead"]
+    assert info["level"] == "info" and 5 <= info["pct"] < 10
+    closes = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 32_000, 15)) \
+        + list(np.linspace(32_000, 37_500, 15)) + list(np.linspace(37_500, 34_500, 8)) \
+        + list(np.linspace(34_500, 36_200, 5)) + [36_100, 36_050, 36_150, 36_100]
+    warn = explain_base(frame_from_closes(closes, spread=0.002), "HOSE", SETTINGS)["overhead"]
+    assert warn["level"] == "warn" and warn["pct"] >= 10

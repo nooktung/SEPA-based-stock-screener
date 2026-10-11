@@ -129,3 +129,36 @@ def test_weekly_candles_get_the_same_rules_with_their_own_counts():
     last = w.index[-1]
     assert sup["broken_on"] is None and sup["end"][0] == (last + pd.Timedelta(weeks=cfg["project_sessions"])).date().isoformat()
     assert sup["slope_pct_month"] == pytest.approx(slope * cfg["bars_per_month"] / p2 * 100, abs=0.01)
+
+
+def test_the_nearest_support_is_the_nearest_zone_not_the_strongest():
+    """DRI's "nearest" support sat 24% below while swing lows sat 7% below (tester M05)."""
+    old = list(np.full(120, 12_800.0) + 300 * np.sin(np.arange(120) / 3))   # a much-tested floor
+    climb = list(np.linspace(13_000, 17_000, 60))
+    recent = [16_000, 15_600, 15_400, 15_700, 16_200, 16_600, 16_900, 16_500, 16_100, 15_900, 16_300, 16_800,
+              17_100, 17_000, 16_900, 16_950, 17_000, 16_900, 16_950, 16_900]
+    f = _frame(old + climb + recent, spread=0.01)
+    out = chart_levels(f, TH, "HOSE")
+    support = next(z for z in out["zones"] if z["side"] == "SUPPORT")
+    assert -15 < support["distance_from_price"] <= -1.0, support
+
+
+def test_zones_sit_on_the_tick_grid_and_away_from_the_price():
+    """17,433 and 36,388 are not prices (M06); a resistance 0.03% away is no level (TLG)."""
+    from src.quant.screener import round_to_tick
+    rng = np.random.default_rng(7)
+    f = _frame(20_000 + np.cumsum(rng.normal(0, 150, 300)), spread=0.015)
+    out = chart_levels(f, TH, "UPCOM")
+    for z in out["zones"]:
+        assert abs(z["distance_from_price"]) >= 0.99
+        for k in ("center", "zone_low", "zone_high"):
+            assert z[k] == round_to_tick(z[k], "UPCOM", up=False)
+    assert "lịch giao dịch DNSE" in out["note"]
+
+
+def test_a_close_through_a_line_within_its_tolerance_is_reported():
+    """HDB closed 22,400 over a resistance line at 22,228 without breaking it (tester M07)."""
+    out = chart_levels(_rising_waves(), TH)
+    for line in out["trendlines"].values():
+        if line["broken_on"] is None:
+            assert line["close_vs_line_pct"] is not None and line["tolerance_pct"] == CFG["tolerance_pct"]

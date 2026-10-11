@@ -210,6 +210,9 @@ def plan_steps(now: datetime, path: Path | None = None, index_dates: Sequence[da
                            why=(f"đã có giá {_dm(date.fromisoformat(snap))}" if snap_ok
                                 else "dựng lại theo lượt lọc mới" if snap and not (rs_fresh and not need_screen)
                                 else "dựng lại theo giá mới")))
+    # Report only (src/web/checks.py): a broken invariant is listed, the update is not stopped.
+    plan.steps.append(Step("check", "Kiểm tra bất biến (pivot, stop, bước giá…)", ["check"], "~30 giây",
+                           why="báo cáo, không dừng các bước khác"))
     return plan
 
 

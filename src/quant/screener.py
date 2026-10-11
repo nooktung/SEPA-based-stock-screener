@@ -31,7 +31,17 @@ import pandas as pd
 from src.config import load_config
 from src.database import connect, init_db
 from src.quant import indicators as ind
-from src.quant.setup_status import RS_TIER_ORDER, assess, rs_tier
+from src.quant.setup_status import FORMING_BASES, RS_TIER_ORDER, assess, rs_tier
+from src.quant.vnfmt import dmy as _dmy
+from src.quant.vnfmt import num as _n
+from src.quant.vnfmt import pct as _pct
+
+# Version of the base rules stored with every base read (monitor state, screen member), so a
+# number computed by the earlier rules can be told apart (tester report 2, 2026-10-11):
+# 1 (absent) = zigzag legs, pivot at the high since the last 3% low, stop rounded down;
+# 2 = major contractions, pivot at the last contraction's (or tight area's) high, stop risk <= 8%,
+# left-side base start, opening spikes ignored, no stop without a forming base.
+BASE_RULES = 2
 
 GROUP_A, GROUP_B, GROUP_C = "A", "B", "C"
 CRITERIA = ("TT1", "TT2", "TT3", "TT4", "TT5", "TT6", "TT7", "TT8")
@@ -261,8 +271,9 @@ class BaseRead:
     quality: float = 0.0                         # 0..100, for ranking only
     notes: list[str] = field(default_factory=list)
     # Geometry, for drawing and explaining the base (dates as ISO strings).
-    start_date: str | None = None                # the highest high the base is measured from
-    top: float | None = None
+    start_date: str | None = None                # the left-side high the base is measured from
+    top: float | None = None                     # the base's highest (effective) high ...
+    top_date: str | None = None                  # ... where the contractions are measured from
     low_date: str | None = None
     low: float | None = None
     # Cup geometry (when a cup was evaluated) and the rule-by-rule result.
@@ -275,10 +286,15 @@ class BaseRead:
     # ("BREAKOUT") or broke its stop ("STOP"), so its pivot and stop stay where they were.
     held_since: str | None = None
     held_by: str | None = None
+    # The major contractions, for drawing: {high_date, high, low_date, low, depth, tight}; the last
+    # one is the final tight area when `tight` is set (its depth is in `contractions` too).
+    legs: list[dict[str, Any]] = field(default_factory=list)
+    spike_dates: list[str] = field(default_factory=list)   # opening spikes measured at their close
+    rules: int = BASE_RULES
 
     @property
     def forming(self) -> bool:
-        return self.kind in {"VCP", "FLAT_BASE", "CUP_HANDLE", "CUP", "BASE"}
+        return self.kind in FORMING_BASES
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -325,7 +341,7 @@ def evaluate_cup(frame: pd.DataFrame, top_index: int, base: pd.DataFrame, settin
         checks.append({"rule": rule, "ok": bool(ok), "text": text})
 
     add("depth", float(cup["min_depth_pct"]) <= depth <= float(cup["max_depth_pct"]),
-        f"Độ sâu {depth:.1f}% trong khoảng {cup['min_depth_pct']}–{cup['max_depth_pct']}% (O'Neil)")
+        f"Độ sâu {_pct(depth)} (cần {cup['min_depth_pct']}–{cup['max_depth_pct']}%, O'Neil)")
     add("length", len(base) >= int(cup["min_sessions"]),
         f"Dài {len(base)} phiên ≈ {len(base) / 5:.0f} tuần (cần ≥ {cup['min_sessions']} phiên ≈ 7 tuần)")
     zone = low + (top - low) * float(cup["bottom_zone_pct"]) / 100.0
@@ -352,7 +368,10 @@ def evaluate_cup(frame: pd.DataFrame, top_index: int, base: pd.DataFrame, settin
     add("prior_uptrend", gain >= float(cup["prior_uptrend_pct"]) and run >= int(cup["prior_uptrend_min_sessions"]),
         f"Trước nền tăng {gain:.0f}% trong {run} phiên (cần ≥ {cup['prior_uptrend_pct']}% "
         f"kéo dài ≥ {cup['prior_uptrend_min_sessions']} phiên, không phải một cú vọt)")
-    add("upper_half", last >= mid, f"Giá {last:,.0f} đã hồi lên nửa trên của cốc (giữa cốc {mid:,.0f})")
+    # The text states what the numbers say (tester M10: "đã hồi lên nửa trên" beside 17,500 < 17,700).
+    add("upper_half", last >= mid,
+        f"Giá {_n(last)} đã ở nửa trên của cốc (giữa cốc {_n(mid)})" if last >= mid
+        else f"Giá {_n(last)} còn ở nửa dưới của cốc (giữa cốc {_n(mid)}) — cần hồi lên nửa trên")
     ok = all(c["ok"] for c in checks)
 
     # Handle: the highest point after the low (right lip), then a shallow,
@@ -371,7 +390,7 @@ def evaluate_cup(frame: pd.DataFrame, top_index: int, base: pd.DataFrame, settin
         result.handle_low, result.handle_low_pos = handle_low, rl_pos + 1 + hl_rel
         result.handle = handle_ok
         checks.append({"rule": "handle", "ok": handle_ok,
-                       "text": f"Tay cầm {len(tail)} phiên, sâu {h_depth:.1f}% (cần ≤ {h['max_depth_pct']}%), "
+                       "text": f"Tay cầm {len(tail)} phiên, sâu {_pct(h_depth)} (cần ≤ {h['max_depth_pct']}%), "
                                f"{'nằm' if handle_low >= mid else 'KHÔNG nằm'} ở nửa trên, khối lượng "
                                f"{'thấp hơn' if quiet else 'không thấp hơn'} trung bình cốc"})
     else:
@@ -381,14 +400,22 @@ def evaluate_cup(frame: pd.DataFrame, top_index: int, base: pd.DataFrame, settin
 
 
 def read_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
-    """The base the stock is in (see _read_base_raw), with the pivot rounded up and the
-    stop rounded down to the exchange's tick, and the distance to the pivot from them."""
+    """The base the stock is in (see _read_base_raw), on the exchange's tick grid.
+
+    The pivot is rounded up. The stop is rounded down, but never below pivot - max_stop_pct
+    rounded UP, so the risk from the pivot never exceeds max_stop_pct (tester M03: ABB's
+    17,480 rounded down to 17,400 was 8.4%). Only a forming base keeps a stop: without a buy
+    point at a pivot there is nothing for a stop to protect (user decision 2026-10-11).
+    """
     read = _read_base_raw(frame, exchange, settings)
     if read.pivot:
         read.pivot = round_to_tick(read.pivot, exchange, up=True)
-        if read.stop:
-            read.stop = round_to_tick(read.stop, exchange, up=False)
         read.distance_to_pivot_pct = (float(frame["close"].iloc[-1]) / read.pivot - 1) * 100.0
+    if read.forming and read.pivot and read.stop:
+        floor = round_to_tick(read.pivot * (1 - float(settings["base"]["max_stop_pct"]) / 100.0), exchange, up=True)
+        read.stop = max(round_to_tick(read.stop, exchange, up=False), floor)
+    else:
+        read.stop = None
     return read
 
 
@@ -402,7 +429,10 @@ def tracked_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]
     For `base.hold_sessions` after a close above the base's pivot or below its
     stop, the base that was knowable the session before that close is kept --
     pivot, stop, label -- and marked `held_since` / `held_by`. A new forming
-    base that starts after that session replaces it [TRIỂN KHAI].
+    base that starts after that session replaces it [TRIỂN KHAI]. A close above a base
+    whose top was set inside the window is not a breakout: after a breakout bar the
+    base can be re-read with that bar as its top (it is within left_high_tolerance_pct
+    of the old one), and the next close above that re-read pivot is the same move.
     """
     current = read_base(frame, exchange, settings)
     hold = int(settings["base"].get("hold_sessions", 0) or 0)
@@ -415,7 +445,8 @@ def tracked_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]
             continue
         if not prior.forming:
             continue                                         # only a real base has a pivot and stop to keep
-        broke_out = close[i] > prior.pivot >= close[i - 1]
+        recent_top = bool(prior.top_date) and prior.top_date >= frame.index[max(0, i - hold)].date().isoformat()
+        broke_out = close[i] > prior.pivot >= close[i - 1] and not recent_top
         broke_stop = bool(prior.stop) and close[i] < prior.stop <= close[i - 1]
         if not (broke_out or broke_stop):
             continue
@@ -427,17 +458,127 @@ def tracked_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]
         held.held_since, held.held_by = day, "BREAKOUT" if broke_out else "STOP"
         held.distance_to_pivot_pct = (float(close[-1]) / held.pivot - 1) * 100.0
         what = "breakout" if broke_out else "phiên thủng stop"
-        held.notes.insert(0, f"pivot và stop giữ từ {what} {day[8:10]}/{day[5:7]}/{day[:4]}")
+        held.notes.insert(0, f"pivot và stop giữ từ {what} {_dmy(day)}")
         return held
     return current
 
 
-def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
-    """Describe the base the stock is in, measured from its highest high.
+def _effective_highs(window: pd.DataFrame, exchange: str, b: Mapping[str, Any]) -> tuple[np.ndarray, list[int]]:
+    """Highs for measuring a base, with an opening spike counted at its close (tester M02).
 
-    The base starts at the highest high of the last `max_base_sessions`. Its
-    legs are the zigzag declines after that high; a VCP needs each leg
-    shallower than the last. Every threshold is an implementation choice.
+    ABB opened at its UPCoM ceiling, 18,900, on 09/07/2026 and closed at 17,200; nothing
+    else traded within 4% of that print for three months, yet it became the base's top
+    and the pivot sat 7.9% above the price. A session counts as such a spike when its high
+    was printed at the open (open within one tick of the high), it closed in the lower
+    part of its range and its high stands `isolation_pct` above every other high within
+    `neighbour_sessions` [TRIỂN KHAI]. Returns the highs and the spike positions.
+    """
+    high = window["high"].to_numpy(dtype="float64")
+    eff = high.copy()
+    cfg = b.get("spike_bar")
+    if not cfg or len(high) < 2:
+        return eff, []
+    opn = window["open"].to_numpy(dtype="float64")
+    low = window["low"].to_numpy(dtype="float64")
+    close = window["close"].to_numpy(dtype="float64")
+    nb = int(cfg["neighbour_sessions"])
+    s = pd.Series(high)
+    before = s.shift(1).rolling(nb, min_periods=1).max().to_numpy()
+    after = s[::-1].shift(1).rolling(nb, min_periods=1).max()[::-1].to_numpy()
+    others = np.fmax(before, after)
+    rng = high - low
+    candidates = np.flatnonzero((rng > 0) & (close - low <= float(cfg["max_close_position"]) * rng)
+                                & (high >= others * (1 + float(cfg["isolation_pct"]) / 100.0)))
+    spikes = [int(i) for i in candidates if opn[i] >= high[i] - tick_size(high[i], exchange) - 1e-6]
+    eff[spikes] = close[spikes]
+    return eff, spikes
+
+
+def _base_start(highs: np.ndarray, lows: np.ndarray, top_pos: int, b: Mapping[str, Any]) -> int:
+    """Where the base starts: its left-side high.
+
+    Walking back from the highest high, the earliest session whose high is within
+    `left_high_tolerance_pct` of it and was followed by a pullback of at least
+    `min_swing_pct` before the top -- ABB's base began at 18,000 on 10/07, not at 18,200 on
+    18/09. Without the pullback the earlier high is a step of the advance, not the left side
+    of a base. The walk stops where the base from there would be deeper than a cup may be: an
+    18,000 high a year ago, a 40% fall and a climb back to 18,200 are two bases, not one.
+    """
+    tol = float(b.get("left_high_tolerance_pct") or 0) / 100.0
+    if tol <= 0:
+        return top_pos
+    top = float(highs[top_pos])
+    limit = float(b["cup"]["max_depth_pct"]) / 100.0
+    swing = float(b["min_swing_pct"]) / 100.0
+    low = float(lows[top_pos:].min())           # the base's low if it starts at j
+    between = math.inf                           # the lowest low strictly between j and the top
+    start = top_pos
+    for j in range(top_pos - 1, -1, -1):
+        if j + 1 < top_pos:
+            between = min(between, float(lows[j + 1]))
+        low = min(low, float(lows[j]))
+        if 1 - low / top > limit:
+            break
+        if highs[j] >= top * (1 - tol) and between <= highs[j] * (1 - swing):
+            start = j
+    return start
+
+
+def major_contractions(highs: np.ndarray, lows: np.ndarray, min_swing_pct: float,
+                       min_leg_sessions: int = 2) -> list[tuple[float, int, int]]:
+    """A base's major contractions as (depth %, high position, low position), from position 0.
+
+    From the highest high: the lowest low after it, then the highest high after that low,
+    and so on -- lower highs and higher lows, so no contraction is deeper than the one
+    before it. A decline shallower than `min_swing_pct` ends the walk: nothing after it can
+    be deeper. A leg also spans at least `min_leg_sessions` sessions, high bar to low bar.
+    Counting every 3% zigzag wiggle instead gave KSV 37 "contractions" (tester M11).
+    """
+    n = len(highs)
+    legs: list[tuple[float, int, int]] = []
+    h = 0
+    while h < n - 1:
+        lo = h + 1 + int(np.argmin(lows[h + 1:]))
+        depth = (1 - float(lows[lo]) / float(highs[h])) * 100.0
+        if depth < min_swing_pct:
+            break
+        if lo - h + 1 >= min_leg_sessions:
+            legs.append((depth, h, lo))
+        if lo >= n - 1:
+            break
+        h = lo + 1 + int(np.argmax(highs[lo + 1:]))
+    return legs
+
+
+def _tight_area(highs: np.ndarray, lows: np.ndarray, after: int, mid: float,
+                b: Mapping[str, Any]) -> tuple[int, int] | None:
+    """(high, low) positions of the final tight area after the last contraction's low.
+
+    The pause after the last major contraction is shallower than `min_swing_pct` by
+    construction. It is the final contraction -- pivot at its high, stop at its low -- when
+    it has lasted `min_sessions` and sits in the upper half of the base; lower down it is a
+    rebound inside the base, not the right side (HCM: 23,750, 13% under its left high).
+    """
+    cfg = b.get("tight_area")
+    n = len(highs)
+    if not cfg or after >= n - 1:
+        return None
+    ht = after + 1 + int(np.argmax(highs[after + 1:]))
+    if n - ht < int(cfg["min_sessions"]):
+        return None
+    if cfg.get("upper_half", True) and float(highs[ht]) < mid:
+        return None
+    return ht, ht + int(np.argmin(lows[ht:]))
+
+
+def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> BaseRead:
+    """Describe the base the stock is in.
+
+    The top is the highest high of the last `max_base_sessions` (an opening spike counted
+    at its close); the base starts at the left-side high within `left_high_tolerance_pct`
+    of it. The contractions are the major ones measured from the top, plus the final tight
+    area when there is one; a VCP needs 2-6 of them, the last starting in the upper half of
+    the base. Every threshold is an implementation choice.
     """
     b = settings["base"]
     vcp = b["vcp"]
@@ -447,14 +588,23 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
         read.notes.append("chưa đủ phiên để đọc nền")
         return read
 
-    highs = window["high"].astype("float64")
+    raw_high = window["high"].to_numpy(dtype="float64")
+    eff, spikes = _effective_highs(window, exchange, b)
+    window = window.assign(high=eff)                 # every measure below uses the effective highs
+    lows = window["low"].to_numpy(dtype="float64")
     close = window["close"].astype("float64")
     last = float(close.iloc[-1])
-    top_pos = int(np.argmax(highs.to_numpy()))
-    top = float(highs.iloc[top_pos])
-    base = window.iloc[top_pos:]
+    dates = [d.date().isoformat() for d in window.index]
+    top_pos = int(np.argmax(eff))
+    top = float(eff[top_pos])
+    start = _base_start(eff, lows, top_pos, b)
+    base = window.iloc[start:]
     read.sessions = len(base)
-    read.start_date, read.top = window.index[top_pos].date().isoformat(), top
+    read.start_date, read.top, read.top_date = dates[start], top, dates[top_pos]
+    read.spike_dates = [dates[i] for i in spikes if raw_high[i] > top]       # spikes that would have been the top
+    if read.spike_dates:
+        read.notes.append("đã bỏ phiên giật " + ", ".join(_dmy(d) for d in read.spike_dates)
+                          + " (mở cửa ở giá cao nhất rồi đảo chiều) khi tìm đỉnh nền")
     tick = tick_size(top, exchange)
 
     if read.sessions < int(b["min_base_sessions"]):
@@ -477,22 +627,29 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
     low = float(base["low"].min())
     read.low, read.low_date = low, base["low"].idxmin().date().isoformat()
     read.depth_pct = (1 - low / top) * 100.0
+    mid = low + (top - low) / 2
 
-    points = zigzag(base, float(b["min_swing_pct"]))
-    legs: list[tuple[float, float, int]] = []    # (depth %, low price, low position)
-    for (k1, _, p1), (k2, i2, p2) in zip(points, points[1:]):
-        if k1 == "HIGH" and k2 == "LOW":
-            legs.append(((1 - p2 / p1) * 100.0, p2, i2))
-    read.contractions = [d for d, _, _ in legs]
+    # Contractions, measured from the top (positions relative to it).
+    t_hi, t_lo = eff[top_pos:], lows[top_pos:]
+    legs = major_contractions(t_hi, t_lo, float(b["min_swing_pct"]), int(b.get("min_leg_sessions", 2)))
+    read.legs = [{"high_date": dates[top_pos + h], "high": float(t_hi[h]), "low_date": dates[top_pos + lo],
+                  "low": float(t_lo[lo]), "depth": d, "tight": False} for d, h, lo in legs]
+    tight = _tight_area(t_hi, t_lo, legs[-1][2], mid, b) if legs else None
+    if tight:
+        ht, lt = tight
+        read.legs.append({"high_date": dates[top_pos + ht], "high": float(t_hi[ht]), "low_date": dates[top_pos + lt],
+                          "low": float(t_lo[lt]), "depth": (1 - float(t_lo[lt]) / float(t_hi[ht])) * 100.0,
+                          "tight": True})
+    read.contractions = [leg["depth"] for leg in read.legs]
 
-    # Pivot: the high since the last leg's low (the right side of the base).
-    if legs:
-        last_low_pos = legs[-1][2]
-        right_side_high = float(base["high"].iloc[last_low_pos:].max())
-        read.tightness_pct = legs[-1][0]
+    # Pivot: the high of the last contraction -- the final tight area's when there is one
+    # (skill 02 §3.1: "pivot = max(high) của nhịp co hẹp cuối"); the top when none was measured.
+    if read.legs:
+        right_high, last_leg_low = read.legs[-1]["high"], read.legs[-1]["low"]
+        read.tightness_pct = read.legs[-1]["depth"]
     else:
-        right_side_high = top
-    read.pivot = right_side_high + tick_size(right_side_high, exchange)
+        right_high, last_leg_low = top, low
+    read.pivot = right_high + tick_size(right_high, exchange)
     read.distance_to_pivot_pct = (last / read.pivot - 1) * 100.0
 
     vol = frame["volume"].astype("float64")
@@ -501,9 +658,7 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
     read.volume_dryup = bool(vol50 == vol50 and vol50 > 0 and recent < float(vcp["dryup_ratio"]) * vol50)
 
     max_stop = float(b["max_stop_pct"])
-    stop_floor = read.pivot * (1 - max_stop / 100.0)
-    last_leg_low = legs[-1][1] if legs else low
-    read.stop = max(last_leg_low, stop_floor)
+    read.stop = max(last_leg_low, read.pivot * (1 - max_stop / 100.0))
 
     if read.distance_to_pivot_pct > float(b["buy_zone_max_pct"]):
         read.kind = "EXTENDED"
@@ -518,11 +673,13 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
     shrinking = all(
         later <= earlier + float(vcp["depth_tolerance_pct"]) for earlier, later in zip(depths, depths[1:])
     )
+    upper = not vcp.get("last_contraction_upper_half") or (bool(read.legs) and read.legs[-1]["high"] >= mid)
     is_vcp = (
         int(vcp["min_contractions"]) <= len(depths) <= int(vcp["max_contractions"])
         and float(vcp["first_depth_min_pct"]) <= depths[0] <= float(vcp["first_depth_max_pct"])
         and shrinking
         and depths[-1] <= float(vcp["last_depth_max_pct"])
+        and upper
     ) if depths else False
 
     flat, cup = b["flat_base"], b["cup"]
@@ -532,7 +689,7 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
     # point), then VCP, flat base, a cup still without a handle, a plain base.
     c = None
     if read.depth_pct <= float(cup["max_depth_pct"]) and read.sessions >= int(cup["min_sessions"]):
-        top_index = len(frame) - len(window) + top_pos
+        top_index = len(frame) - len(window) + start
         c = evaluate_cup(frame, top_index, base, settings)
         read.cup_checks = c.checks
         read.right_lip = c.right_lip
@@ -556,7 +713,7 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
         read.stop = max(low, read.pivot * (1 - max_stop / 100.0))
     elif c is not None and c.ok:
         read.kind = "CUP"
-        # Cup without handle: buy point = the left-side high + one tick (IBD).
+        # Cup without handle: buy point = the base's high + one tick (IBD: the left-side high).
         read.pivot = top + tick
         read.stop = read.pivot * (1 - max_stop / 100.0)
     elif read.depth_pct <= float(cup["max_depth_pct"]):
@@ -583,64 +740,113 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
     return read
 
 
+def stop_breached_on(frame: pd.DataFrame, read: BaseRead) -> str | None:
+    """The session the close went from above the stop to at or below it, while it still is
+    (tester M01: the chart drew KSV's stop above the price as if it still held)."""
+    if not read.stop:
+        return None
+    close = frame["close"].to_numpy(dtype="float64")
+    if close[-1] > read.stop:
+        return None
+    if read.held_by == "STOP" and read.held_since:
+        return read.held_since
+    for i in range(len(close) - 1, 0, -1):
+        if close[i] <= read.stop < close[i - 1]:
+            return frame.index[i].date().isoformat()
+    return None
+
+
+def _vcp_checks(read: BaseRead, mid: float, vcp: Mapping[str, Any], add: Any) -> None:
+    d = read.contractions
+    tight = bool(read.legs) and read.legs[-1].get("tight")
+    add(f"{len(d)} nhịp co hẹp chính{' (kể cả vùng chặt cuối)' if tight else ''} "
+        f"(cần {vcp['min_contractions']}–{vcp['max_contractions']})",
+        int(vcp["min_contractions"]) <= len(d) <= int(vcp["max_contractions"]))
+    if not d:
+        return
+    add(f"Nhịp đầu sâu {_pct(d[0])} (cần {vcp['first_depth_min_pct']}–{vcp['first_depth_max_pct']}%)",
+        float(vcp["first_depth_min_pct"]) <= d[0] <= float(vcp["first_depth_max_pct"]))
+    add("Mỗi nhịp nông hơn nhịp trước: " + " → ".join(f"{_n(x)}%" for x in d),
+        all(later <= earlier + float(vcp["depth_tolerance_pct"]) for earlier, later in zip(d, d[1:])))
+    add(f"Nhịp cuối {_pct(d[-1])} (cần ≤ {vcp['last_depth_max_pct']}%)", d[-1] <= float(vcp["last_depth_max_pct"]))
+    if vcp.get("last_contraction_upper_half"):
+        h = read.legs[-1]["high"]
+        add(f"Nhịp cuối bắt đầu ở nửa trên của nền (đỉnh nhịp {_n(h)}, giữa nền {_n(mid)})", h >= mid)
+
+
 def explain_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]) -> dict[str, Any]:
     """The base as the screener sees it, with every rule it checked -- for drawing.
 
     `checks` carries (text, ok) where ok is True/False, or None for a feature
     of the textbook pattern this implementation does not test. Showing the
     unchecked items is the point: a label from a loose rule must not read as
-    a textbook pattern.
+    a textbook pattern. Each label is checked against its own rules (tester M09:
+    a flat base was shown the cup-with-handle checklist).
     """
     b = settings["base"]
     read = tracked_base(frame, exchange, settings)       # the same base the monitor and the list show
     out: dict[str, Any] = {k: v for k, v in read.as_dict().items() if k in (
         "kind", "sessions", "depth_pct", "pivot", "stop", "distance_to_pivot_pct",
-        "volume_dryup", "start_date", "top", "low_date", "low", "notes",
-        "right_lip_date", "right_lip", "handle_low_date", "handle_low", "held_since", "held_by")}
-    out["stop_breached"] = bool(read.stop) and float(frame["close"].iloc[-1]) <= read.stop
+        "volume_dryup", "start_date", "top", "top_date", "low_date", "low", "notes",
+        "right_lip_date", "right_lip", "handle_low_date", "handle_low", "held_since", "held_by",
+        "legs", "spike_dates", "rules")}
+    last = float(frame["close"].iloc[-1])
+    out["stop_breached"] = bool(read.stop) and last <= read.stop
+    out["stop_breached_on"] = stop_breached_on(frame, read) if out["stop_breached"] else None
     out["contractions"] = [round(x, 1) for x in read.contractions]
+    # Supply overhead: the left-side high above the pivot (tester M04). Normal in a VCP or a
+    # cup with handle; information from overhead_info_pct, a warning from overhead_warn_pct.
+    if read.forming and read.pivot and read.top and read.top > read.pivot:
+        over = (read.top / read.pivot - 1) * 100.0
+        level = ("warn" if over >= float(b.get("overhead_warn_pct", 10))
+                 else "info" if over >= float(b.get("overhead_info_pct", 5)) else None)
+        if level:
+            out["overhead"] = {"pct": round(over, 1), "top": read.top, "level": level}
     if read.top is None or read.low is None:
-        out["checks"], out["swings"] = [], []
+        out["checks"], out["swings"], out["checks_title"] = [], [], None
         return out
     mid = read.low + (read.top - read.low) / 2
     out["mid"] = round(mid, 2)
-    last = float(frame["close"].iloc[-1])
 
-    # Major swings only, for a readable drawing (the ranking uses min_swing_pct).
-    start = frame.index.get_loc(pd.Timestamp(read.start_date))
-    window = frame.iloc[start:]
-    display_pct = max(2 * float(b["min_swing_pct"]), 5.0)
-    out["swings"] = [{"time": window.index[i].date().isoformat(), "value": round(p, 2), "kind": k}
-                     for k, i, p in zigzag(window, display_pct)]
+    # The drawn zigzag is the counted contractions and nothing else (tester M11).
+    swings: list[dict[str, Any]] = []
+    for leg in read.legs:
+        for kind, t, v in (("HIGH", leg["high_date"], leg["high"]), ("LOW", leg["low_date"], leg["low"])):
+            if not swings or swings[-1]["time"] != t:
+                swings.append({"time": t, "value": round(v, 2), "kind": kind})
+    out["swings"] = swings
 
-    weeks = read.sessions / 5
     cup, flat, vcp = b["cup"], b["flat_base"], b["vcp"]
     depth = read.depth_pct or 0.0
     checks: list[dict[str, Any]] = []
+    title = None
 
     def add(text: str, ok: bool | None) -> None:
         checks.append({"text": text, "ok": ok})
 
-    if read.cup_checks:
+    if read.kind in ("CUP_HANDLE", "CUP"):
         for c in read.cup_checks:
             add(c["text"], c["ok"])
-    elif read.kind == "TOO_DEEP":
-        add(f"Độ sâu {depth:.1f}% ≤ {cup['max_depth_pct']}% (O'Neil)", False)
     elif read.kind == "FLAT_BASE":
-        add(f"Độ sâu {depth:.1f}% ≤ {flat['max_depth_pct']}%", depth <= float(flat["max_depth_pct"]))
+        add(f"Độ sâu {_pct(depth)} (cần ≤ {flat['max_depth_pct']}%)", depth <= float(flat["max_depth_pct"]))
         add(f"Dài {read.sessions} phiên (cần ≥ {flat['min_sessions']})", read.sessions >= int(flat["min_sessions"]))
         add("Có nền sâu hơn ngay trước đó (nền phẳng thường là nền thứ hai)", None)
     elif read.kind == "VCP":
-        d = read.contractions
-        add(f"{len(d)} nhịp co hẹp (cần {vcp['min_contractions']}–{vcp['max_contractions']})",
-            int(vcp["min_contractions"]) <= len(d) <= int(vcp["max_contractions"]))
-        add("Mỗi nhịp nông hơn nhịp trước: " + " → ".join(f"{x:.0f}%" for x in d),
-            all(later <= earlier + float(vcp["depth_tolerance_pct"]) for earlier, later in zip(d, d[1:])))
-        add(f"Nhịp cuối {d[-1]:.1f}% ≤ {vcp['last_depth_max_pct']}%" if d else "Nhịp cuối", bool(d) and d[-1] <= float(vcp["last_depth_max_pct"])
-            if d else False)
+        _vcp_checks(read, mid, vcp, add)
+    elif read.kind == "BASE":
+        # A plain base passed no pattern: say which pattern's rules it was held against.
+        if read.cup_checks:
+            title = "Chưa đạt mẫu hình chuẩn — kiểm tra theo quy tắc cốc"
+            for c in read.cup_checks:
+                add(c["text"], c["ok"])
+        else:
+            title = "Chưa đạt mẫu hình chuẩn — kiểm tra theo quy tắc VCP"
+            _vcp_checks(read, mid, vcp, add)
+    elif read.kind == "TOO_DEEP":
+        add(f"Độ sâu {_pct(depth)} (cần ≤ {cup['max_depth_pct']}%, O'Neil)", False)
     if read.forming or read.kind == "TOO_DEEP":
         add("Khối lượng cạn ở vùng pivot", read.volume_dryup)
-    out["checks"] = checks
+    out["checks"], out["checks_title"] = checks, title
     return out
 
 
@@ -1199,7 +1405,8 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
             held = tracked_base(f, c.exchange, settings)
             if held.held_since:
                 c.base = held
-        c.setup = assess(c.group, c.base.kind, c.base.distance_to_pivot_pct, settings, market)
+        c.setup = assess(c.group, c.base.kind, c.base.distance_to_pivot_pct, settings, market,
+                         stop_breached=bool(c.base.stop) and c.close <= c.base.stop)
 
     last_session = max((f.index[-1].date() for f in clean.values()), default=as_of)
     result = ScreenResult(uuid.uuid4().hex[:16], last_session, funnel, exclusions, market, members,

@@ -46,7 +46,7 @@ def test_a_new_session_runs_everything(db):
     plan = pl.plan_steps(datetime(2026, 10, 5, 9, 0, tzinfo=VN), db, index_dates=SESSIONS, cfg=CFG)
     assert plan.session == date(2026, 10, 2) and plan.session_source == "DNSE"
     assert keys(plan) == ["backfill", "index-session", "index-check", "industry", "fundamentals", "screen", "refprices",
-                          "monitor", "flow", "news", "logos", "market"]
+                          "monitor", "flow", "news", "logos", "market", "check"]
     assert "10/100" in plan.steps[0].why
 
 
@@ -78,7 +78,7 @@ def test_a_second_start_the_same_day_skips_what_is_done(db):
     report_path("2026-10-02").parent.mkdir(parents=True, exist_ok=True)
     report_path("2026-10-02").write_text("{}", encoding="utf-8")
     plan = pl.plan_steps(datetime(2026, 10, 5, 9, 0, tzinfo=VN), db, index_dates=SESSIONS, cfg=CFG)
-    assert keys(plan) == ["flow", "logos"]                 # both only ask for what is missing
+    assert keys(plan) == ["flow", "logos", "check"]        # flow, logos only ask for what is missing
     assert keys(plan, run=False) == ["backfill", "index-session", "index-check", "industry", "fundamentals", "screen",
                                      "refprices", "monitor", "news", "market"]
     # Three hours on, reference prices are read again (DNSE may have published the next session's).
@@ -109,11 +109,11 @@ def test_steps_run_in_order_and_a_failure_does_not_stop_the_rest(db):
         return SimpleNamespace(returncode=codes.get(cmd[3], 0))
     pl.run_steps(plan, runner=runner, out=lines.append, clock=iter(range(100)).__next__)
     assert calls == ["backfill", "index-session", "index-check", "industry", "fundamentals", "screen", "refprices",
-                     "monitor", "flow", "news", "logos", "market"]
+                     "monitor", "flow", "news", "logos", "market", "check"]
     result = {s.key: s.result for s in plan.steps}
     assert result["backfill"].startswith("xong (một số mã bị gắn cờ") and result["screen"].startswith("LỖI (mã thoát 1)")
     assert result["market"] == "xong"
-    assert any(line.startswith("\n[1/12] Tải giá toàn thị trường") for line in lines)
+    assert any(line.startswith("\n[1/13] Tải giá toàn thị trường") for line in lines)
 
 
 def test_a_running_start_blocks_another_until_it_is_stale(tmp_path):

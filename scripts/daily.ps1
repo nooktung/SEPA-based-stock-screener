@@ -48,6 +48,8 @@ else { Note "monitor thất bại, bỏ qua news" }
 # backfill ends PARTIAL most days (flagged series), which is normal: the snapshot runs anyway.
 Step "backfill" | Out-Null
 Step "market" | Out-Null
+# Invariants over what the dashboard shows (report only; exit 1 on a violation, the job goes on).
+Step "check" | Out-Null
 # UPCoM's reference is the previous session's average price: fill it for every UPCoM ticker's
 # latest session, so the whole-market view shows the % the price boards show (~230 requests).
 Step "refprices --market" | Out-Null

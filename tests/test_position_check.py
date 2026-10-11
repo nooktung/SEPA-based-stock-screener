@@ -97,3 +97,11 @@ def test_no_verdict_is_ever_given():
 def test_cost_equal_to_price_reads_as_breakeven():
     r, _ = run(close=100_000, cost=100_000)
     assert r["headline"] == "Giá hiện tại bằng giá vốn (hòa vốn)." and r["pnl_pct"] == 0
+
+
+def test_the_maximum_loss_price_is_on_the_tick_grid():
+    """Cost 39,000 x 0.92 = 35,880, not a HOSE price; rounded up the loss stays within 8% (B13)."""
+    r, _ = run(cost=39_000, close=39_500, exchange="HOSE")
+    assert r["max_loss_price"] == 35_900
+    r, _ = run(cost=39_000, close=39_500)
+    assert r["max_loss_price"] == 35_880                     # no exchange: as before

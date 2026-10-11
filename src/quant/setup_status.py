@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from src.quant.vnfmt import dmy as _dmy
+
 AT_PIVOT, WATCH, BREAKOUT_STATUS, INVALIDATED = "AT_PIVOT", "WATCH", "BREAKOUT", "INVALIDATED"
 STATUS_TEXT = {
     AT_PIVOT: "Ở vùng pivot",
@@ -33,6 +35,9 @@ STATUS_TEXT = {
 FORMING_BASES = {"VCP", "FLAT_BASE", "CUP_HANDLE", "CUP", "BASE"}
 INVALIDATING_EVENTS = {"BREAKOUT_FAILED", "STOP_BREACHED", "TREND_TEMPLATE_BROKEN"}
 VALID_BREAKOUT_EVENTS = {"BREAKOUT"}
+# An event that cancels an earlier one in the window: a regained Trend Template undoes its loss
+# (tester N05: KSV read "lost the template 06/10" after regaining 8/8 on 07/10).
+CANCELS = {"TREND_TEMPLATE_RESTORED": "TREND_TEMPLATE_BROKEN"}
 
 
 def rs_tier(rs: float | None, settings: Mapping[str, Any]) -> str | None:
@@ -64,7 +69,8 @@ def entry_zone(distance_to_pivot_pct: float | None, settings: Mapping[str, Any])
     return "IN_ZONE"
 
 
-ENTRY_TEXT = {"BELOW": "Chưa tới pivot", "IN_ZONE": "Ở vùng pivot", "EXTENDED": "Đã chạy xa", None: "Không xác định"}
+ENTRY_TEXT = {"BELOW": "Chưa tới pivot", "IN_ZONE": "Ở vùng pivot", "EXTENDED": "Đã chạy xa",
+              "STOP_BREACHED": "Đã thủng stop — chờ nền mới", None: "Không xác định"}
 
 
 def market_note(market: Mapping[str, Any] | None) -> tuple[str, str]:
@@ -74,18 +80,18 @@ def market_note(market: Mapping[str, Any] | None) -> tuple[str, str]:
     ftd = market.get("ftd") or {}
     if status == "CORRECTION":
         if ftd.get("date") and not ftd.get("failed") and not ftd.get("pressured"):
-            return "caution", (f"Thị trường điều chỉnh nhưng đã có ngày follow-through {ftd['date']} — "
+            return "caution", (f"Thị trường điều chỉnh nhưng đã có ngày follow-through {_dmy(ftd['date'])} — "
                                "xu hướng tăng mới đang được xác nhận, thận trọng")
         # The FTD that ended most recently (congthuc.md §11): undercut, or worn out by distribution.
         last = ftd.get("last_ftd") or {}
         if last.get("outcome") == "invalidated" or (ftd.get("date") and ftd.get("pressured")):
             day = last.get("date") or ftd.get("date")
             n = last.get("distribution_since", ftd.get("distribution_since"))
-            return "stop", (f"Thị trường điều chỉnh — FTD {day} đã bị {n} ngày phân phối làm mất hiệu lực; "
+            return "stop", (f"Thị trường điều chỉnh — FTD {_dmy(day)} đã bị {n} ngày phân phối làm mất hiệu lực; "
                             "SEPA không mở vị thế mới")
         if last.get("outcome") == "failed":
-            return "stop", (f"Thị trường điều chỉnh — FTD {last['date']} đã thất bại (thủng đáy nhịp hồi phục "
-                            f"ngày {last['on']}); SEPA không mở vị thế mới")
+            return "stop", (f"Thị trường điều chỉnh — FTD {_dmy(last['date'])} đã thất bại (thủng đáy nhịp hồi phục "
+                            f"ngày {_dmy(last['on'])}); SEPA không mở vị thế mới")
         return "stop", "Thị trường điều chỉnh — SEPA không mở vị thế mới"
     if status == "UNDER_PRESSURE":
         return "caution", "Thị trường tăng nhưng chịu áp lực — giảm số lượng và quy mô"
@@ -103,24 +109,31 @@ def assess(
     settings: Mapping[str, Any],
     market: Mapping[str, Any] | None = None,
     recent_events: Iterable[tuple[str, str]] = (),
+    stop_breached: bool = False,
 ) -> dict[str, Any]:
     """Answer the three questions and pick a status.
 
     `recent_events` are (session date ISO, event type) within the status
     window. The most recent decisive event wins: a breakout followed by a
     failure is INVALIDATED, a failure followed by a fresh breakout is BREAKOUT.
+    A regained Trend Template cancels its earlier loss. "Vừa breakout" is never
+    shown beside a pivot above the price, and a close at or below the stop is
+    never "at the pivot" (tester N05: VGC).
     """
     trend = {"A": "PASS", "B": "NEAR"}.get(group or "", "NO")
     setup = "PASS" if base_kind in FORMING_BASES else "NO"
-    entry = entry_zone(distance_to_pivot_pct, settings)
+    entry = "STOP_BREACHED" if stop_breached else entry_zone(distance_to_pivot_pct, settings)
 
-    decisive = sorted(
-        ((d, e) for d, e in recent_events if e in INVALIDATING_EVENTS or e in VALID_BREAKOUT_EVENTS),
-        key=lambda x: x[0],
-    )
+    decisive: list[tuple[str, str]] = []
+    for d, e in sorted(recent_events, key=lambda x: x[0]):
+        if e in CANCELS:
+            decisive = [x for x in decisive if x[1] != CANCELS[e]]
+        elif e in INVALIDATING_EVENTS or e in VALID_BREAKOUT_EVENTS:
+            decisive.append((d, e))
     if decisive and decisive[-1][1] in INVALIDATING_EVENTS:
         status = INVALIDATED
-    elif decisive and decisive[-1][1] in VALID_BREAKOUT_EVENTS:
+    elif (decisive and decisive[-1][1] in VALID_BREAKOUT_EVENTS
+          and (distance_to_pivot_pct is None or distance_to_pivot_pct >= 0)):
         status = BREAKOUT_STATUS
     elif trend in ("PASS", "NEAR") and setup == "PASS" and entry == "IN_ZONE":
         status = AT_PIVOT

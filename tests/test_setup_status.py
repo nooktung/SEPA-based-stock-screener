@@ -179,3 +179,33 @@ def test_an_ftd_fails_when_the_session_low_undercuts_the_rally_low():
     r = follow_through(f, S)
     assert r["state"] == "WAIT_LOW" and r["failed"] is True and r["last_ftd"]["outcome"] == "failed"
     assert follow_through(f, with_market(ftd={"undercut_on": "close"}))["state"] == "FTD"
+
+
+# -- tester report 2 (2026-10-11) ----------------------------------------------------
+
+def test_a_breached_stop_is_never_at_the_pivot():
+    """VGC: "Ở vùng pivot" 3.5% under the pivot with the stop broken (N05)."""
+    out = assess("A", "BASE", -3.5, S, {"status": "UPTREND"}, [], stop_breached=True)
+    assert out["status"] == WATCH and out["entry"] == "STOP_BREACHED" and "thủng stop" in out["entry_text"]
+
+
+def test_a_regained_trend_template_cancels_its_loss():
+    """KSV lost TT5 on 06/10 and regained 8/8 on 07/10; its status still read "lost the template" (N05)."""
+    events = [("2026-10-06", "BREAKOUT_FAILED"), ("2026-10-06", "TREND_TEMPLATE_BROKEN"),
+              ("2026-10-07", "TREND_TEMPLATE_RESTORED")]
+    out = assess("A", "TOO_DEEP", -16, S, {"status": "UPTREND"}, events)
+    assert out["status"] == INVALIDATED and out["decided_by"] == ("2026-10-06", "BREAKOUT_FAILED")
+    out = assess("A", "BASE", -2, S, {"status": "UPTREND"},
+                 [("2026-10-06", "TREND_TEMPLATE_BROKEN"), ("2026-10-07", "TREND_TEMPLATE_RESTORED")])
+    assert out["status"] == AT_PIVOT
+
+
+def test_just_broke_out_never_sits_beside_a_pivot_above_the_price():
+    out = assess("A", "BASE", -1.1, S, {"status": "UPTREND"}, [("2026-10-07", "BREAKOUT")])
+    assert out["status"] != BREAKOUT_STATUS
+    assert assess("A", "BASE", 2.0, S, {"status": "UPTREND"}, [("2026-10-07", "BREAKOUT")])["status"] == BREAKOUT_STATUS
+
+
+def test_market_notes_write_dates_the_vietnamese_way():
+    _, text = market_note({"status": "CORRECTION", "ftd": {"date": "2026-09-30"}})
+    assert "30/09/2026" in text and "2026-09-30" not in text

@@ -29,8 +29,11 @@ from src.config import load_config
 from src.database import connect, init_db
 from src.market_calendar import price_limit_pct
 from src.quant import indicators as ind
-from src.quant.screener import market_status, read_base, screen_settings, tick_size, tracked_base, trend_template
+from src.quant.screener import (BASE_RULES, BaseRead, market_status, read_base, screen_settings, stop_breached_on,
+                                tick_size, tracked_base, trend_template)
 from src.quant.setup_status import assess, market_note
+from src.quant.vnfmt import dmy as _dmy
+from src.quant.vnfmt import num as _n
 
 # Event types, stored in alerts.alert_type
 BREAKOUT = "BREAKOUT"
@@ -76,6 +79,9 @@ class TickerState:
     held_by: str | None = None          # "BREAKOUT" or "STOP"
     ex_date: str | None = None          # a recorded ex-rights date within the volume window
     volume_note: str | None = None      # why the volume ratio could not be measured
+    stop_breached_on: str | None = None  # the session the close went to or below the stop
+    base_rules: int | None = None       # screener.BASE_RULES the base was read with
+    legacy_hold: bool = False           # pivot / stop carried from the earlier rules (legacy_hold)
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -127,16 +133,6 @@ def ex_dates(frame: pd.DataFrame, actions: Sequence[tuple[str, float]]) -> list[
         if len(later):
             out.append(later[0])
     return sorted(out)
-
-
-def _dmy(day: Any) -> str:
-    text = str(day)[:10]
-    return f"{text[8:10]}/{text[5:7]}/{text[:4]}"
-
-
-def _n(value: float, decimals: int = 0) -> str:
-    """Vietnamese number: 39.020 and 1,62 (event texts used English 39,020 and 1.62 -- tester B14)."""
-    return f"{value:,.{decimals}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
 # Base labels as the dashboard shows them (app.js BASE_TEXT), for event texts (tester B15).
@@ -233,7 +229,48 @@ def compute_state(
         held_by=base.held_by,
         ex_date=ex_date,
         volume_note=volume_note,
+        stop_breached_on=stop_breached_on(frame, base),
+        base_rules=BASE_RULES,
     )
+
+
+def legacy_hold(stored: Mapping[str, Any] | None, frame: pd.DataFrame, hold: int,
+                actions: Sequence[tuple[str, float]] = ()) -> dict[str, Any] | None:
+    """The pivot / stop the earlier base rules were holding, while that hold lasts.
+
+    A change of rules must not flip a status by itself: GMD held the 52,800 pivot of its
+    07/10 breakout, which the rules of 2026-10-11 read as 55,600. A state stored by the
+    earlier rules (no `base_rules`), or carried from one, keeps its held pivot, stop and
+    label until the hold ends (`base.hold_sessions` from `held_since`, as tracked_base),
+    a breakout hold's stop is broken, or a rescale puts the old numbers on another scale.
+    """
+    if not stored or not stored.get("held_since") or not stored.get("pivot"):
+        return None
+    if stored.get("base_rules") and not stored.get("legacy_hold"):
+        return None
+    since = str(stored["held_since"])
+    if pd.Timestamp(since) > frame.index[-1] or int((frame.index >= pd.Timestamp(since)).sum()) > hold:
+        return None
+    if any(str(through) >= since for through, _ in actions):
+        return None
+    stop = stored.get("stop")
+    if stored.get("held_by") == "BREAKOUT" and stop and float(frame["close"].iloc[-1]) < float(stop):
+        return None
+    return {"base_kind": stored.get("base_kind"), "pivot": float(stored["pivot"]),
+            "stop": float(stop) if stop else None, "held_since": since, "held_by": stored.get("held_by"),
+            "contractions": list(stored.get("contractions") or [])}
+
+
+def apply_legacy_hold(state: TickerState, frame: pd.DataFrame, held: Mapping[str, Any]) -> None:
+    close = float(frame["close"].iloc[-1])
+    state.base_kind, state.pivot, state.stop = held["base_kind"], held["pivot"], held["stop"]
+    state.held_since, state.held_by = held["held_since"], held["held_by"]
+    state.contractions = held["contractions"]
+    state.distance_to_pivot_pct = (close / state.pivot - 1) * 100.0
+    state.stop_breached = bool(state.stop) and close <= state.stop
+    state.stop_breached_on = stop_breached_on(frame, BaseRead(stop=state.stop, held_since=state.held_since,
+                                                              held_by=state.held_by))
+    state.legacy_hold = True
 
 
 def technicals(frame: pd.DataFrame, band_pct: float | None) -> dict[str, Any]:
@@ -475,11 +512,15 @@ def _frames(tickers: Sequence[str], path: Path | None) -> tuple[dict[str, pd.Dat
 
 
 def run_monitor(persist: bool = True, path: Path | None = None,
-                thresholds: Mapping[str, Any] | None = None) -> MonitorResult:
+                thresholds: Mapping[str, Any] | None = None, keep_events: bool = False) -> MonitorResult:
+    """`keep_events`: recompute the states but keep the session's stored events (a re-run
+    after a rule change: what happened on that session stays as it was recorded)."""
     screen = screen_settings(thresholds)
     mon = monitor_settings(thresholds)
     tickers, screen_rs, group = monitored_tickers(path)
     frames, exchanges = _frames(tickers, path)
+    hold = int(screen["base"].get("hold_sessions", 0) or 0)
+    stored = _latest_states(tickers, path)
 
     index_symbol = screen["market"]["index"]
     with connect(path) as conn:
@@ -512,15 +553,33 @@ def run_monitor(persist: bool = True, path: Path | None = None,
         today = compute_state(t, ex, f, index_close, screen_rs.get(t), screen, mon, ceiling=ceil[-1], actions=acts)
         before = compute_state(t, ex, f.iloc[:-1], index_close, screen_rs.get(t), screen, mon, with_tech=False,
                                ceiling=ceil[0] if len(ceil) > 1 else None, actions=acts)
+        for state, frame in ((today, f), (before, f.iloc[:-1])):
+            held = legacy_hold(stored.get(t), frame, hold, acts)
+            if held:
+                apply_legacy_hold(state, frame, held)
         result.states[t] = today
-        result.events.extend(detect_events(t, ex, f, today, before, screen, mon, result.market, actions=acts))
+        if not keep_events:
+            result.events.extend(detect_events(t, ex, f, today, before, screen, mon, result.market, actions=acts))
 
     dates = [s.trade_date for s in result.states.values()]
     result.as_of = max(dates) if dates else None
-    _assess_statuses(result, screen, mon, path)
+    _assess_statuses(result, screen, mon, path, keep_events)
     if persist:
-        _persist(result, path)
+        _persist(result, path, keep_events)
     return result
+
+
+def _latest_states(tickers: Sequence[str], path: Path | None) -> dict[str, dict[str, Any]]:
+    """Each ticker's most recent stored state (for legacy_hold)."""
+    if not tickers:
+        return {}
+    marks = ",".join("?" * len(tickers))
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"SELECT s.ticker, s.state_json FROM monitor_state s JOIN (SELECT ticker, MAX(trade_date) d FROM monitor_state "
+            f"WHERE ticker IN ({marks}) GROUP BY ticker) x ON x.ticker = s.ticker AND x.d = s.trade_date",
+            tuple(tickers)).fetchall()
+    return {t: json.loads(j) for t, j in rows}
 
 
 def _finite(value: Any) -> Any:
@@ -535,11 +594,12 @@ def _finite(value: Any) -> Any:
 
 
 def _assess_statuses(result: MonitorResult, screen: Mapping[str, Any], mon: Mapping[str, Any],
-                     path: Path | None) -> None:
+                     path: Path | None, keep_events: bool = False) -> None:
     """Status per ticker from today's events plus stored alerts of the previous sessions.
 
     Stored alerts for today's session are ignored in favour of the fresh events,
-    so a re-run after a rule change is decided by the current rules.
+    so a re-run after a rule change is decided by the current rules -- unless
+    `keep_events`, where the session's stored alerts stand.
     """
     window = int(mon["status_window_sessions"])
     today_events: dict[str, list[tuple[str, str]]] = {}
@@ -550,16 +610,19 @@ def _assess_statuses(result: MonitorResult, screen: Mapping[str, Any], mon: Mapp
             sessions = [r[0] for r in conn.execute(
                 "SELECT trade_date FROM prices_daily WHERE ticker = ? AND trade_date < ? "
                 "ORDER BY trade_date DESC LIMIT ?", (t, state.trade_date.isoformat(), window - 1))]
+            if keep_events:
+                sessions.insert(0, state.trade_date.isoformat())
             earlier: list[tuple[str, str]] = []
             for day in sessions:
                 for (kind,) in conn.execute(
                         "SELECT alert_type FROM alerts WHERE ticker = ? AND what_changed LIKE ?", (t, f"[{day}]%")):
                     earlier.append((day, kind))
             state.setup = assess(result.screen_group.get(t), state.base_kind, state.distance_to_pivot_pct,
-                                 screen, result.market, earlier + today_events.get(t, []))
+                                 screen, result.market, earlier + today_events.get(t, []),
+                                 stop_breached=state.stop_breached)
 
 
-def _persist(result: MonitorResult, path: Path | None) -> None:
+def _persist(result: MonitorResult, path: Path | None, keep_events: bool = False) -> None:
     init_db(path)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with connect(path) as conn:
@@ -570,6 +633,8 @@ def _persist(result: MonitorResult, path: Path | None) -> None:
                 "computed_at=excluded.computed_at",
                 (s.ticker, s.trade_date.isoformat(), json.dumps(_finite(s.as_dict()), ensure_ascii=False), now),
             )
+        if keep_events:
+            return
         # A re-run replaces the session's alerts for the monitored tickers, so an
         # event the current rules no longer see (e.g. after a rule change) does
         # not linger. Other sessions' alerts are untouched.
