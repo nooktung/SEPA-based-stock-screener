@@ -280,6 +280,19 @@ code when none is stored. Display only.
   the market (~1,224 read afresh, ~15 s). Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
   are ambiguous news codes (`news.ticker_aliases`); `industry --names` reads Vietnamese names
   from Vietstock's profile title once.
+- Tester report 3 (2026-10-12, `Bao_cao_kiem_thu_lan_3_SEPA_Viet_Nam.docx`, R3-01..14): status
+  APPROACHING "Sắp tới pivot" (-5%..0, `entry.approaching_pct`); AT_PIVOT is pivot..+5% only, entry
+  NO_BASE when the base is not forming. A stop counts as breached only when the close crossed it
+  after the low it rests on (`stop_breached_on`), otherwise `stop_pending` ("stop dự kiến").
+  Foreign "5 phiên" = the last five price sessions (`net5_sessions` / `net5_of`, empty sessions
+  shown). Legacy holds show `legacy_until` / `legacy_new`. `watchlist.yaml` names carry diacritics
+  and `sync_reference_data` never replaces a diacritic name with an ASCII one. A base shallower than
+  a cup but under `base.min_generic_sessions` (25) is NEAR_HIGH / SHARP_PULLBACK, not BASE (HII).
+  Criterion labels carry the TT6 threshold. Ambiguous-code mentions without stored evidence are
+  dropped; `news.alias_exclusions` keeps "Sở giao dịch Chứng khoán TP.HCM" (HOSE) off HCM. Daily
+  trendlines skip opening spikes. UI: checks popup fixed in the window, price column "Giá · %",
+  timeframe remembered per stock / index, tab clicks wired before the first load, TradingView tab
+  only for HNX / UPCoM, SEPA lessons on the Learn page.
 - Backtest (`backtest-sepa`, 1,209 tickers, 2016-2026): most rules as
   implemented show no edge over a random liquid stock; valid breakouts of 8/8
   stocks help only in an UPTREND market and hurt under pressure. Thresholds
@@ -454,7 +467,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 857 tests currently pass.
+- Run `python -m pytest -q` after every change. 873 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

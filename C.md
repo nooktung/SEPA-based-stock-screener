@@ -208,9 +208,9 @@ Hệ thống thử từng nhãn theo thứ tự, gán nhãn đầu tiên đạt:
 
 | Thứ tự | Nhãn (trên web) | Điều kiện |
 |---|---|---|
-| — | **Sát đỉnh, chưa có nền** (`NEAR_HIGH`) | Đỉnh cao nhất mới xuất hiện trong < 15 phiên, giá trong khoảng −10% đến +5% so với pivot (đỉnh + 1 bước giá) |
+| — | **Sát đỉnh, chưa có nền** (`NEAR_HIGH`) | Đỉnh cao nhất mới xuất hiện trong < 15 phiên, giá trong khoảng −10% đến +5% so với pivot (đỉnh + 1 bước giá); hoặc (từ 12/10/2026) nền sâu ≤ 33% nhưng < 25 phiên và không đạt VCP / nền phẳng / cốc, giá cách đỉnh nền ≤ 10% |
 | — | **Đã chạy xa** (`EXTENDED`) | Giá đã vượt pivot hơn 5% (quá vùng mua) |
-| — | **Vừa giảm mạnh** (`SHARP_PULLBACK`) | Đỉnh mới trong < 15 phiên nhưng giá đã thấp hơn pivot > 10% |
+| — | **Vừa giảm mạnh** (`SHARP_PULLBACK`) | Đỉnh mới trong < 15 phiên nhưng giá đã thấp hơn pivot > 10%; hoặc (từ 12/10/2026) nền < 25 phiên như trên với giá dưới đỉnh nền > 10% (HII: "nền" 19 phiên sau cú giảm 28%) |
 | — | **Thủng nền** (`BROKEN`) | Giá đóng cửa dưới đáy nền |
 | 1 | **Cốc tay cầm** (`CUP_HANDLE`) | Đạt toàn bộ quy tắc cốc **và** có tay cầm hợp lệ (7.4) |
 | 2 | **VCP** | Đạt quy tắc VCP (7.3) |
@@ -298,6 +298,11 @@ Nếu đỉnh trái của nền cao hơn pivot từ 5% web ghi "vùng cung treo"
 dashboard giữ nguyên pivot và stop của nền đó và ghi "giữ từ breakout dd/mm"; giá đóng cửa ≤ stop thì ghi
 **"đã thủng stop dd/mm"** thay cho rủi ro tới stop, và biểu đồ vẽ stop đó nét chấm màu xám. Nhờ vậy nhãn "Vừa breakout" /
 "Mất hiệu lực" luôn đi cùng đúng pivot / stop đã tạo ra nó (sửa theo báo cáo kiểm thử 11/10/2026).
+
+Từ 12/10/2026 (báo cáo kiểm thử lần 3): chỉ tính **thủng stop** khi giá đóng cửa xuống tới stop **sau** đáy mà stop dựa
+vào (đáy nhịp cuối / tay cầm / nền). Giá đã nằm dưới stop từ trước khi nền thành hình (pivot − 8% nằm trên mọi giá
+thấp hơn pivot quá 8%) thì ghi **"stop dự kiến nếu mua ở pivot"**, không phải thủng stop. Mã còn giữ pivot / stop theo
+cách tính trước 11/10 hiện "giữ tới dd/mm; theo cách tính mới: nhãn, pivot, stop".
 
 ### 8.2 Stop tham chiếu
 
@@ -506,7 +511,7 @@ Khung **"Vì sao là …"** bên dưới liệt kê ✓/✗ từng điều kiệ
 Widget chính thức của TradingView, bật sẵn MA20/50/150/200, RSI, MACD, khối lượng.
 **Chỉ hiển thị được mã HNX và UPCoM** — TradingView không cấp dữ liệu HOSE cho biểu đồ nhúng
 (bản quyền dữ liệu). Widget miễn phí cũng **không cho đổi màu MA**. Nút "Mở trên TradingView ↗"
-mở mã trên tradingview.com cho mọi sàn.
+mở mã trên tradingview.com cho mọi sàn. Từ 12/10/2026 nút chuyển sang tab này chỉ hiện với mã HNX / UPCoM.
 
 ### 12.3b Biểu đồ VN-Index
 
@@ -518,7 +523,8 @@ FTD"**: mũi tên đỏ "PP" ở mỗi ngày phân phối trong 25 phiên gần 
 ### 12.3c Khung Ngày / Tuần / Tháng (05/10/2026)
 
 Nút **Ngày | Tuần | Tháng** cạnh "Lớp hiển thị" đổi mỗi cây nến thành một phiên, một tuần (thứ Hai – thứ Sáu)
-hoặc một tháng; trình duyệt nhớ lựa chọn, dùng cho cả mã và VN-Index.
+hoặc một tháng; trình duyệt nhớ lựa chọn, riêng cho cổ phiếu và cho VN-Index (từ 12/10/2026: khung Tháng chọn ở
+VN-Index không còn mang sang chi tiết mã).
 
 | | Ngày | Tuần | Tháng |
 |---|---|---|---|
@@ -604,6 +610,9 @@ gốc) và RSS của **CafeF, Vietstock**, chỉ cho các mã đang theo dõi (8
 - Tin từ báo (cấp 3) gắn nhãn **INFERENCE** (chưa đối chiếu văn bản gốc); tin diễn đàn luôn
   là **RUMOUR**.
 - Claude Code đọc và phân tích **trong phiên khi bạn hỏi** (không dùng Claude API).
+- Mã trùng chữ thường (HCM, GAS, OIL, BIG, VND...) chỉ gắn khi có dấu hiệu ("mã HCM", "(HCM)", "HCM: ..."), tên
+  công ty hoặc tên khác (`news.ticker_aliases`). Cụm "Sở giao dịch Chứng khoán TP.HCM" là HOSE, không phải Chứng
+  khoán TP.HCM (`news.alias_exclusions`). Tin chỉ "nhắc tới" một mã như vậy mà không còn lưu bằng chứng bị gỡ.
 
 ---
 
@@ -656,13 +665,14 @@ monitor và web):
 |---|---|
 | **Xu hướng** | 8/8 Trend Template (nhóm A); nhóm B là "gần đạt" |
 | **Nền** | đang tạo nền đạt chuẩn: VCP / nền phẳng / cốc / cốc tay cầm / nền |
-| **Điểm vào** | giá trong vùng **−5% … +5% quanh pivot** (config `entry.approaching_pct`); dưới −5% = "chưa tới", trên +5% = "đã chạy xa" |
+| **Điểm vào** | giá từ **pivot tới +5%** = vùng mua ✓; **−5% … 0** = "sắp tới pivot" ~ (config `entry.approaching_pct`); dưới −5% = "chưa tới", trên +5% = "đã chạy xa"; nền không đang hình thành = "không áp dụng" |
 
-Từ đó ra **4 trạng thái** (nhãn trung tính — không phải tín hiệu mua):
+Từ đó ra **5 trạng thái** (nhãn trung tính — không phải tín hiệu mua):
 
 | Trạng thái | Khi nào |
 |---|---|
-| **Ở vùng pivot** | xu hướng ✓, nền ✓, điểm vào ✓ |
+| **Ở vùng pivot** | xu hướng ✓, nền ✓, giá từ pivot tới +5%, chưa thủng stop |
+| **Sắp tới pivot** | xu hướng ✓, nền ✓, giá dưới pivot tối đa 5% (từ 12/10/2026; trước đó gộp vào "Ở vùng pivot") |
 | **Đang theo dõi** | còn thiếu nền hoặc điểm vào |
 | **Vừa breakout** | có breakout hợp lệ trong 5 phiên gần nhất |
 | **Mất hiệu lực** | breakout thất bại / thủng stop / mất Trend Template trong 5 phiên gần nhất |
@@ -937,8 +947,9 @@ bỏ qua. Tác vụ hằng ngày chạy lệnh này sau `monitor`.
   = tổng − ngoại bán). DNSE không tách cá nhân / tổ chức / tự doanh trong nước, nên đây chỉ là phần
   còn lại sau khối ngoại; khối nội ròng luôn bằng khối ngoại ròng đổi dấu.
 - Bảng **Dòng tiền** hiện phiên gần nhất có dữ liệu; ngày màu vàng là dữ liệu cũ hơn phiên giá.
-- Thẻ **Dòng tiền** của mỗi mã: tổng ngoại ròng 1 / 5 / 10 / 20 phiên (cổ phiếu, tỷ đồng, số phiên
-  mua ròng), biểu đồ cột ngoại ròng từng phiên, bảng 20 phiên.
+- Thẻ **Dòng tiền** của mỗi mã: tổng ngoại ròng 1 / 5 / 10 / 20 **phiên giao dịch** (cổ phiếu, tỷ đồng, số phiên
+  mua ròng), biểu đồ cột ngoại ròng từng phiên, bảng mọi phiên. Phiên DNSE không có số liệu khối ngoại để trống và
+  ô tổng ghi "k/n phiên có số liệu" (trước 12/10/2026 "5 phiên" là 5 dòng có số liệu, có thể trải nhiều tuần).
 
 Chỉ hiển thị, không tính vào điểm hay nhóm.
 
@@ -946,6 +957,9 @@ Chỉ hiển thị, không tính vào điểm hay nhóm.
 
 Mục **Học** ở thanh bên, hai cột, mỗi mẫu có hình vẽ minh họa (`src/web/static/learn.js`), cách nhận
 biết, ý nghĩa, cần xác nhận gì:
+
+- **Kiến thức SEPA cốt lõi** (12/10/2026): Trend Template 8 tiêu chí, bốn giai đoạn của một cổ phiếu, pivot và
+  vùng mua, cắt lỗ 7–8%, quản trị vốn, thị trường chung.
 
 - **Mẫu hình nến** — nến đơn: thân dài (marubozu), con quay, doji, doji chuồn chuồn, doji bia mộ, búa,
   người treo cổ, búa ngược, sao băng; cụm đảo chiều tăng: nhấn chìm tăng, harami tăng, đường xuyên, sao

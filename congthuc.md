@@ -154,6 +154,9 @@ sau mỗi lượt lọc mới và ghi rõ RS của lượt nào.
 Mã mới niêm yết (< 252 phiên): chỉ đo được TT7 (so với đỉnh sau niêm yết); các tiêu chí khác ghi "chưa đo được",
 không tính là trượt.
 
+Tên tiêu chí hiện kèm ngưỡng thật lấy từ cấu hình ("Giá cao hơn đáy 52 tuần ≥ 30%"); sự kiện cũ còn ghi "≥ X%" được
+điền ngưỡng khi hiển thị (báo cáo kiểm thử lần 3, R3-07).
+
 ---
 
 ## 6. Nền giá, pivot, stop
@@ -195,6 +198,10 @@ Tất cả cách đo nền là **[TRIỂN KHAI]** của các mô tả trong sác
      SHARP_PULLBACK, TOO_DEEP, BROKEN không có (không có điểm mua ở pivot thì stop không bảo vệ gì — lựa chọn của bạn
      11/10/2026).
    - Nếu C > pivot + 5% → **EXTENDED**; nếu C < đáy nền → **BROKEN** (thủng nền).
+   - **Nền quá ngắn** (từ 12/10/2026, báo cáo kiểm thử lần 3, R3-06) [TRIỂN KHAI]: nền sâu ≤ 33% nhưng dài
+     < **25 phiên** (`base.min_generic_sessions`) và không đạt VCP / nền phẳng / cốc → không phải "nền": giá dưới đỉnh
+     nền hơn 10% (2 × vùng mua) → **SHARP_PULLBACK**, còn lại → **NEAR_HIGH**; cả hai không có stop. HII có "nền" 19
+     phiên ngay sau cú giảm 28% trong hai tuần. Nhóm A/B đổi theo ở lần lọc kế tiếp.
 5. **Cung treo** (thông tin, không đổi nhóm): đỉnh nền / pivot − 1. Từ **5%** ghi thông tin, từ **10%** cảnh báo
    (với VCP và cốc tay cầm, pivot thấp hơn đỉnh trái 3–8% là bình thường).
 
@@ -211,13 +218,20 @@ Nếu trong 5 phiên gần nhất có phiên i mà (nền đọc tới phiên i�
    trừ khi đã có một nền mới hình thành bắt đầu sau phiên i.
 Một lần đóng cửa vượt pivot của nền có đỉnh nằm ngay trong 5 phiên đó không tính là breakout (nền đọc lại sau phiên
 breakout lấy chính phiên đó làm đỉnh).
-Đã thủng stop = C hôm nay ≤ stop → hiện "đã thủng stop dd/mm" (ngày đóng cửa xuống tới stop), không hiện "rủi ro
-tới stop"; trên biểu đồ stop vẽ nét chấm màu xám.
+Đã thủng stop = C hôm nay ≤ stop và lần đóng cửa xuống tới stop xảy ra SAU đáy mà stop dựa vào (ngày muộn nhất
+   trong: đáy nhịp cuối, đáy tay cầm, đáy nền) → hiện "đã thủng stop dd/mm", không hiện "rủi ro tới stop";
+   trên biểu đồ stop vẽ nét chấm màu xám.
+Stop dự kiến (stop_pending) = C ≤ stop nhưng giá chưa từng đóng cửa trên stop sau đáy đó (stop = pivot − 8% nằm trên
+   mọi giá thấp hơn pivot quá 8%) → "stop dự kiến nếu mua ở pivot — giá đang dưới mức này"; không tính là thủng
+   stop, không gây "Mất hiệu lực"; biểu đồ vẽ nét chấm xám "stop dự kiến (nếu mua ở pivot)".
 ```
+Báo cáo kiểm thử lần 3, R3-02: HCM ghi "đã thủng stop 24/09" cho stop 25.250 chỉ có từ khi nền mới thành hình (11/10).
 **Giai đoạn chuyển sang quy tắc nền 2:** mã đang giữ pivot / stop tính theo cách cũ (trạng thái lưu không có
 `base_rules`) giữ tiếp các số đó tới hết 5 phiên giữ, hoặc tới khi đóng cửa dưới stop (giữ sau breakout), hoặc khi có
 sự kiện quyền điều chỉnh giá sau ngày bắt đầu giữ. Bộ kiểm tra bất biến (`python -m src.main check`) xếp các mã này vào
-nhóm "đang chuyển".
+nhóm "đang chuyển". Trong lúc giữ, danh sách và chi tiết mã ghi "giữ theo cách tính trước 11/10/2026 tới dd/mm; theo cách
+tính mới: nhãn, pivot, stop" (`legacy_until` đếm theo lịch giao dịch, `legacy_new`) để con số đổi không bất ngờ
+(R3-04).
 5 phiên = cửa sổ của nhãn "Vừa breakout" / "Mất hiệu lực", nên nhãn và con số luôn nói về cùng một nền
 (`sepa_screen.base.hold_sessions`). Nhóm A/B/C vẫn quyết định theo nền đọc hôm nay.
 
@@ -427,14 +441,18 @@ market-index; mã tăng đã gồm mã trần, mã giảm đã gồm mã sàn (K
 |---|---|
 | Xu hướng? | A → Đạt; B → Gần đạt; khác → Không |
 | Có nền? | Đạt nếu nhãn nền là VCP / FLAT_BASE / CUP_HANDLE / CUP / BASE |
-| Vị trí so với pivot? | khoảng cách > +5% → Đã chạy xa; < −5% → Chưa tới pivot; còn lại → Ở vùng pivot |
+| Vị trí so với pivot? | khoảng cách > +5% → Đã chạy xa; 0…+5% → **Ở vùng pivot** (vùng mua SEPA); −5%…0 → **Sắp tới pivot** (`entry.approaching_pct`); < −5% → Chưa tới pivot. Nền không đang hình thành (quá sâu, thủng nền, giảm mạnh, chưa có nền) → "Không áp dụng — pivot chỉ để tham khảo" |
 
-**4 trạng thái** (xét sự kiện quyết định gần nhất trong **5 phiên**):
+Trước 12/10/2026 "Ở vùng pivot" gồm cả −5%…0 và được đánh ✓ (ABB −4,4%, PVT −4,5% với nền quá sâu); theo SEPA dưới
+pivot là chưa có điểm mua (báo cáo kiểm thử lần 3, R3-01).
+
+**5 trạng thái** (xét sự kiện quyết định gần nhất trong **5 phiên**):
 1. **Mất hiệu lực**: sự kiện gần nhất là breakout thất bại, thủng stop, hoặc mất tiêu chí Trend Template.
    "Đạt lại tiêu chí xu hướng" sau đó **xoá** sự kiện mất tiêu chí trước nó (từ 11/10/2026).
 2. **Vừa breakout**: sự kiện gần nhất là breakout hợp lệ **và** giá hiện tại ≥ pivot đang hiển thị (từ 11/10/2026).
-3. **Ở vùng pivot**: xu hướng Đạt/Gần đạt + có nền + ở vùng pivot + **chưa thủng stop**.
-4. **Đang theo dõi**: còn lại.
+3. **Ở vùng pivot**: xu hướng Đạt/Gần đạt + có nền + giá từ pivot tới +5% + **chưa thủng stop**.
+4. **Sắp tới pivot**: như trên nhưng giá dưới pivot tối đa 5%; câu "Điểm vào" có dấu ~, chưa có điểm mua.
+5. **Đang theo dõi**: còn lại.
 
 Giá đóng cửa ≤ stop → câu "Điểm vào" ghi "Đã thủng stop — chờ nền mới" và không bao giờ là "Ở vùng pivot".
 
@@ -569,6 +587,8 @@ thế" làm tròn lên theo bước giá.
   **không giá đóng cửa nào xuyên qua đường quá 1%** giữa hai điểm neo.
 - Chọn đường có điểm neo thứ 2 gần nhất; trong số đó, đường được nhiều đỉnh/đáy chạm (trong ±1%) nhất, rồi dài nhất.
 - **Ngày phá** = phiên đầu tiên sau điểm neo 2 đóng cửa xuyên đường quá 1%; chưa phá → kéo dài thêm 20 phiên về tương lai.
+- Trên nến ngày, **phiên giật** (6.1 bước 1) được tính bằng giá đóng cửa khi tìm đỉnh swing, như khi tìm đỉnh nền
+  (R3-09: đường kháng cự của ABB neo vào phiên giá trần 09/07).
 - Độ dốc %/tháng = (độ dốc mỗi phiên × 21) / giá tại điểm neo 2 × 100.
 
 ### 16.3 Kênh giá song song
@@ -641,13 +661,17 @@ Nguồn: DNSE, theo **số cổ phiếu** từng phiên.
 ```
 Ngoại ròng (cp)      = Ngoại mua − Ngoại bán
 Ngoại ròng (đồng)    = giá trị ròng DNSE trả về
-Ngoại ròng 5 phiên   = tổng ngoại ròng 5 phiên gần nhất
+Ngoại ròng 5 phiên   = tổng ngoại ròng của 5 phiên giao dịch gần nhất (theo bảng giá), phiên DNSE không có số liệu
+                       khối ngoại không cộng gì
 Nội mua              = KL khớp phiên − Ngoại mua        (không âm)
 Nội bán              = KL khớp phiên − Ngoại bán        (không âm)
 ```
 
 "Khối nội" là phần còn lại sau khi trừ khối ngoại. DNSE không tách cá nhân / tổ chức / tự doanh trong nước,
 nên không bao giờ trình bày khối nội là "cá nhân".
+
+Bảng dòng tiền liệt kê **mọi phiên giao dịch**; phiên không có số liệu khối ngoại để trống. Khi thiếu, ô tổng ghi
+"k/5 phiên có số liệu". Trước 12/10/2026 "5 phiên" cộng 5 dòng có số liệu: của ABB trải 14/09–30/09 (R3-03).
 
 ---
 
