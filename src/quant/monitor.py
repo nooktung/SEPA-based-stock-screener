@@ -27,7 +27,7 @@ from src.collectors.refprices import _adjustments
 from src.collectors.refprices import lookup as reference_lookup
 from src.config import load_config
 from src.database import connect, init_db
-from src.market_calendar import price_limit_pct
+from src.market_calendar import next_trading_day, price_limit_pct
 from src.quant import indicators as ind
 from src.quant.screener import (BASE_RULES, BaseRead, market_status, read_base, screen_settings, stop_breached_on,
                                 tick_size, tracked_base, trend_template)
@@ -80,8 +80,11 @@ class TickerState:
     ex_date: str | None = None          # a recorded ex-rights date within the volume window
     volume_note: str | None = None      # why the volume ratio could not be measured
     stop_breached_on: str | None = None  # the session the close went to or below the stop
+    stop_pending: bool = False          # under the stop without a breach since the base formed (R3-02)
     base_rules: int | None = None       # screener.BASE_RULES the base was read with
     legacy_hold: bool = False           # pivot / stop carried from the earlier rules (legacy_hold)
+    legacy_until: str | None = None     # last session of that hold
+    legacy_new: dict[str, Any] | None = None   # what the current rules read: base_kind, pivot, stop
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -224,7 +227,8 @@ def compute_state(
         above_ma200_pct=(last / float(ma200) - 1) * 100.0 if ma200 == ma200 and ma200 else None,
         at_ceiling=at_ceiling,
         tech=technicals(frame, band) if with_tech else {},
-        stop_breached=bool(base.stop) and last <= base.stop,
+        stop_breached=stop_breached_on(frame, base) is not None,
+        stop_pending=bool(base.stop) and last <= base.stop and stop_breached_on(frame, base) is None,
         held_since=base.held_since,
         held_by=base.held_by,
         ex_date=ex_date,
@@ -256,19 +260,28 @@ def legacy_hold(stored: Mapping[str, Any] | None, frame: pd.DataFrame, hold: int
     stop = stored.get("stop")
     if stored.get("held_by") == "BREAKOUT" and stop and float(frame["close"].iloc[-1]) < float(stop):
         return None
+    held = int((frame.index >= pd.Timestamp(since)).sum())
+    until = frame.index[-1].date()
+    for _ in range(max(0, hold - held)):
+        until = next_trading_day(until)
     return {"base_kind": stored.get("base_kind"), "pivot": float(stored["pivot"]),
-            "stop": float(stop) if stop else None, "held_since": since, "held_by": stored.get("held_by")}
+            "stop": float(stop) if stop else None, "held_since": since, "held_by": stored.get("held_by"),
+            "until": until.isoformat()}
 
 
 def apply_legacy_hold(state: TickerState, frame: pd.DataFrame, held: Mapping[str, Any]) -> None:
     close = float(frame["close"].iloc[-1])
+    # What the current rules read, shown beside the carried numbers until the hold ends (R3-04).
+    state.legacy_new = {"base_kind": state.base_kind, "pivot": state.pivot, "stop": state.stop}
+    state.legacy_until = held.get("until")
     state.base_kind, state.pivot, state.stop = held["base_kind"], held["pivot"], held["stop"]
     state.held_since, state.held_by = held["held_since"], held["held_by"]
     # The contractions stay today's count: the earlier rules counted every 3% wiggle (tester M11).
     state.distance_to_pivot_pct = (close / state.pivot - 1) * 100.0
-    state.stop_breached = bool(state.stop) and close <= state.stop
     state.stop_breached_on = stop_breached_on(frame, BaseRead(stop=state.stop, held_since=state.held_since,
                                                               held_by=state.held_by))
+    state.stop_breached = state.stop_breached_on is not None
+    state.stop_pending = bool(state.stop) and close <= state.stop and not state.stop_breached
     state.legacy_hold = True
 
 

@@ -240,6 +240,12 @@ news:
     HCM: ["hsc", "chứng khoán tp.hcm", "chứng khoán tp. hcm", "chứng khoán thành phố hồ chí minh"]
     GAS: ["pv gas", "pvgas", "tổng công ty khí việt nam"]
     OIL: ["pv oil", "pvoil", "tổng công ty dầu việt nam"]
+  # Phrases that hold an alias or the company's name but name someone else; they are left out
+  # before the alias / name match. "Sở giao dịch Chứng khoán TP. HCM" is the exchange (HOSE):
+  # "KOS bị yêu cầu giải trình" was filed under HCM (tester report 3, R3-08).
+  alias_exclusions:
+    HCM: ["giao dịch chứng khoán tp.hcm", "giao dịch chứng khoán tp. hcm",
+          "giao dịch chứng khoán thành phố hồ chí minh"]
   # Sources whose articles come from a ticker's own news page: that ticker is their subject even
   # when the headline does not name it. Elsewhere (RSS) a ticker found only in the summary is a
   # "mention" -- "Một cổ phiếu bị khối ngoại xả 9.600 tỷ" (MCH) was filed under VHM (tester, B06).
@@ -325,8 +331,9 @@ sepa_screen:
   rs_tiers: {strong_leader: 90, leader: 80, qualified: 70}
 
   # Entry zone relative to the pivot (the third question, after trend and setup).
-  # Up to buy_zone_max_pct above the pivot is the buy zone [THỨ CẤP]; below
-  # approaching_pct the price has not reached the pivot yet [TRIỂN KHAI].
+  # From the pivot up to buy_zone_max_pct above it is the pivot zone [THỨ CẤP]; from
+  # approaching_pct up to the pivot the price is approaching it (status "Sắp tới pivot",
+  # tester report 3, R3-01); below approaching_pct it has not reached it yet [TRIỂN KHAI].
   entry:
     approaching_pct: -5
 
@@ -376,6 +383,10 @@ sepa_screen:
     min_leg_sessions: 2             # 2 = any high and a later low; 26/89 real legs were 2-session shakeouts
     max_base_sessions: 325          # 65 weeks
     min_base_sessions: 15           # 3 weeks
+    # A plain base (not VCP / flat / cup) needs this many sessions, like a flat base: HII read "Nền"
+    # 19 sessions after a 28% fall in two weeks (tester report 3, R3-06). Shorter: NEAR_HIGH, or
+    # SHARP_PULLBACK when the price is more than 2 x buy_zone_max_pct under the top [TRIỂN KHAI].
+    min_generic_sessions: 25
     # A base starts at its left-side high: walking back from the highest high, the earliest
     # session whose high is within this % of it, while the base from there is no deeper than
     # cup.max_depth_pct (ABB: left high 18,000 on 10/07, right high 18,200 on 18/09) [TRIỂN KHAI].

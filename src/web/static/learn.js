@@ -217,6 +217,50 @@
       confirm: "Ví dụ HID 09/2026: từ ~3.350 đ (04/09) lên đỉnh 6.040 đ (18/09) — +80% trong 10 phiên, 6 phiên tăng trần, khối lượng gấp hơn 10 lần — rồi giảm còn 4.020 đ (01/10), mất ~3/4 đoạn tăng. SEPA không mua cổ phiếu đã chạy dựng đứng không có nền; ở Việt Nam còn có rủi ro kẹt T+2 khi giảm sàn liên tiếp." },
   ];
 
+  // ---------------------------------------------------------------- SEPA basics (tester report 3, R3-13)
+  const SEPA = [
+    { name: "Trend Template — 8 tiêu chí xu hướng", en: "Minervini Trend Template", kind: "Xu hướng",
+      svg: { pts: [[0, 22], [10, 26], [20, 34], [30, 44], [40, 52], [50, 63], [60, 70], [70, 80], [80, 86], [90, 92], [100, 96]],
+        lines: [{ from: [0, 18], to: [100, 70], cls: "guide", label: "MA200 đi lên" }, { from: [0, 20], to: [100, 78], cls: "guide", label: "MA150" },
+          { from: [20, 30], to: [100, 88], cls: "pivot", label: "MA50" }],
+        labels: [{ at: [88, 92], text: "giá > MA50 > MA150 > MA200" }] },
+      how: "Giá trên MA150 và MA200; MA150 trên MA200; MA200 đi lên ≥ 1 tháng; MA50 trên MA150 và MA200; giá trên MA50; cao hơn đáy 52 tuần ≥ 30%; cách đỉnh 52 tuần ≤ 25%; RS ≥ 70.",
+      means: "Đây là điều kiện cần của một cổ phiếu dẫn dắt ở giai đoạn 2, chưa phải tín hiệu mua. Web tô 8 chấm xanh / đỏ cho từng tiêu chí.",
+      confirm: "Nhóm A = đủ 8/8; nhóm B = gần đạt và đang tạo nền [SÁCH Minervini]." },
+    { name: "Bốn giai đoạn của một cổ phiếu", en: "Stage analysis", kind: "Xu hướng",
+      svg: { pts: [[0, 30], [8, 27], [16, 31], [24, 28], [30, 32], [36, 45], [44, 62], [52, 78], [58, 88], [64, 84], [70, 90], [76, 85], [82, 70], [90, 52], [100, 38]],
+        labels: [{ at: [15, 30], text: "GĐ1 tích lũy", below: true }, { at: [46, 64], text: "GĐ2 tăng" }, { at: [70, 90], text: "GĐ3 phân phối" }, { at: [92, 50], text: "GĐ4 giảm", below: true }] },
+      how: "GĐ1: đi ngang dưới / quanh MA200 phẳng. GĐ2: giá và các đường MA đi lên, cấu trúc đỉnh / đáy cao dần. GĐ3: dao động mạnh ở vùng đỉnh, MA đi ngang. GĐ4: giá dưới MA200 đi xuống.",
+      means: "SEPA chỉ mua ở giai đoạn 2. Trend Template là cách đo giai đoạn 2 bằng con số.",
+      confirm: "Mua ở GĐ1 là chờ không biết bao lâu; mua ở GĐ3–4 là đi ngược xu hướng [SÁCH Minervini, Weinstein]." },
+    { name: "Pivot và vùng mua", en: "Pivot buy zone", kind: "Điểm mua",
+      svg: { pts: [[0, 40], [10, 85], [22, 62], [34, 80], [46, 70], [58, 78], [66, 74], [72, 77], [78, 83], [84, 88], [92, 90]],
+        lines: [{ from: [34, 79], to: [100, 79], cls: "pivot", label: "Pivot" }, { from: [74, 83], to: [100, 83], cls: "guide", label: "+5%" }],
+        labels: [{ at: [64, 74], text: "Sắp tới pivot", below: true }, { at: [86, 86], text: "Vùng mua" }] },
+      how: "Pivot = đỉnh của nhịp co hẹp cuối cộng một bước giá. Vùng mua theo SEPA là từ pivot tới cao hơn pivot 5%.",
+      means: "Dưới pivot là chưa có điểm mua (web ghi \"Sắp tới pivot\"); trên pivot quá 5% là đã chạy xa, rủi ro tới stop lớn.",
+      confirm: "Chỉ khi giá vượt pivot với khối lượng tăng và thị trường chung cho phép [SÁCH Minervini]." },
+    { name: "Cắt lỗ 7–8%", en: "Stop loss", kind: "Kỷ luật",
+      svg: { pts: [[0, 60], [15, 66], [30, 72], [42, 70], [52, 62], [62, 55], [72, 48], [82, 44], [92, 40]],
+        lines: [{ from: [30, 72], to: [100, 72], cls: "pivot", label: "Giá mua" }, { from: [30, 50], to: [100, 50], cls: "stop", label: "Stop −8%" }],
+        labels: [{ at: [80, 44], text: "bán khi đóng cửa dưới stop", below: true }] },
+      how: "Đặt mức cắt lỗ trước khi mua: dưới đáy nhịp co hẹp cuối, và không xa hơn 7–8% dưới giá mua. Web tính stop sao cho rủi ro từ pivot ≤ 8%.",
+      means: "Lỗ 8% cần lãi 8,7% để hòa; lỗ 30% cần lãi 43%. Cắt lỗ nhỏ giữ được vốn cho lần thử sau.",
+      confirm: "Không bình quân giá xuống, không dời stop xuống. Ở Việt Nam, mua phiên T sớm nhất chiều T+2 mới bán được [SÁCH Minervini]." },
+    { name: "Quản trị vốn: mua bao nhiêu", en: "Position sizing", kind: "Quản trị vốn",
+      svg: { pts: [[0, 50], [100, 50]],
+        labels: [{ at: [50, 80], text: "khối lượng = rủi ro chấp nhận / (giá mua − stop)" }, { at: [50, 40], text: "rủi ro mỗi lệnh ≈ 1–2% tài khoản", below: true }] },
+      how: "Ví dụ minh họa: tài khoản 500 triệu, chấp nhận mất 1% = 5 triệu cho một lệnh; mua 50.000 đ, stop 46.000 đ → rủi ro 4.000 đ/cp → tối đa 1.250 cp (khoảng 62,5 triệu).",
+      means: "Khối lượng mua tính từ khoảng cách tới stop, không tính theo cảm giác. Stop càng xa thì mua càng ít.",
+      confirm: "Tổng rủi ro các lệnh đang mở nên được giới hạn; khi thua liên tiếp thì giảm quy mô. Web không tính khối lượng mua cho bạn — đây chỉ là cách tính tham khảo [SÁCH Minervini]." },
+    { name: "Thị trường chung quyết định nhiều nhất", en: "Market direction", kind: "Thị trường",
+      svg: { pts: [[0, 80], [12, 70], [24, 58], [34, 46], [42, 38], [48, 42], [54, 48], [60, 56], [68, 64], [76, 72], [86, 80], [96, 88]],
+        labels: [{ at: [42, 38], text: "đáy", below: true }, { at: [60, 56], text: "FTD" }, { at: [16, 70], text: "ngày phân phối" }] },
+      how: "Theo dõi VN-Index: số ngày phân phối (giảm ≥ 0,2% với khối lượng lớn hơn phiên trước) và ngày follow-through (FTD) xác nhận nhịp hồi.",
+      means: "Khoảng 3/4 cổ phiếu đi theo thị trường chung. Backtest của web cho thấy breakout khi thị trường chịu áp lực có kết quả âm.",
+      confirm: "Thị trường điều chỉnh: SEPA không mở vị thế mới; chịu áp lực: giảm số lượng và quy mô [TRANG GỐC IBD; SÁCH Minervini]." },
+  ];
+
   function card(item, draw) {
     const kindCls = /giảm|Rủi ro/.test(item.kind) ? "k-down" : /tăng|Sức mạnh/.test(item.kind) ? "k-up" : "k-flat";
     return `<article class="lcard">
@@ -241,6 +285,8 @@
     if (!c || c.dataset.done) return;
     c.innerHTML = render(CANDLES, candleSvg);
     k.innerHTML = render(CHARTS, chartSvg);
+    const s = document.getElementById("learn-sepa");
+    if (s) s.innerHTML = render(SEPA, chartSvg);
     c.dataset.done = "1";
   };
 })();

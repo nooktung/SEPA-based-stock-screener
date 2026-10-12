@@ -5,11 +5,12 @@ apart is what stops a watch list from reading as a buy list:
 
     Trend  -- is it in Stage 2?           (Trend Template: A = 8/8, B = near)
     Setup  -- is it building a base?      (VCP / flat base / cup / base)
-    Entry  -- is price at the pivot now?  (below / in the buy zone / extended)
+    Entry  -- is price at the pivot now?  (below / approaching / in the pivot zone / extended)
 
 The status combines them with what the stock did recently:
 
-    AT_PIVOT     trend and setup in place, price in the pivot zone
+    AT_PIVOT     trend and setup in place, price from the pivot to +5% above it
+    APPROACHING  trend and setup in place, price up to 5% under the pivot (no buy point yet)
     WATCH        something is still missing (usually the entry)
     BREAKOUT     a valid breakout in the last few sessions
     INVALIDATED  a failed breakout, a breached stop or a lost Trend Template since
@@ -26,8 +27,10 @@ from typing import Any, Iterable, Mapping
 from src.quant.vnfmt import dmy as _dmy
 
 AT_PIVOT, WATCH, BREAKOUT_STATUS, INVALIDATED = "AT_PIVOT", "WATCH", "BREAKOUT", "INVALIDATED"
+APPROACHING = "APPROACHING"
 STATUS_TEXT = {
     AT_PIVOT: "Ở vùng pivot",
+    APPROACHING: "Sắp tới pivot",
     WATCH: "Đang theo dõi",
     BREAKOUT_STATUS: "Vừa breakout",
     INVALIDATED: "Mất hiệu lực",
@@ -59,18 +62,22 @@ RS_TIER_ORDER = {"STRONG_LEADER": 0, "LEADER": 1, "QUALIFIED": 2, None: 3}
 
 
 def entry_zone(distance_to_pivot_pct: float | None, settings: Mapping[str, Any]) -> str | None:
-    """'BELOW' the pivot zone, 'IN_ZONE' (pivot -x% .. buy zone), or 'EXTENDED'."""
+    """'BELOW' (more than approaching_pct under the pivot), 'APPROACHING' (up to the pivot),
+    'IN_ZONE' (the pivot to buy_zone_max_pct above it: SEPA's buy zone) or 'EXTENDED'.
+    Under the pivot is not a buy point yet (tester report 3, R3-01)."""
     if distance_to_pivot_pct is None:
         return None
     if distance_to_pivot_pct > float(settings["base"]["buy_zone_max_pct"]):
         return "EXTENDED"
     if distance_to_pivot_pct < float(settings["entry"]["approaching_pct"]):
         return "BELOW"
-    return "IN_ZONE"
+    return "APPROACHING" if distance_to_pivot_pct < 0 else "IN_ZONE"
 
 
-ENTRY_TEXT = {"BELOW": "Chưa tới pivot", "IN_ZONE": "Ở vùng pivot", "EXTENDED": "Đã chạy xa",
-              "STOP_BREACHED": "Đã thủng stop — chờ nền mới", None: "Không xác định"}
+ENTRY_TEXT = {"BELOW": "Chưa tới pivot", "APPROACHING": "Sắp tới pivot — giá dưới pivot tối đa 5%, chưa có điểm mua",
+              "IN_ZONE": "Ở vùng pivot — từ pivot tới +5%", "EXTENDED": "Đã chạy xa",
+              "STOP_BREACHED": "Đã thủng stop — chờ nền mới",
+              "NO_BASE": "Không áp dụng — chưa có nền đạt chuẩn, pivot chỉ để tham khảo", None: "Không xác định"}
 
 
 def market_note(market: Mapping[str, Any] | None) -> tuple[str, str]:
@@ -122,7 +129,12 @@ def assess(
     """
     trend = {"A": "PASS", "B": "NEAR"}.get(group or "", "NO")
     setup = "PASS" if base_kind in FORMING_BASES else "NO"
-    entry = "STOP_BREACHED" if stop_breached else entry_zone(distance_to_pivot_pct, settings)
+    if stop_breached:
+        entry = "STOP_BREACHED"
+    elif setup != "PASS" and base_kind not in ("NEAR_HIGH", "EXTENDED"):
+        entry = "NO_BASE"           # a too-deep or broken base's pivot is a reference only (PVT)
+    else:
+        entry = entry_zone(distance_to_pivot_pct, settings)
 
     decisive: list[tuple[str, str]] = []
     for d, e in sorted(recent_events, key=lambda x: x[0]):
@@ -137,6 +149,8 @@ def assess(
         status = BREAKOUT_STATUS
     elif trend in ("PASS", "NEAR") and setup == "PASS" and entry == "IN_ZONE":
         status = AT_PIVOT
+    elif trend in ("PASS", "NEAR") and setup == "PASS" and entry == "APPROACHING":
+        status = APPROACHING
     else:
         status = WATCH
 

@@ -10,7 +10,8 @@ the recent screen runs, and writes data/audit/invariants_<session>.json:
   legs                 no base counts more than vcp.max_contractions contractions (0 is
                        possible: a base from a left-side high whose top has not pulled back 3%)
   breakout_above_pivot "Vừa breakout" only with the close at or above the pivot
-  breached_flag        a close at or below the stop carries stop_breached
+  breached_flag        a close at or below the stop carries stop_breached, or stop_pending when it
+                       never crossed the stop after the low the stop rests on
   stop_needs_base      only a forming base has a stop
   on_tick              pivot, stop and the nearest zones sit on the exchange's tick grid
   since_screen         a move beyond since_screen_pct since a screen run, across a recorded
@@ -34,13 +35,14 @@ import pandas as pd
 from src.config import PROJECT_ROOT, load_config
 from src.database import connect
 from src.quant.screener import FORMING_BASES, round_to_tick, screen_settings
+from src.quant.vnfmt import num as _n
 
 REPORT_DIR = PROJECT_ROOT / "data" / "audit"
 TEXT = {
     "risk_8pct": "rủi ro từ pivot tới stop vượt mức tối đa",
     "legs": "số nhịp co hẹp vượt mức tối đa",
     "breakout_above_pivot": "'Vừa breakout' nhưng giá dưới pivot",
-    "breached_flag": "giá ≤ stop nhưng không có cờ đã thủng",
+    "breached_flag": "giá ≤ stop nhưng không có cờ đã thủng / stop dự kiến",
     "stop_needs_base": "có stop dù không có nền đạt chuẩn",
     "on_tick": "mức giá không nằm đúng bước giá",
     "since_screen": "'từ ngày lọc' lệch lớn qua một lần điều chỉnh quyền",
@@ -62,17 +64,18 @@ def state_violations(state: Mapping[str, Any], exchange: str | None, settings: M
     if pivot and stop:
         risk = (pivot - stop) / pivot * 100.0
         if risk > float(b["max_stop_pct"]) + 1e-9:
-            out.append(("risk_8pct", f"pivot {pivot:,.0f}, stop {stop:,.0f}: {risk:.2f}%"))
+            out.append(("risk_8pct", f"pivot {_n(pivot)}, stop {_n(stop)}: {_n(risk, 2)}%"))
     legs = len(state.get("contractions") or [])
     if legs > int(b["vcp"]["max_contractions"]):
         out.append(("legs", f"{kind}: {legs} nhịp"))
     status = (state.get("setup") or {}).get("status")
     if status == "BREAKOUT" and pivot and close is not None and close < pivot:
-        out.append(("breakout_above_pivot", f"giá {close:,.0f} < pivot {pivot:,.0f}"))
-    if stop and close is not None and close <= stop and not state.get("stop_breached"):
-        out.append(("breached_flag", f"giá {close:,.0f} ≤ stop {stop:,.0f}"))
+        out.append(("breakout_above_pivot", f"giá {_n(close)} < pivot {_n(pivot)}"))
+    if (stop and close is not None and close <= stop
+            and not state.get("stop_breached") and not state.get("stop_pending")):
+        out.append(("breached_flag", f"giá {_n(close)} ≤ stop {_n(stop)}"))
     if stop and kind not in FORMING_BASES:
-        out.append(("stop_needs_base", f"{kind}, stop {stop:,.0f}"))
+        out.append(("stop_needs_base", f"{kind}, stop {_n(stop)}"))
     for name, value in (("pivot", pivot), ("stop", stop)):
         if not _on_tick(value, exchange):
             out.append(("on_tick", f"{name} {value}"))
@@ -142,7 +145,7 @@ def run_checks(path: Path | None = None, thresholds: Mapping[str, Any] | None = 
                 continue
             across = [a for a in actions.get(row["ticker"], []) if a >= str(as_of)]
             item = {"ticker": row["ticker"], "rule": "since_screen", "text": TEXT["since_screen"],
-                    "detail": f"lượt {as_of}: {pct:+.1f}%", "session": session}
+                    "detail": f"lượt {as_of}: {'+' if pct > 0 else ''}{_n(pct, 1)}%", "session": session}
             if across:
                 violations.append({**item, "detail": item["detail"] + f", quyền sau phiên {across[0]}"})
             else:
@@ -178,7 +181,7 @@ def _market_base_checks(settings: Mapping[str, Any], session: str, violations: l
         b = read_base(f, exchanges[t], settings)
         n += 1
         state = {"close": float(f["close"].iloc[-1]), "pivot": b.pivot, "stop": b.stop, "base_kind": b.kind,
-                 "contractions": b.contractions, "stop_breached": bool(b.stop) and float(f["close"].iloc[-1]) <= b.stop}
+                 "contractions": b.contractions, "stop_breached": True}
         for rule, detail in state_violations(state, exchanges[t], settings):
             if rule in ("risk_8pct", "legs", "on_tick", "stop_needs_base") and t not in seen:
                 violations.append({"ticker": t, "rule": rule, "text": TEXT[rule] + " (toàn thị trường)",

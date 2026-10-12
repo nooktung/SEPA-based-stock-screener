@@ -460,3 +460,25 @@ def test_the_checks_route_serves_the_latest_report(db):
     out = server.api_checks({}, db)
     assert out["violations"] == 1 and out["session"] == "2026-09-25" and out["rows"][0]["ticker"] == "AAA"
     assert "/api/checks" in server.ROUTES and "/api/checks" not in server.WRITE_ROUTES
+
+
+# -- tester report 3 (2026-10-12) -----------------------------------------------------
+
+def test_the_flow_lists_every_session_and_five_sessions_mean_five_sessions(db):
+    """ABB's "5 phiên" added five stored rows spread over 14/09-30/09 (R3-03)."""
+    with connect(db) as conn:
+        for day, buy, sell in (("2026-09-25", 100, 0), ("2026-09-22", 50, 0), ("2026-09-01", 900, 0)):
+            _flow(conn, "AAA", day, buy, sell)
+    rows = server.api_flow({"ticker": "AAA", "sessions": "5"}, db)["rows"]
+    assert [r["date"] for r in rows] == ["2026-09-25", "2026-09-24", "2026-09-23", "2026-09-22", "2026-09-21"]
+    assert [r["has_flow"] for r in rows] == [True, False, False, True, False]
+    flow = server.api_stocks({}, db)[0]["flow"]
+    assert flow["net5_volume"] == 150 and flow["net5_sessions"] == 2 and flow["net5_of"] == 5   # 01/09 is left out
+
+
+def test_old_event_texts_show_the_tt6_threshold(db):
+    with connect(db) as conn:
+        conn.execute("INSERT INTO alerts (alert_id, ticker, created_at, alert_type, what_changed) VALUES "
+                     "('t6','AAA','x','TREND_TEMPLATE_BROKEN','[2026-09-25] Mất tiêu chí TT6 (Giá cao hơn đáy 52 tuần ≥ X%).')")
+    text = next(r for r in server.api_alerts({}, db) if r["alert_type"] == "TREND_TEMPLATE_BROKEN")["what_changed"]
+    assert "≥ 30%" in text and "X%" not in text

@@ -139,7 +139,10 @@ def sync_reference_data(path: Path | None = None) -> tuple[int, int]:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ticker) DO UPDATE SET
                     exchange=excluded.exchange,
-                    name=excluded.name,
+                    -- never replace a name written with diacritics by one without (tester R3-05:
+                    -- watchlist.yaml put "CTCP Chung khoan ..." back on every run)
+                    name=CASE WHEN tickers.name GLOB '*[^ -~]*' AND excluded.name NOT GLOB '*[^ -~]*'
+                              THEN tickers.name ELSE excluded.name END,
                     sector_profile=excluded.sector_profile,
                     active=excluded.active,
                     updated_at=excluded.updated_at

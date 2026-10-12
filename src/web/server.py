@@ -282,15 +282,17 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
         if st.get("legacy_hold") and state[0]["trade_date"] == bars[-1]["trade_date"]:
             # The list shows the pivot / stop held from the earlier base rules (monitor.legacy_hold); so does the chart.
             base_overlay.update({k: st.get(k) for k in ("pivot", "stop", "held_since", "held_by", "stop_breached",
-                                                        "stop_breached_on")})
+                                                        "stop_breached_on", "stop_pending", "legacy_until", "legacy_new")})
+            if st.get("base_kind"):
+                base_overlay["kind"] = st["base_kind"]      # GMD: list "Nền", chart "VCP" (R3-04)
             base_overlay["legacy_hold"] = True
     # Reference prices of the recent sessions: the header's and the legend's % follow the boards.
     refs = refprices.lookup([(ticker, b["trade_date"]) for b in bars[-60:]], path)
     closes = {b["trade_date"]: b["close"] for b in bars[-60:]}
     member = _rows("SELECT m.* FROM screen_members m JOIN screen_runs r ON r.run_id = m.run_id "
                    "WHERE m.ticker = ? ORDER BY r.created_at DESC LIMIT 1", (ticker,), path)
-    alerts = _rows("SELECT alert_type, what_changed, why_it_matters, created_at FROM alerts WHERE ticker = ? "
-                   "ORDER BY what_changed DESC LIMIT 40", (ticker,), path)
+    alerts = _fill_thresholds(_rows("SELECT alert_type, what_changed, why_it_matters, created_at FROM alerts "
+                                    "WHERE ticker = ? ORDER BY what_changed DESC LIMIT 40", (ticker,), path))
     # News about the ticker first, then articles that only mention it (tester report B06).
     news = _rows("SELECT e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, e.best_source_level, "
                  "e.assertion_type, e.what_happened, e.why_it_matters, e.direction, e.time_horizon, t.role "
@@ -562,7 +564,7 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
     last_bars: dict[str, list[dict[str, Any]]] = {}
     for r in _rows(f"SELECT ticker, trade_date, close FROM (SELECT ticker, trade_date, close, ROW_NUMBER() OVER "
                    f"(PARTITION BY ticker ORDER BY trade_date DESC) AS rn FROM prices_daily WHERE ticker IN ({marks})) "
-                   f"WHERE rn <= 2 ORDER BY trade_date DESC", tuple(order), path):
+                   f"WHERE rn <= 5 ORDER BY trade_date DESC", tuple(order), path):
         last_bars.setdefault(r["ticker"], []).append(r)
     # An older run's session close from the stored (adjusted) series: screen_members.close is on the
     # price scale of that day, so a stock dividend since then read as a fall (N01: GMD -29.9%).
@@ -601,7 +603,10 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
                 return None
             return r["foreign_buy_volume"] - r["foreign_sell_volume"]
 
-        last5 = [net_vol(r) for r in f[:5]]
+        # "5 phiên" = the ticker's last five SESSIONS, not the last five stored rows: DNSE has no
+        # snapshot for a session without foreign trading, and ABB's five rows ran 14/09-30/09 (R3-03).
+        sessions5 = {b["trade_date"] for b in (last_bars.get(t) or [])}
+        last5 = [net_vol(r) for r in f if r["trade_date"] in sessions5]
         fund = bj.get("fundamentals") or grade_ticker(t, settings, path).as_dict()
         state_date = states[t]["trade_date"] if t in states else None
         close, change, trade_date = st.get("close", m["close"] if m else None), st.get("change_pct"), state_date
@@ -640,13 +645,17 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
                      "net_value": f[0]["foreign_net_value"] if f else None,
                      "volume": f[0]["volume"] if f else None,
                      "net5_volume": sum(v for v in last5 if v is not None) if any(v is not None for v in last5) else None,
-                     "net5_value": sum(r["foreign_net_value"] or 0 for r in f[:5]) if f else None},
+                     "net5_value": (sum(r["foreign_net_value"] or 0 for r in f if r["trade_date"] in sessions5)
+                                    if last5 else None),
+                     "net5_sessions": sum(1 for v in last5 if v is not None), "net5_of": len(sessions5)},
             # From the base shown today (held after a breakout or a breach), not the screen run's:
             # the loss from a buy at the pivot to the stop. A close at or below the stop is
             # `stop_breached`, and then there is no "risk to stop" left to show.
             "risk_to_stop_pct": _risk_to_stop(st, m),
             "stop_breached": bool(st.get("stop_breached")), "stop_breached_on": st.get("stop_breached_on"),
+            "stop_pending": bool(st.get("stop_pending")),
             "held_since": st.get("held_since"), "held_by": st.get("held_by"), "legacy_hold": bool(st.get("legacy_hold")),
+            "legacy_until": st.get("legacy_until"), "legacy_new": st.get("legacy_new"),
             "locked_worst_case_pct": m["locked_worst_case_pct"] if m else None,
             "demoted": bj.get("demoted"),
             "since_screen": ({"date": run[0]["as_of_date"], "close": base_close,
@@ -723,15 +732,18 @@ def api_flow(q: dict[str, str], path: Path | None = None) -> Any:
     split domestic investors (individuals, institutions, proprietary desks) further."""
     ticker = (q.get("ticker") or "").upper()
     n = min(int(q.get("sessions", 20)), 60)
-    rows = _rows("SELECT f.trade_date, f.foreign_buy_volume AS fb, f.foreign_sell_volume AS fs, "
+    # One row per price session: a session DNSE holds no foreign snapshot for stays in the list,
+    # blank, instead of the list reaching back a month to fill N rows (ABB, tester R3-03).
+    rows = _rows("SELECT p.trade_date, f.foreign_buy_volume AS fb, f.foreign_sell_volume AS fs, "
                  "f.foreign_buy_value AS fbv, f.foreign_sell_value AS fsv, p.volume AS vol, p.close "
-                 "FROM flow_daily f LEFT JOIN prices_daily p ON p.ticker = f.scope_key AND p.trade_date = f.trade_date "
-                 "WHERE f.scope = 'TICKER' AND f.scope_key = ? ORDER BY f.trade_date DESC LIMIT ?", (ticker, n), path)
+                 "FROM (SELECT * FROM prices_daily WHERE ticker = ? ORDER BY trade_date DESC LIMIT ?) p "
+                 "LEFT JOIN flow_daily f ON f.scope = 'TICKER' AND f.scope_key = p.ticker AND f.trade_date = p.trade_date "
+                 "ORDER BY p.trade_date DESC", (ticker, n), path)
     out = []
     for r in rows:
         fb, fs, vol = r["fb"], r["fs"], r["vol"]
         out.append({
-            "date": r["trade_date"], "close": r["close"], "volume": vol,
+            "date": r["trade_date"], "close": r["close"], "volume": vol, "has_flow": fb is not None or fs is not None,
             "foreign_buy": fb, "foreign_sell": fs,
             "foreign_net": None if fb is None or fs is None else fb - fs,
             "foreign_net_value": None if r["fbv"] is None or r["fsv"] is None else r["fbv"] - r["fsv"],
@@ -741,7 +753,8 @@ def api_flow(q: dict[str, str], path: Path | None = None) -> Any:
             "domestic_sell": None if vol is None or fs is None or fs > vol else vol - fs,
         })
     return {"ticker": ticker, "rows": out,
-            "note": "Khối ngoại: DNSE (bảng khớp lệnh). Khối nội = tổng khối lượng khớp − phần khối ngoại."}
+            "note": "Khối ngoại: DNSE (bảng khớp lệnh). Khối nội = tổng khối lượng khớp − phần khối ngoại. "
+                    "Phiên để trống: DNSE không có số liệu khối ngoại (thường là không có giao dịch khối ngoại)."}
 
 
 def mylist_write(body: dict[str, Any], path: Path | None = None) -> Any:
@@ -762,14 +775,26 @@ def mylist_write(body: dict[str, Any], path: Path | None = None) -> Any:
 STOP_IN_TEXT = re.compile(r"stop tham chiếu ([\d.,]+)")
 
 
+def _fill_thresholds(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Event texts stored before 2026-10-12 read "Giá cao hơn đáy 52 tuần ≥ X%" (tester R3-07)."""
+    from src.quant.screener import criteria_labels  # noqa: PLC0415
+
+    tt6 = criteria_labels(screen_settings())["TT6"]
+    for r in rows:
+        for k in ("what_changed", "why_it_matters"):
+            if r.get(k) and "≥ X%" in r[k]:
+                r[k] = r[k].replace("Giá cao hơn đáy 52 tuần ≥ X%", tt6)
+    return rows
+
+
 def api_alerts(q: dict[str, str], path: Path | None = None) -> Any:
     """Recent events. A stop breach whose stop is not the ticker's stop shown today (or the
     ticker has none: no forming base since 2026-10-11) is `stale_stop`: the stop of an
     earlier base, labelled so on the page."""
     limit = min(int(q.get("limit", 200)), 1000)
-    rows = _rows("SELECT a.ticker, a.alert_type, a.what_changed, a.why_it_matters, a.created_at, t.exchange "
-                 "FROM alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
-                 "ORDER BY a.what_changed DESC LIMIT ?", (limit,), path)
+    rows = _fill_thresholds(_rows("SELECT a.ticker, a.alert_type, a.what_changed, a.why_it_matters, a.created_at, "
+                                  "t.exchange FROM alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
+                                  "ORDER BY a.what_changed DESC LIMIT ?", (limit,), path))
     tickers = sorted({r["ticker"] for r in rows if r["alert_type"] == "STOP_BREACHED"})
     stops: dict[str, Any] = {}
     if tickers:

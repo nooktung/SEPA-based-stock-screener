@@ -510,3 +510,36 @@ def test_swings_between_the_same_two_ticks_are_one_contraction():
     legs = major_contractions(highs, lows, 3.0)
     assert [round(d) for d, _, _ in legs] == [35, 6]          # 2,000 -> 1,300, then 1,600 (its last time) -> 1,500
     assert all(highs[b] < highs[a] for (_, a, _), (_, b, _) in zip(legs, legs[1:]))
+
+
+# -- tester report 3 (2026-10-12) -----------------------------------------------------
+
+def test_a_stop_above_the_price_before_the_base_formed_is_pending_not_breached():
+    """HCM read "stop breached 24/09" for a stop that came with a base formed later (R3-02)."""
+    closes = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 33_000, 25)) + [33_200, 33_400, 33_500]
+    f = frame_from_closes(closes, spread=0.002)
+    out = explain_base(f, "HOSE", SETTINGS)
+    assert out["stop"] and f["close"].iloc[-1] < out["stop"]
+    assert out["stop_breached"] is False and out["stop_pending"] is True and out["stop_breached_on"] is None
+
+
+def test_a_close_under_the_stop_after_the_last_low_is_a_breach():
+    closes = list(np.linspace(20_000, 40_000, 200)) + list(np.linspace(40_000, 32_000, 15)) \
+        + list(np.linspace(32_000, 39_000, 15)) + list(np.linspace(39_000, 36_000, 8)) \
+        + list(np.linspace(36_000, 38_600, 6)) + [38_400, 38_300, 38_500, 38_350, 38_450]
+    stop = explain_base(frame_from_closes(closes, spread=0.002), "HOSE", SETTINGS)["stop"]
+    f = frame_from_closes(closes + [stop * 0.97], spread=0.002)
+    out = explain_base(f, "HOSE", SETTINGS)
+    assert out["stop_breached"] and out["stop_breached_on"] == f.index[-1].date().isoformat()
+
+
+def test_a_plain_base_needs_25_sessions():
+    """HII: "Nền" 19 sessions after a 28% fall in two weeks, in group B (R3-06)."""
+    closes = list(np.linspace(20_000, 40_000, 220)) + list(np.linspace(40_000, 28_800, 10)) + [29_500, 29_000] * 4 + [29_200]
+    base = read_base(frame_from_closes(closes, spread=0.004), "HOSE", SETTINGS)
+    assert base.sessions < 25 and base.kind == "SHARP_PULLBACK" and base.stop is None
+
+
+def test_criterion_texts_carry_the_thresholds():
+    tt = trend_template(frame_from_closes(stage2_closes()), rs_rating=88, settings=SETTINGS)
+    assert tt["TT6"].as_dict()["text"] == "Giá cao hơn đáy 52 tuần ≥ 30%" and "X" not in tt["TT6"].as_dict()["text"]

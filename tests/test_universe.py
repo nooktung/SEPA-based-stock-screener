@@ -126,3 +126,20 @@ def test_a_name_with_diacritics_is_kept_over_the_same_without(tmp_path, cfg):
     sync_universe(filter_instruments(renamed, cfg), db)              # a new name with diacritics replaces it
     with connect(db) as conn:
         assert conn.execute("SELECT name FROM tickers WHERE ticker='SSI'").fetchone()[0] == "CTCP Chứng khoán SSI mới"
+
+
+
+def test_the_watchlist_never_takes_the_diacritics_off_a_name(tmp_path):
+    """watchlist.yaml put "CTCP Chung khoan TP Ho Chi Minh" back on every run (R3-05)."""
+    from src.collectors.universe import set_display_name
+    from src.database import sync_reference_data
+    db = tmp_path / "u.db"
+    init_db(db)
+    sync_reference_data(db)
+    with connect(db) as conn:
+        conn.execute("UPDATE tickers SET name = 'CTCP Chung khoan SSI' WHERE ticker = 'SSI'")
+    assert set_display_name("SSI", "CTCP Chứng khoán SSI (Vietstock)", db)
+    sync_reference_data(db)
+    with connect(db) as conn:
+        names = dict(conn.execute("SELECT ticker, name FROM tickers WHERE ticker IN ('SSI', 'HCM')"))
+    assert names["SSI"] != "CTCP Chung khoan SSI" and all(any(ord(c) > 127 for c in n) for n in names.values())

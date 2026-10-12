@@ -4,6 +4,7 @@ import pytest
 
 from src.quant.screener import follow_through, screen_settings
 from src.quant.setup_status import (
+    APPROACHING,
     AT_PIVOT,
     BREAKOUT_STATUS,
     INVALIDATED,
@@ -23,8 +24,8 @@ def test_rs_tiers(rs, tier):
     assert rs_tier(rs, S) == tier
 
 
-@pytest.mark.parametrize("dist, zone", [(-12, "BELOW"), (-5, "IN_ZONE"), (0, "IN_ZONE"), (4.9, "IN_ZONE"),
-                                        (6, "EXTENDED"), (None, None)])
+@pytest.mark.parametrize("dist, zone", [(-12, "BELOW"), (-5, "APPROACHING"), (-0.1, "APPROACHING"), (0, "IN_ZONE"),
+                                        (4.9, "IN_ZONE"), (6, "EXTENDED"), (None, None)])
 def test_entry_zone(dist, zone):
     assert entry_zone(dist, S) == zone
 
@@ -37,7 +38,19 @@ def test_a_leader_far_below_its_pivot_is_watch_not_at_pivot():
 
 
 def test_all_three_questions_answered_gives_at_pivot():
-    assert assess("B", "FLAT_BASE", -1.0, S, {"status": "UPTREND"})["status"] == AT_PIVOT
+    assert assess("B", "FLAT_BASE", 1.0, S, {"status": "UPTREND"})["status"] == AT_PIVOT
+
+
+def test_under_the_pivot_is_approaching_not_at_the_pivot():
+    """ABB -4.4% read "Ở vùng pivot"; SEPA's buy zone starts at the pivot (tester report 3, R3-01)."""
+    out = assess("A", "FLAT_BASE", -4.4, S, {"status": "UPTREND"})
+    assert out["status"] == APPROACHING and out["entry"] == "APPROACHING" and "chưa có điểm mua" in out["entry_text"]
+
+
+def test_a_too_deep_base_has_no_entry_zone():
+    """PVT (too deep, -4.5%) read "Điểm vào: Ở vùng pivot"; its pivot is a reference only (R3-01)."""
+    out = assess("A", "TOO_DEEP", -4.5, S, {"status": "UPTREND"})
+    assert out["entry"] == "NO_BASE" and out["status"] == WATCH
 
 
 def test_no_base_never_reaches_at_pivot():
@@ -195,7 +208,7 @@ def test_a_regained_trend_template_cancels_its_loss():
               ("2026-10-07", "TREND_TEMPLATE_RESTORED")]
     out = assess("A", "TOO_DEEP", -16, S, {"status": "UPTREND"}, events)
     assert out["status"] == INVALIDATED and out["decided_by"] == ("2026-10-06", "BREAKOUT_FAILED")
-    out = assess("A", "BASE", -2, S, {"status": "UPTREND"},
+    out = assess("A", "BASE", 2, S, {"status": "UPTREND"},
                  [("2026-10-06", "TREND_TEMPLATE_BROKEN"), ("2026-10-07", "TREND_TEMPLATE_RESTORED")])
     assert out["status"] == AT_PIVOT
 

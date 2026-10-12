@@ -185,8 +185,10 @@ def check_position(*, cost: float, qty: float | None, frame: pd.DataFrame, trade
         if nets:
             tot = sum(nets)
             buys = sum(1 for x in nets if x > 0)
+            gap = f"; {len(nets)}/{len(flows[:5])} phiên có số liệu khối ngoại" if len(nets) < len(flows[:5]) else ""
             items.append(_item("good" if tot > 0 else "warn" if tot < 0 else "info",
-                               f"Khối ngoại 5 phiên: ròng {'mua' if tot >= 0 else 'bán'} {_vnd(abs(tot))} cp ({buys}/{len(nets)} phiên mua ròng)."))
+                               f"Khối ngoại 5 phiên: ròng {'mua' if tot >= 0 else 'bán'} {_vnd(abs(tot))} cp "
+                               f"({buys}/{len(nets)} phiên mua ròng{gap})."))
     if items:
         sections.append({"title": "Diễn biến gần đây", "items": items})
 

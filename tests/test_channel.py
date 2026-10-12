@@ -162,3 +162,20 @@ def test_a_close_through_a_line_within_its_tolerance_is_reported():
     for line in out["trendlines"].values():
         if line["broken_on"] is None:
             assert line["close_vs_line_pct"] is not None and line["tolerance_pct"] == CFG["tolerance_pct"]
+
+
+
+def test_a_resistance_line_skips_an_opening_spike():
+    """ABB's resistance line was anchored on its 09/07 ceiling print (R3-09)."""
+    n = 200
+    close = 10_000 + 20 * np.arange(n) + 600 * np.sin(np.arange(n) / 6.0)
+    f = _frame(close)
+    i = 185
+    f.iloc[i, f.columns.get_loc("open")] = f.iloc[i, f.columns.get_loc("high")] = close[i] * 1.15
+    f.iloc[i, f.columns.get_loc("low")] = close[i] * 0.97
+    spike_day = f.index[i].date().isoformat()
+    from src.quant.channel import trend_overlays
+    plain = trend_overlays(f, CFG)["trendlines"]["RESISTANCE"]
+    assert spike_day in [a[0] for a in plain["anchors"]]                       # the raw high anchors it
+    with_rule = chart_levels(f, TH, "UPCOM")["trendlines"]["RESISTANCE"]
+    assert spike_day not in [a[0] for a in with_rule["anchors"]]

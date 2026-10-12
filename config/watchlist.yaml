@@ -11,31 +11,31 @@ default_sector_profile: generic
 securities:
   - ticker: SSI
     exchange: HOSE
-    name: CTCP Chung khoan SSI
+    name: CTCP Chứng khoán SSI
     sector_profile: securities
     active: true
 
   - ticker: VIX
     exchange: HOSE
-    name: CTCP Chung khoan VIX
+    name: CTCP Chứng khoán VIX
     sector_profile: securities
     active: true
 
   - ticker: VND
     exchange: HOSE
-    name: CTCP Chung khoan VNDIRECT
+    name: CTCP Chứng khoán VNDIRECT
     sector_profile: securities
     active: true
 
   - ticker: VCI
     exchange: HOSE
-    name: CTCP Chung khoan Vietcap
+    name: CTCP Chứng khoán Vietcap
     sector_profile: securities
     active: true
 
   - ticker: HCM
     exchange: HOSE
-    name: CTCP Chung khoan TP Ho Chi Minh
+    name: CTCP Chứng khoán Thành phố Hồ Chí Minh
     sector_profile: securities
     active: true
 

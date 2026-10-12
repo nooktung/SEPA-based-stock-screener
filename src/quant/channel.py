@@ -202,8 +202,15 @@ def parallel_channel(line: Trendline, g: Mapping[str, Any]) -> Channel:
                    position_pct=position, broken_on=line.broken_on)
 
 
-def trend_overlays(frame: pd.DataFrame, cfg: Mapping[str, Any], tf: str = "D") -> dict[str, Any]:
-    """Both trendlines and the channel of the more recent one, on bars of timeframe `tf`."""
+def trend_overlays(frame: pd.DataFrame, cfg: Mapping[str, Any], tf: str = "D",
+                   exchange: str | None = None, base: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Both trendlines and the channel of the more recent one, on bars of timeframe `tf`.
+    On daily bars an opening spike is measured at its close, as the base reader does
+    (`base.spike_bar`): ABB's resistance line was anchored on its 09/07 ceiling print (R3-09)."""
+    if tf == "D" and exchange and base and base.get("spike_bar") and len(frame) > 1:
+        from src.quant.screener import _effective_highs  # noqa: PLC0415
+
+        frame = frame.assign(high=_effective_highs(frame, exchange, base)[0])
     lines, channel = {}, None
     found = {k: trendline(frame, k, cfg, tf) for k in (SIDE_SUPPORT, SIDE_RESISTANCE)}
     for k, res in found.items():
@@ -263,7 +270,7 @@ def chart_levels(frame: pd.DataFrame, thresholds: Mapping[str, Any], exchange: s
     return {
         "zones": zones,
         "at_zone": at_zone,
-        **trend_overlays(frame, cfg),
+        **trend_overlays(frame, cfg, "D", exchange, (thresholds["sepa_screen"] or {}).get("base")),
         "note": "Trendline, kênh và vùng hỗ trợ / kháng cự mô tả nơi giá từng đảo chiều, không phải dự báo. "
                 "Phần tia kéo dài về tương lai là ước tính: bỏ các ngày nghỉ theo lịch giao dịch DNSE đã công bố, "
                 "xa hơn lịch đó chỉ bỏ thứ 7, chủ nhật.",

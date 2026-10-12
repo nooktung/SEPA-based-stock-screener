@@ -323,3 +323,15 @@ def test_keep_events_recomputes_states_and_leaves_the_sessions_alerts(db):
     assert '"base_rules": 2' in state
     decided = result.states["AAA"].setup.get("decided_by")
     assert decided is None or decided[0] in {r[1][1:11] for r in before}       # from the stored alerts
+
+
+
+def test_a_legacy_hold_says_until_when_and_what_the_current_rules_read():
+    """GMD showed the earlier rules' numbers with no word on when they would change (R3-04)."""
+    f = frame([50_000] * 40 + [53_000, 54_000, 55_000])
+    held = legacy_hold(_old_state(f.index[-3].date().isoformat()), f, 5)
+    state = compute_state("AAA", "HOSE", f, None, 90.0, SCREEN, MON)
+    now = {"base_kind": state.base_kind, "pivot": state.pivot, "stop": state.stop}
+    apply_legacy_hold(state, f, held)
+    assert state.legacy_new == now and state.pivot == 52_800
+    assert state.legacy_until and state.legacy_until > f.index[-1].date().isoformat()     # two more sessions to go

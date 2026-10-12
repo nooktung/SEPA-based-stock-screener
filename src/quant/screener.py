@@ -175,12 +175,22 @@ class Criterion:
     value: float | None
     threshold: str
     assessable: bool = True        # False: not enough history to measure (a new listing)
+    label: str | None = None       # the text with the configured threshold (TT6: "... >= 30%")
 
     def as_dict(self) -> dict[str, Any]:
         finite = self.value is not None and math.isfinite(self.value)
         return {"pass": self.passed if self.assessable else None,
                 "value": round(self.value, 2) if finite else None,
-                "threshold": self.threshold, "text": CRITERIA_TEXT[self.code]}
+                "threshold": self.threshold, "text": self.label or CRITERIA_TEXT[self.code]}
+
+
+def criteria_labels(settings: Mapping[str, Any]) -> dict[str, str]:
+    """Criterion texts with the thresholds in force ("≥ X%" was left unfilled -- tester R3-07)."""
+    tt = settings["trend_template"]
+    return {**CRITERIA_TEXT,
+            "TT6": f"Giá cao hơn đáy 52 tuần ≥ {_n(float(tt['above_52w_low_pct']))}%",
+            "TT7": f"Giá cách đỉnh 52 tuần ≤ {_n(float(tt['within_52w_high_pct']))}%",
+            "TT8": f"RS Rating ≥ {_n(float(tt['min_rs_rating']))}"}
 
 
 def trend_template(frame: pd.DataFrame, rs_rating: float | None, settings: Mapping[str, Any]) -> dict[str, Criterion]:
@@ -198,8 +208,9 @@ def trend_template(frame: pd.DataFrame, rs_rating: float | None, settings: Mappi
     below_high_pct = (1 - last / high_52w) * 100.0 if high_52w else None
     ma200_rise_pct = (ma200 / ma200_then - 1) * 100.0 if ma200_then == ma200_then and ma200_then else None
     min_rs = float(tt["min_rs_rating"])
+    labels = criteria_labels(settings)
 
-    return {
+    out = {
         "TT1": Criterion("TT1", last > ma150 and last > ma200, (last / max(ma150, ma200) - 1) * 100.0, "> 0% trên MA150/MA200"),
         "TT2": Criterion("TT2", ma150 > ma200, (ma150 / ma200 - 1) * 100.0, "> 0%"),
         "TT3": Criterion("TT3", ma200_rise_pct is not None and ma200_rise_pct > 0, ma200_rise_pct,
@@ -212,6 +223,9 @@ def trend_template(frame: pd.DataFrame, rs_rating: float | None, settings: Mappi
                          below_high_pct, f"<= {tt['within_52w_high_pct']}% dưới đỉnh"),
         "TT8": Criterion("TT8", rs_rating is not None and rs_rating >= min_rs, rs_rating, f">= {min_rs:.0f}"),
     }
+    for code, c in out.items():
+        c.label = labels[code]
+    return out
 
 
 def ma200_rising_preferred(frame: pd.DataFrame, settings: Mapping[str, Any]) -> bool | None:
@@ -720,6 +734,15 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
         # Cup without handle: buy point = the base's high + one tick (IBD: the left-side high).
         read.pivot = top + tick
         read.stop = read.pivot * (1 - max_stop / 100.0)
+    elif read.depth_pct <= float(cup["max_depth_pct"]) and read.sessions < int(b.get("min_generic_sessions", 0) or 0):
+        # Too short for a base of its own (HII: 19 sessions after a 28% fall in two weeks; R3-06).
+        if (last / top - 1) * 100.0 < -2 * float(b["buy_zone_max_pct"]):
+            read.kind = "SHARP_PULLBACK"
+            read.notes.append(f"giảm mạnh từ đỉnh, nền mới {read.sessions} phiên "
+                              f"(cần ≥ {b['min_generic_sessions']} phiên để là một nền)")
+        else:
+            read.kind = "NEAR_HIGH"
+            read.notes.append(f"nền mới {read.sessions} phiên, chưa đủ {b['min_generic_sessions']} phiên")
     elif read.depth_pct <= float(cup["max_depth_pct"]):
         read.kind = "BASE"
         if c is not None:
@@ -746,7 +769,14 @@ def _read_base_raw(frame: pd.DataFrame, exchange: str, settings: Mapping[str, An
 
 def stop_breached_on(frame: pd.DataFrame, read: BaseRead) -> str | None:
     """The session the close went from above the stop to at or below it, while it still is
-    (tester M01: the chart drew KSV's stop above the price as if it still held)."""
+    (tester M01: the chart drew KSV's stop above the price as if it still held).
+
+    Only a crossing AFTER the low the stop rests on counts (the last contraction's, the
+    handle's or the base's low): before that low the base was still falling into shape,
+    and a stop of pivot - 8% sits above any price more than 8% under the pivot. HCM read
+    "stop breached 24/09" for a stop that existed only once its base had formed (R3-02);
+    that is a pending stop (`stop_pending`), not a breach.
+    """
     if not read.stop:
         return None
     close = frame["close"].to_numpy(dtype="float64")
@@ -754,9 +784,12 @@ def stop_breached_on(frame: pd.DataFrame, read: BaseRead) -> str | None:
         return None
     if read.held_by == "STOP" and read.held_since:
         return read.held_since
+    anchor = max((d for d in ((read.legs[-1]["low_date"] if read.legs else None), read.low_date,
+                              read.handle_low_date) if d), default=None)
     for i in range(len(close) - 1, 0, -1):
         if close[i] <= read.stop < close[i - 1]:
-            return frame.index[i].date().isoformat()
+            day = frame.index[i].date().isoformat()
+            return day if anchor is None or day > anchor else None
     return None
 
 
@@ -795,8 +828,10 @@ def explain_base(frame: pd.DataFrame, exchange: str, settings: Mapping[str, Any]
         "right_lip_date", "right_lip", "handle_low_date", "handle_low", "held_since", "held_by",
         "legs", "spike_dates", "rules")}
     last = float(frame["close"].iloc[-1])
-    out["stop_breached"] = bool(read.stop) and last <= read.stop
-    out["stop_breached_on"] = stop_breached_on(frame, read) if out["stop_breached"] else None
+    out["stop_breached_on"] = stop_breached_on(frame, read)
+    out["stop_breached"] = out["stop_breached_on"] is not None
+    # Under the stop without having crossed it since the base formed: the stop for a buy at the pivot.
+    out["stop_pending"] = bool(read.stop) and last <= read.stop and not out["stop_breached"]
     out["contractions"] = [round(x, 1) for x in read.contractions]
     # Supply overhead: the left-side high above the pivot (tester M04). Normal in a VCP or a
     # cup with handle; information from overhead_info_pct, a warning from overhead_warn_pct.
@@ -1410,7 +1445,7 @@ def run_screen(as_of: date | None = None, persist: bool = True, path: Path | Non
             if held.held_since:
                 c.base = held
         c.setup = assess(c.group, c.base.kind, c.base.distance_to_pivot_pct, settings, market,
-                         stop_breached=bool(c.base.stop) and c.close <= c.base.stop)
+                         stop_breached=f is not None and stop_breached_on(f, c.base) is not None)
 
     last_session = max((f.index[-1].date() for f in clean.values()), default=as_of)
     result = ScreenResult(uuid.uuid4().hex[:16], last_session, funnel, exclusions, market, members,

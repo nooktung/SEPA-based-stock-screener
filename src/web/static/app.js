@@ -38,8 +38,12 @@ const EVENT_TEXT = {
   SETUP_READY: "Nền sẵn sàng", CLIMAX_WARNING: "Cảnh báo tăng nóng (climax)",
 };
 const MARKET_TEXT = { UPTREND: "Xu hướng tăng", UNDER_PRESSURE: "Tăng nhưng chịu áp lực", CORRECTION: "Đang điều chỉnh", MIXED: "Trung tính", UNKNOWN: "Chưa rõ" };
-const STATUS_LABEL = { AT_PIVOT: "Ở vùng pivot", BREAKOUT: "Vừa breakout", WATCH: "Đang theo dõi", INVALIDATED: "Mất hiệu lực" };
-const STATUS_ORDER = { AT_PIVOT: 0, BREAKOUT: 1, WATCH: 2, INVALIDATED: 3 };
+// "Ở vùng pivot" = from the pivot to +5% (SEPA's buy zone); under the pivot is "Sắp tới pivot" (tester R3-01).
+const STATUS_LABEL = { AT_PIVOT: "Ở vùng pivot", BREAKOUT: "Vừa breakout", APPROACHING: "Sắp tới pivot", WATCH: "Đang theo dõi", INVALIDATED: "Mất hiệu lực" };
+const STATUS_ORDER = { AT_PIVOT: 0, BREAKOUT: 1, APPROACHING: 2, WATCH: 3, INVALIDATED: 4 };
+const STATUS_TITLE = { AT_PIVOT: "Giá từ pivot tới +5% (vùng mua theo SEPA) — không phải tín hiệu mua",
+  APPROACHING: "Giá dưới pivot tối đa 5%: chưa có điểm mua, chờ vượt pivot", BREAKOUT: "Breakout hợp lệ trong 5 phiên, giá vẫn trên pivot",
+  WATCH: "Còn thiếu xu hướng, nền hoặc điểm vào", INVALIDATED: "Breakout thất bại, thủng stop hoặc mất tiêu chí xu hướng trong 5 phiên" };
 const TIER_LABEL = { STRONG_LEADER: "Dẫn dắt mạnh", LEADER: "Dẫn dắt", QUALIFIED: "Đạt" };
 const LIQ_LABEL = { HIGH: "Cao", GOOD: "Khá", LOW: "Thấp", UNDER: "Dưới 3 tỷ" };
 const LIQ_TITLE = { HIGH: "Giá trị giao dịch ≥ 10 tỷ đồng/phiên", GOOD: "8–10 tỷ đồng/phiên",
@@ -52,7 +56,7 @@ const liqOf = (r) => r.liquidity_tier || (r.liquidity_vnd != null ? "UNDER" : ""
 const liqBadge = (tier) => tier ? `<span class="lq lq-${esc(tier)}" title="${esc(LIQ_TITLE[tier] || "")}">${esc(LIQ_LABEL[tier] || tier)}</span>` : "";
 const fundClass = (g) => (g === "A+" ? "Ap" : g || "");
 const fundBadge = (f) => `<span class="fg fg-${esc(fundClass(f && f.grade))}" title="${esc((f && f.grade_text ? f.grade_text + ((f.reasons || []).length ? " — " + f.reasons.join("; ") : "") : "") || "chưa có dữ liệu")}">${esc(FUND_LABEL[f && f.grade] || "–")}</span>`;
-const stBadge = (st) => (st ? `<span class="stbadge st-${esc(st)}">${esc(STATUS_LABEL[st] || st)}</span>` : '<span class="muted">–</span>');
+const stBadge = (st) => (st ? `<span class="stbadge st-${esc(st)}" title="${esc(STATUS_TITLE[st] || "")}">${esc(STATUS_LABEL[st] || st)}</span>` : '<span class="muted">–</span>');
 // Company logo (python -m src.main logos); a tinted tile with the code when none is stored.
 const hue = (t) => [...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
 const logoTile = (t, size = "") => (state.logos.has(t)
@@ -120,7 +124,20 @@ async function loadChecks() {
     `<tr data-t="${esc(r.ticker)}"><td><span class="tk">${esc(r.ticker)}</span></td><td>${esc(r.kind)}</td><td>${esc(r.text)}</td><td class="muted">${esc(vnText(r.detail))}</td></tr>`).join("")}</tbody></table>
     <p class="sub">"Đang chuyển": pivot / stop còn tính theo cách trước ngày 11/10/2026, giữ tới hết thời gian giữ (5 phiên).</p>`
     : `<p class="muted">Không có vi phạm (${c.checked} mã theo dõi${c.market_checked ? `, quy tắc nền trên ${c.market_checked} mã toàn thị trường` : ""}).</p>`;
-  el.onclick = () => { $("#checks-pop").hidden = !$("#checks-pop").hidden; };
+  // Placed inside the window from the line's position: anchored to the card it ran off the left edge (R3-10).
+  el.onclick = (e) => {
+    e.stopPropagation();
+    const pop = $("#checks-pop"), open = pop.hidden;
+    pop.hidden = !open;
+    if (!open) return;
+    const r = el.getBoundingClientRect(), w = Math.min(680, innerWidth - 16);
+    pop.style.width = `${w}px`;
+    pop.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
+    pop.style.top = `${r.bottom + 6}px`;
+    pop.style.maxHeight = `${Math.max(160, innerHeight - r.bottom - 24)}px`;
+  };
+  $("#checks-pop").onclick = (e) => e.stopPropagation();
+  document.addEventListener("click", () => { $("#checks-pop").hidden = true; });
 }
 
 // Advancers / unchanged / decliners of the session (DNSE market-index). Advancers include
@@ -333,6 +350,16 @@ const midCell = (v, d, lo, hi) => {
   return `<span class="${r > 50 ? "pos" : r < 50 ? "neg" : "zero"}${r >= hi || r <= lo ? " ext" : ""}">${fmt(r, d)}</span>`;
 };
 const fl = (r) => r.flow || {};
+// A pivot / stop still held from the rules before 11/10/2026, and what the current rules read (tester R3-04).
+const legacyNote = (r) => {
+  if (!r.legacy_hold) return "";
+  const n = r.legacy_new || {};
+  const now = `Theo cách tính mới: ${BASE_TEXT[n.base_kind] || n.base_kind || "–"}, pivot ${fmt(n.pivot)}, stop ${n.stop ? fmt(n.stop) : "–"}`;
+  return `<span class="stale" title="${esc(now)}. Số cũ được giữ tới hết 5 phiên sau sự kiện để trạng thái không đổi chỉ vì đổi cách tính.">giữ số cũ${r.legacy_until ? " tới " + dm(r.legacy_until) : ""}</span>`;
+};
+// "5 phiên" counts the ticker's last five sessions; a session DNSE has no foreign figures for stays out (R3-03).
+const flowGap = (f) => (f.net5_of && f.net5_sessions < f.net5_of
+  ? ` <span class="stale" title="DNSE không có số liệu khối ngoại cho ${f.net5_of - f.net5_sessions} trong ${f.net5_of} phiên gần nhất (thường là không có giao dịch khối ngoại)">${f.net5_sessions}/${f.net5_of} phiên có số liệu</span>` : "");
 // A recent listing has only TT7 measurable: "1/8" would read as weak (tester B23).
 // A stock that trades on few days is not a new listing (tester N04: BHP); the snapshot says which.
 const ttText = (r) => ((r.not_assessable || []).length >= 6
@@ -348,20 +375,20 @@ const val = (key) => (r) => (techOf(r).values || {})[key];
 const COLS = {
   overview: [
     { k: "ticker", label: "Mã", cell: tickerCell, sort: (r) => r.ticker, text: true },
-    { k: "close", label: "Giá", num: true, title: "Giá đóng cửa phiên gần nhất và % so với giá tham chiếu, như bảng giá", cell: priceCell, sort: (r) => r.change_pct },
+    { k: "close", label: "Giá · %", num: true, title: "Giá đóng cửa phiên gần nhất và % so với giá tham chiếu, như bảng giá. Bấm để sắp xếp theo % thay đổi", cell: priceCell, sort: (r) => r.change_pct },
     { k: "rs", label: "RS", num: true, title: "Sức mạnh giá 1–99 so với mọi mã đủ dữ liệu trên thị trường (99 = mạnh nhất)", cell: (r) => `<b>${fmt(r.rs_rating)}</b>`, sort: (r) => r.rs_rating },
     { k: "tt", label: "Xu hướng", title: "8 tiêu chí xu hướng (Trend Template): xanh = đạt, đỏ = chưa đạt, xám = chưa đủ dữ liệu",
       cell: (r) => `<div class="two">${dotsOf(r)}<span class="muted">${ttText(r)}</span></div>`, sort: (r) => r.tt_passed },
     { k: "base", label: "Nền giá", title: "Dạng nền đang hình thành và khoảng cách tới pivot (điểm phá nền)",
       cell: (r) => `<div class="two"><span>${esc(BASE_TEXT[r.base_kind] || r.base_kind || "–")}</span>${r.pivot ? `<span class="muted">pivot ${fmt(r.pivot)} · <span class="${r.distance > 0 ? "pos" : ""}">${pct(r.distance)}</span></span>` : ""}${r.stop_breached
-        ? `<span class="neg small" title="Giá đóng cửa ở hoặc dưới stop tham chiếu ${fmt(r.stop)}">thủng stop${r.stop_breached_on ? " " + dm(r.stop_breached_on) : ""}</span>` : ""}</div>`,
+        ? `<span class="neg small" title="Giá đóng cửa ở hoặc dưới stop tham chiếu ${fmt(r.stop)}">thủng stop${r.stop_breached_on ? " " + dm(r.stop_breached_on) : ""}</span>` : ""}${legacyNote(r)}</div>`,
       sort: (r) => (r.distance == null ? null : -Math.abs(r.distance)) },
     { k: "status", label: "Trạng thái", title: "Vị trí trong quy trình SEPA — không phải tín hiệu mua", cell: (r) => stBadge((r.setup || {}).status), sort: (r) => STATUS_ORDER[(r.setup || {}).status] ?? 9, text: true },
     { k: "fnet", label: "Khối ngoại", num: true, title: "Khối ngoại mua − bán (cổ phiếu), phiên gần nhất và cộng dồn 5 phiên",
       cell: (r) => fl(r).net_volume == null ? '<span class="muted">–</span>'
         : `<div class="two"><span class="${tone(fl(r).net_volume)}">${sfmt(fl(r).net_volume)}</span>${r.trade_date && fl(r).date < r.trade_date
           ? `<span class="stale" title="Chưa có dữ liệu khối ngoại của phiên ${dm(r.trade_date)}">phiên ${dm(fl(r).date)}</span>`
-          : `<span class="muted">5 phiên <span class="${tone(fl(r).net5_volume)}">${vol(fl(r).net5_volume, true)}</span></span>`}</div>`,
+          : `<span class="muted">5 phiên <span class="${tone(fl(r).net5_volume)}">${vol(fl(r).net5_volume, true)}</span>${flowGap(fl(r))}</span>`}</div>`,
       sort: (r) => fl(r).net_volume },
     { k: "liq", label: "Thanh khoản", title: "Giá trị giao dịch trung bình 20 phiên", cell: (r) => `<div class="two">${liqBadge(liqOf(r))}<span class="muted">${r.liquidity_vnd != null ? fmt(r.liquidity_vnd / 1e9, 1) + " tỷ" : ""}</span></div>`, sort: (r) => r.liquidity_vnd },
     { k: "fund", label: "Cơ bản", title: "Hạng tăng trưởng từ báo cáo tài chính quý (CafeF, chưa đối chiếu báo cáo gốc)",
@@ -390,7 +417,8 @@ const COLS = {
     { k: "fs", label: "Ngoại bán", num: true, cell: (r) => fmt(fl(r).sell_volume), sort: (r) => fl(r).sell_volume },
     { k: "fn", label: "Ngoại ròng", num: true, title: "Mua − bán (cổ phiếu)", cell: (r) => `<b class="${tone(fl(r).net_volume)}">${sfmt(fl(r).net_volume)}</b>`, sort: (r) => fl(r).net_volume },
     { k: "fv", label: "Ròng (tỷ đ)", num: true, cell: (r) => `<span class="${tone(fl(r).net_value)}">${fl(r).net_value == null ? "–" : sfmt(fl(r).net_value / 1e9, 2)}</span>`, sort: (r) => fl(r).net_value },
-    { k: "f5", label: "Ngoại ròng 5 phiên", num: true, cell: (r) => `<span class="${tone(fl(r).net5_volume)}">${sfmt(fl(r).net5_volume)}</span>`, sort: (r) => fl(r).net5_volume },
+    { k: "f5", label: "Ngoại ròng 5 phiên", num: true, title: "Tổng 5 phiên giao dịch gần nhất; phiên không có số liệu khối ngoại không được cộng",
+      cell: (r) => `<div class="two"><span class="${tone(fl(r).net5_volume)}">${sfmt(fl(r).net5_volume)}</span>${flowGap(fl(r))}</div>`, sort: (r) => fl(r).net5_volume },
     { k: "db", label: "Nội mua", num: true, title: "Tổng khối lượng khớp − phần khối ngoại mua", cell: (r) => fmt(domBuy(r)), sort: domBuy },
     { k: "ds", label: "Nội bán", num: true, title: "Tổng khối lượng khớp − phần khối ngoại bán", cell: (r) => fmt(domSell(r)), sort: domSell },
   ],
@@ -547,9 +575,11 @@ function baseHtml(s) {
     <span>Dạng nền <b>${esc(BASE_TEXT[s.base_kind] || s.base_kind)}</b></span>
     <span>Pivot <b>${fmt(s.pivot)}</b> · giá cách pivot <b>${pct(s.distance_to_pivot_pct)}</b>${s.held_since
       ? ` <small class="muted" title="Sau breakout hoặc khi thủng stop, pivot và stop của nền đó được giữ ${HOLD_TEXT} để nhãn trạng thái và con số luôn khớp nhau">· giữ từ ${s.held_by === "STOP" ? "phiên thủng stop" : "breakout"} ${dmy(s.held_since)}</small>` : ""}</span>
-    <span>Stop tham chiếu <b>${s.stop ? fmt(s.stop) : "–"}</b>${s.stop_breached ? ` · <b class="neg">đã thủng stop${s.stop_breached_on ? " " + dmy(s.stop_breached_on) : ""}</b>` : ""}${s.stop
+    <span>Stop tham chiếu <b>${s.stop ? fmt(s.stop) : "–"}</b>${s.stop_breached ? ` · <b class="neg">đã thủng stop${s.stop_breached_on ? " " + dmy(s.stop_breached_on) : ""}</b>` : ""}${s.stop_pending
+      ? ' · <span class="muted" title="Giá đã ở dưới mức này từ khi nền đang hình thành; stop chỉ áp dụng cho lệnh mua ở pivot">stop dự kiến nếu mua ở pivot — giá đang dưới mức này</span>' : ""}${s.stop
       ? "" : ' <small class="muted">chỉ có khi đang có nền đạt chuẩn (có điểm mua ở pivot)</small>'}</span>
-    ${s.legacy_hold ? `<span class="muted small">Pivot và stop giữ theo cách tính trước ngày 11/10/2026 tới hết thời gian giữ (${HOLD_TEXT} từ ${dmy(s.held_since)})</span>` : ""}
+    ${s.legacy_hold ? `<span class="muted small">Pivot và stop giữ theo cách tính trước ngày 11/10/2026 tới ${s.legacy_until ? dmy(s.legacy_until) : `hết ${HOLD_TEXT}`}${s.legacy_new
+      ? `; theo cách tính mới: ${esc(BASE_TEXT[s.legacy_new.base_kind] || s.legacy_new.base_kind || "–")}, pivot ${fmt(s.legacy_new.pivot)}, stop ${s.legacy_new.stop ? fmt(s.legacy_new.stop) : "–"}` : ""}</span>` : ""}
     <span>Các nhịp co hẹp chính <b>${legs.length ? `${legs.length} nhịp: ${legs.slice(-4).map((x) => fmt(x, 0)).join(" → ")}%` : "–"}</b></span>
     <span>Khối lượng cạn <b>${s.volume_dryup === true ? "có" : s.volume_dryup === false ? "chưa" : "–"}</b> · hôm nay <b>${s.volume_ratio ? fmt(s.volume_ratio, 2) + " lần trung bình" : "–"}</b></span>
     <span>So với VN-Index 63 phiên <b>${s.rs_vs_index_63d == null ? "–" : (s.rs_vs_index_63d > 0 ? "+" : "") + fmt(s.rs_vs_index_63d, 1) + " điểm %"}</b></span>
@@ -581,7 +611,7 @@ function questionsHtml(q, baseKind) {
     <div class="check">${mark(q.trend)} <span><b>Xu hướng:</b> ${esc(trendText[q.trend] || q.trend)}</span></div>
     <div class="check">${mark(q.setup === "PASS" && baseKind === "BASE" ? "NEAR" : q.setup)} <span><b>Nền giá:</b> ${q.setup !== "PASS" ? "chưa có nền đạt chuẩn"
       : baseKind === "BASE" ? "có vùng tích lũy, chưa đạt mẫu hình chuẩn (cốc, VCP, nền phẳng)" : "đang tạo nền"}</span></div>
-    <div class="check">${mark(q.entry === "IN_ZONE" ? "PASS" : "NO")} <span><b>Điểm vào:</b> ${esc(q.entry_text || "")}</span></div>
+    <div class="check">${mark(q.entry === "IN_ZONE" ? "PASS" : q.entry === "APPROACHING" ? "NEAR" : "NO")} <span><b>Điểm vào:</b> ${esc(q.entry_text || "")}</span></div>
     <p class="q-status">${stBadge(q.status)}
       ${q.decided_by ? `<span class="muted"> theo sự kiện ${esc(EVENT_TEXT[q.decided_by[1]] || q.decided_by[1])} ngày ${dmy(q.decided_by[0])}</span>` : ""}</p>
     <p class="mkt mkt-${esc(q.market_level || "")}">${esc(q.market_note || "")}</p>
@@ -700,7 +730,10 @@ const LAYERS = [
 // Chart timeframe: daily bars come with the ticker / index payload; weekly and monthly
 // bars (and their MAs, RSI, MACD) from /api/bars, cached for the page's life.
 const TF_TEXT = { D: "ngày", W: "tuần", M: "tháng" };
-state.tf = ["D", "W", "M"].includes(store.get("sepa.tf.v1", "D")) ? store.get("sepa.tf.v1", "D") : "D";
+// The timeframe is kept apart for the index and for stocks: a month chosen on VN-Index no longer carries into a stock (R3-12).
+const tfKey = () => (state.detailKind === "index" ? "sepa.tf.index.v1" : "sepa.tf.v1");
+const loadTf = () => { const v = store.get(tfKey(), "D"); return ["D", "W", "M"].includes(v) ? v : "D"; };
+state.tf = loadTf();
 state.tfCache = {};
 state.maPeriods = { MA20: 20, MA50: 50, MA150: 150, MA200: 200 };
 const DAILY_EQUIV = { MA20: 20, MA50: 50, MA150: 150, MA200: 200 };
@@ -823,11 +856,12 @@ function drawChart(d) {
   const segment = (value, color, style, title) => price.addLineSeries({ color, lineWidth: 1, lineStyle: style,
     priceLineVisible: false, lastValueVisible: !!title, title: title || "", crosshairMarkerVisible: false })
     .setData(fromBase === lastBar ? [{ time: lastBar, value }] : [{ time: fromBase, value }, { time: lastBar, value }]);
-  const breached = stop && base.stop_breached;
-  const stopTitle = breached ? `stop đã thủng${base.stop_breached_on ? " " + dm(base.stop_breached_on) : ""}` : "stop";
+  const breached = stop && base.stop_breached, pending = stop && !breached && base.stop_pending;
+  const stopTitle = breached ? `stop đã thủng${base.stop_breached_on ? " " + dm(base.stop_breached_on) : ""}`
+    : pending ? "stop dự kiến (nếu mua ở pivot)" : "stop";
   if (L.pivot && pivot) segment(pivot, "#0ea5e9", 2, "pivot");
   // A broken stop is no longer a level under the price (tester M01): grey and dotted, and it says so.
-  if (L.pivot && stop) segment(stop, breached ? "#9aa4b2" : "#f43f5e", breached ? 1 : 2, stopTitle);
+  if (L.pivot && stop) segment(stop, breached || pending ? "#9aa4b2" : "#f43f5e", breached ? 1 : 2, stopTitle);
   const nearKey = (v) => [pivot, stop].some((k) => k && Math.abs(v / k - 1) < 0.005);   // merged into pivot / stop
   // "Sát đỉnh" and similar reads have a top but no measured base (no low): nothing to draw.
   if (L.base && base.top && base.start_date && base.low != null && base.low_date) {
@@ -933,7 +967,7 @@ function drawChart(d) {
         <span>Đóng <b>${px(b.close)}</b> <span class="${tone(chg)}">${pct(chg, 2)}</span></span><span>KL <b>${fmt(b.volume)}</b></span></div>
       <div class="lg-row">${mas}${L.rsi ? `<span><i style="background:${OSC_COLORS.RSI}"></i>RSI <b>${fmt(rsiAt.get(b.trade_date), 1)}</b></span>` : ""}
         ${L.macd ? `<span><i style="background:${OSC_COLORS.MACD}"></i>MACD <b>${mv(macdAt)}</b></span><span><i style="background:${OSC_COLORS.SIGNAL}"></i>Signal <b>${mv(sigAt)}</b></span><span>Hist <b>${mv(histAt)}</b></span>` : ""}
-        ${L.pivot && pivot ? `<span><i style="background:#0ea5e9"></i>pivot <b>${px(pivot)}</b></span>` : ""}${L.pivot && stop ? `<span><i style="background:${breached ? "#9aa4b2" : "#f43f5e"}"></i>${esc(stopTitle)} <b>${px(stop)}</b></span>` : ""}${baseLegend}</div>`;
+        ${L.pivot && pivot ? `<span><i style="background:#0ea5e9"></i>pivot <b>${px(pivot)}</b></span>` : ""}${L.pivot && stop ? `<span><i style="background:${breached || pending ? "#9aa4b2" : "#f43f5e"}"></i>${esc(stopTitle)} <b>${px(stop)}</b></span>` : ""}${baseLegend}</div>`;
   };
   legend(d.bars.length - 1);
   price.subscribeCrosshairMove((p) => {
@@ -1095,7 +1129,12 @@ function drawTradingView(ticker, exchange) {
   });
 }
 
+// TradingView's free embed refuses HOSE symbols (and so VN-Index): the switch is shown only for HNX / UPCoM;
+// "Mở trên TradingView" stays for every ticker (tester R3-14).
+const tvEmbeddable = () => state.detailKind !== "index" && ["HNX", "UPCOM"].includes((state.detailExchange || "").toUpperCase());
 function showChart(which) {
+  if (which === "tv" && !tvEmbeddable()) which = "own";
+  $(".chart-tabs").hidden = !tvEmbeddable();
   state.chartSource = which;
   $$(".chart-tabs button").forEach((c) => c.classList.toggle("on", c.dataset.chart === which));
   $("#tv-chart").hidden = which !== "tv";
@@ -1112,17 +1151,20 @@ async function loadFlow(ticker) {
   try { data = await get(`/api/flow?ticker=${encodeURIComponent(ticker)}&sessions=30`); }
   catch (err) { box.innerHTML = `<p class="warn">${esc(err.message)}</p>`; return; }
   if (state.detailTicker !== ticker) return;
-  const rows = data.rows.filter((r) => r.foreign_net != null);
+  // One row per session; a session DNSE has no foreign figures for stays, blank (tester R3-03).
+  const all = data.rows, rows = all.filter((r) => r.foreign_net != null);
   if (!rows.length) {
     box.innerHTML = `<div class="card"><p class="muted">Chưa có dữ liệu khối ngoại theo khối lượng cho ${esc(ticker)}. Chạy: python -m src.main flow --tickers ${esc(ticker)}</p></div>`;
     return;
   }
-  const sum = (n, k) => rows.slice(0, n).reduce((s, r) => s + (r[k] || 0), 0);
-  const buys = (n) => rows.slice(0, n).filter((r) => r.foreign_net > 0).length;
+  const span = (n) => all.slice(0, n).filter((r) => r.foreign_net != null);
   const card = (label, n) => {
-    const m = Math.min(n, rows.length), v = sum(m, "foreign_net"), money = sum(m, "foreign_net_value");
-    return `<div class="stat"><span class="muted small">${label}</span><b class="${tone(v)}">${sfmt(v)} cp</b>
-      <span class="small"><span class="${tone(money)}">${sfmt(money / 1e9, 2)} tỷ đ</span> · ${buys(m)}/${m} phiên mua ròng</span></div>`;
+    const got = span(n), m = Math.min(n, all.length);
+    const v = got.reduce((s, r) => s + r.foreign_net, 0), money = got.reduce((s, r) => s + (r.foreign_net_value || 0), 0);
+    const buys = got.filter((r) => r.foreign_net > 0).length;
+    return `<div class="stat"><span class="muted small">${label}</span><b class="${tone(v)}">${got.length ? sfmt(v) + " cp" : "–"}</b>
+      <span class="small"><span class="${tone(money)}">${sfmt(money / 1e9, 2)} tỷ đ</span> · ${buys}/${got.length} phiên mua ròng${got.length < m
+        ? ` · <span class="stale" title="DNSE không có số liệu khối ngoại cho các phiên còn lại (thường là không có giao dịch khối ngoại)">${got.length}/${m} phiên có số liệu</span>` : ""}</span></div>`;
   };
   const ordered = [...rows].reverse();
   const max = Math.max(...ordered.map((r) => Math.abs(r.foreign_net)), 1);
@@ -1132,14 +1174,17 @@ async function loadFlow(ticker) {
     return `<rect class="${r.foreign_net >= 0 ? "b-up" : "b-down"}" x="${(i * bw + bw * 0.15).toFixed(2)}" width="${(bw * 0.7).toFixed(2)}" y="${r.foreign_net >= 0 ? 50 - h : 50}" height="${Math.max(h, 0.6)}"><title>${dmy(r.date)}: ${sfmt(r.foreign_net)} cp</title></rect>`;
   }).join("");
   box.innerHTML = `
-    <div class="stats">${card("Phiên gần nhất · " + dm(rows[0].date), 1)}${card("5 phiên", 5)}${card("10 phiên", 10)}${card("20 phiên", 20)}</div>
+    <div class="stats">${card("Phiên gần nhất · " + dm(all[0].date), 1)}${card("5 phiên", 5)}${card("10 phiên", 10)}${card("20 phiên", 20)}</div>
     <div class="card"><div class="card-h"><h3>Khối ngoại mua ròng / bán ròng từng phiên (cổ phiếu)</h3><span class="muted small">${dm(ordered[0].date)} → ${dm(rows[0].date)}</span></div>
       <svg class="flowbars" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Biểu đồ khối ngoại ròng"><line x1="0" x2="100" y1="50" y2="50"/>${bars}</svg></div>
     <div class="card"><div class="card-h"><h3>Chi tiết từng phiên</h3></div>
       <div class="table-wrap flat"><table class="flow-table"><thead><tr><th>Phiên</th><th class="num" title="Giá đóng cửa đã điều chỉnh theo quyền (chia/thưởng cổ phiếu), nên có thể lệch bước giá và khác bảng giá ngày đó">Giá*</th><th class="num">Tổng KL khớp</th>
         <th class="num">Ngoại mua</th><th class="num">Ngoại bán</th><th class="num">Ngoại ròng</th><th class="num">Ròng (tỷ đ)</th>
         <th class="num" title="Tổng khối lượng khớp − ngoại mua">Nội mua</th><th class="num" title="Tổng khối lượng khớp − ngoại bán">Nội bán</th></tr></thead>
-      <tbody>${rows.slice(0, 20).map((r) => `<tr><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}</td>
+      <tbody>${all.slice(0, 20).map((r) => r.foreign_net == null
+        ? `<tr class="muted"><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}</td>
+          <td colspan="6" class="small">không có số liệu khối ngoại (DNSE)</td></tr>`
+        : `<tr><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}</td>
         <td class="num">${fmt(r.foreign_buy)}</td><td class="num">${fmt(r.foreign_sell)}</td>
         <td class="num"><b class="${tone(r.foreign_net)}">${sfmt(r.foreign_net)}</b></td>
         <td class="num ${tone(r.foreign_net_value)}">${r.foreign_net_value == null ? "–" : sfmt(r.foreign_net_value / 1e9, 2)}</td>
@@ -1267,6 +1312,7 @@ function showDetailPane(name) {
 
 async function openDetail(ticker) {
   state.detailKind = "stock";
+  state.tf = loadTf();
   $("#detail").classList.remove("index-mode");
   let d;
   try { d = await get(`/api/ticker?ticker=${encodeURIComponent(ticker)}`); }
@@ -1317,6 +1363,7 @@ async function openIndex() {
   let d;
   try { d = await get("/api/index"); } catch (err) { alert(err.message); return; }
   state.detail = d; state.detailKind = "index"; state.detailTicker = d.info.ticker; state.detailExchange = null; state.flowFor = null;
+  state.tf = loadTf();
   const m = d.market || {}, ftd = m.ftd || {};
   $("#detail").classList.add("index-mode");
   $("#d-logo").innerHTML = '<span class="clogo mono lg idx-logo" aria-hidden="true">VNI</span>';
@@ -1464,6 +1511,8 @@ function syncView() {
 }
 
 async function init() {
+  // Wired before the first request: a click on the menu while the page loads used to be lost (R3-12).
+  $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t)));
   try { state.logos = new Set(await get("/api/logos")); } catch { /* tiles with the code instead */ }
   const runs = await get("/api/runs");
   const runText = (r) => `${dmy(r.as_of_date)} · ${r.members} mã${r === runs[0] ? " (mới nhất)" : ""}`;
@@ -1486,7 +1535,6 @@ async function init() {
   syncView();
   $("#page-desc").textContent = $(".tab.active").dataset.desc;
 
-  $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t)));
   $("#alerts-search").addEventListener("input", (e) => { state.alerts.q = e.target.value; state.alerts.shown = ALERT_PAGE; renderAlerts(); });
   $("#alerts-more").addEventListener("click", () => { state.alerts.shown += ALERT_PAGE; renderAlerts(); });
   $("#alerts-type").addEventListener("click", (e) => {
@@ -1615,7 +1663,7 @@ async function init() {
   $("#vni").addEventListener("click", openIndex);
   $$(".tf-seg button").forEach((b) => b.addEventListener("click", () => {
     state.tf = b.dataset.tf;
-    store.set("sepa.tf.v1", state.tf);
+    store.set(tfKey(), state.tf);
     drawCurrentChart();
   }));
   $("#vni").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openIndex(); } });

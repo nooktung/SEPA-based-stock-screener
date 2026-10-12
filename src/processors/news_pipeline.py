@@ -89,9 +89,12 @@ def body_hash(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def tag_tickers(text: str, universe: set[str], names: Mapping[str, str], ambiguous: set[str],
-                aliases: Mapping[str, Sequence[str]] | None = None) -> set[str]:
+                aliases: Mapping[str, Sequence[str]] | None = None,
+                exclusions: Mapping[str, Sequence[str]] | None = None) -> set[str]:
     """Tickers a text is about. Ambiguous codes need the company's name, one of its `aliases`
-    or a cue: "mã X", "cổ phiếu X", "HOSE: X", "(X)", or "X:" opening the text (a disclosure)."""
+    or a cue: "mã X", "cổ phiếu X", "HOSE: X", "(X)", or "X:" opening the text (a disclosure).
+    A phrase in `exclusions` names someone else ("Sở giao dịch Chứng khoán TP. HCM" is HOSE)
+    and is left out before the name / alias match."""
     found: set[str] = set()
     lower = text.lower()
     for code in set(_CODE.findall(text)):
@@ -100,20 +103,24 @@ def tag_tickers(text: str, universe: set[str], names: Mapping[str, str], ambiguo
         if code in ambiguous:
             name = (names.get(code) or "").lower()
             short = _short_name(name)
+            plain = lower
+            for phrase in (exclusions or {}).get(code, ()):
+                plain = plain.replace(str(phrase).lower(), " ")
             cue = (re.search(rf"(mã|cổ phiếu|cp|hose:|hnx:|upcom:)\s*{code.lower()}\b", lower)
                    or re.search(rf"\(\s*{code}\s*\)", text) or re.match(rf"\s*{code}\s*:", text))
-            alias = any(re.search(rf"(?<!\w){re.escape(str(a).lower())}(?!\w)", lower)
+            alias = any(re.search(rf"(?<!\w){re.escape(str(a).lower())}(?!\w)", plain)
                         for a in (aliases or {}).get(code, ()))
-            if not (cue or alias or (short and short in lower)):
+            if not (cue or alias or (short and short in plain)):
                 continue
         found.add(code)
     return found
 
 
-def _tag_rules(settings: Mapping[str, Any]) -> tuple[set[str], dict[str, list[str]]]:
-    """(ambiguous codes, aliases per code) from the news settings."""
+def _tag_rules(settings: Mapping[str, Any]) -> tuple[set[str], dict[str, list[str]], dict[str, list[str]]]:
+    """(ambiguous codes, aliases per code, excluded phrases per code) from the news settings."""
     return ({str(a).upper() for a in settings.get("ambiguous_tickers", [])},
-            {str(k).upper(): list(v or []) for k, v in (settings.get("ticker_aliases") or {}).items()})
+            {str(k).upper(): list(v or []) for k, v in (settings.get("ticker_aliases") or {}).items()},
+            {str(k).upper(): list(v or []) for k, v in (settings.get("alias_exclusions") or {}).items()})
 
 
 def _short_name(name: str) -> str:
@@ -231,14 +238,15 @@ def process_articles(
         universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
         names = {r[0]: r[1] or "" for r in conn.execute("SELECT ticker, name FROM tickers")}
         known = {r[0] for r in conn.execute("SELECT article_id FROM news_articles")}
-    ambiguous, aliases = _tag_rules(settings)
+    ambiguous, aliases, exclusions = _tag_rules(settings)
 
     for article in articles:
         if article.article_id in known:
             continue
         known.add(article.article_id)
-        headline_tags = set(article.tickers_hint) | tag_tickers(article.title, universe, names, ambiguous, aliases)
-        mention_tags = tag_tickers(article.body or "", universe, names, ambiguous, aliases) - headline_tags
+        headline_tags = set(article.tickers_hint) | tag_tickers(article.title, universe, names, ambiguous, aliases,
+                                                                exclusions)
+        mention_tags = tag_tickers(article.body or "", universe, names, ambiguous, aliases, exclusions) - headline_tags
         relevant = (headline_tags | mention_tags) & focus
 
         raw_path = digest = None
@@ -448,7 +456,7 @@ def reclassify_roles(path: Path | None = None, thresholds: Mapping[str, Any] | N
     """
     settings = news_settings(thresholds)
     pages = {str(s) for s in settings.get("ticker_page_sources", [])}
-    ambiguous, aliases = _tag_rules(settings)
+    ambiguous, aliases, exclusions = _tag_rules(settings)
     changed = 0
     with connect(path) as conn:
         universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
@@ -456,7 +464,7 @@ def reclassify_roles(path: Path | None = None, thresholds: Mapping[str, Any] | N
         rows = conn.execute("SELECT t.event_id, t.ticker, e.headline, e.primary_source_id FROM event_tickers t "
                             "JOIN news_events e ON e.event_id = t.event_id WHERE t.role = 'subject'").fetchall()
         for event_id, ticker, headline, source in rows:
-            if source in pages or ticker in tag_tickers(headline or "", universe, names, ambiguous, aliases):
+            if source in pages or ticker in tag_tickers(headline or "", universe, names, ambiguous, aliases, exclusions):
                 continue
             conn.execute("UPDATE event_tickers SET role = 'mention' WHERE event_id = ? AND ticker = ?", (event_id, ticker))
             changed += 1
@@ -469,19 +477,21 @@ def retag_ambiguous(path: Path | None = None, thresholds: Mapping[str, Any] | No
     "Công an TP.HCM bắt nhiều giám đốc..." was filed under HCM (Chứng khoán HSC; tester N03).
     A link is dropped only when the code shows in the event's stored texts (headline,
     article titles, saved bodies and summaries) and none of them tags it under the current
-    rules; a link whose reason is not stored (a ticker page's own list) is kept.
+    rules. A link whose reason is not stored is kept when it is the subject (a ticker page's
+    own list) and dropped when it is only a mention: an ambiguous code needs evidence, and
+    "ĐHĐCĐ AgriS..." still read as an HCM mention from an RSS summary that was not kept (R3-08).
     Returns the number of links dropped per ticker.
     """
     settings = news_settings(thresholds)
-    ambiguous, aliases = _tag_rules(settings)
+    ambiguous, aliases, exclusions = _tag_rules(settings)
     dropped: dict[str, int] = {}
     with connect(path) as conn:
         universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
         names = {r[0]: r[1] or "" for r in conn.execute("SELECT ticker, name FROM tickers")}
         marks = ",".join("?" * len(ambiguous)) or "''"
-        links = conn.execute(f"SELECT t.event_id, t.ticker, e.headline FROM event_tickers t JOIN news_events e "
+        links = conn.execute(f"SELECT t.event_id, t.ticker, e.headline, t.role FROM event_tickers t JOIN news_events e "
                              f"ON e.event_id = t.event_id WHERE t.ticker IN ({marks})", tuple(ambiguous)).fetchall()
-        for event_id, ticker, headline in links:
+        for event_id, ticker, headline, role in links:
             texts = [headline or ""]
             for title, raw in conn.execute("SELECT title, raw_path FROM news_articles WHERE event_id = ?", (event_id,)):
                 texts.append(title or "")
@@ -492,8 +502,12 @@ def retag_ambiguous(path: Path | None = None, thresholds: Mapping[str, Any] | No
                         continue
                     texts += [str(body.get("summary") or ""), str(body.get("text") or "")]
             if not any(ticker in _CODE.findall(t) for t in texts):
-                continue                                     # the reason for the link is not stored: keep it
-            if any(ticker in tag_tickers(t, universe, names, ambiguous, aliases) for t in texts):
+                if role != "mention":
+                    continue                                 # the reason for the link is not stored: keep it
+                conn.execute("DELETE FROM event_tickers WHERE event_id = ? AND ticker = ?", (event_id, ticker))
+                dropped[ticker] = dropped.get(ticker, 0) + 1
+                continue
+            if any(ticker in tag_tickers(t, universe, names, ambiguous, aliases, exclusions) for t in texts):
                 continue
             conn.execute("DELETE FROM event_tickers WHERE event_id = ? AND ticker = ?", (event_id, ticker))
             dropped[ticker] = dropped.get(ticker, 0) + 1
