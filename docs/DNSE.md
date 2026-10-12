@@ -306,6 +306,11 @@ Handshake:
 3. Server answers `{"action":"auth_success"}`.
 4. Client sends `{"action":"subscribe","channels":[{"name":…,"symbols":[…]}]}`.
 
+Trade frames (`tick.G1.json`, read live 2026-10-12): `symbol`, `matchPrice` (thousands of VND, like REST),
+`matchQtty` and `totalVolumeTraded` (the session so far) **in units of 10 shares** on HOSE, HNX and UPCoM
+(grossTradeAmount in billions of VND / price / totalVolumeTraded = 10 on 12 tickers), `time.Seconds`
+(epoch). `ws_volume_scale: 10` in sources.yaml; `src/collectors/intraday_watch.py` applies both scales.
+
 Every data frame carries a short type tag in `T`: `t` trade, `te` trade extra,
 `q` quote, `b` forming candle, `bc` closed candle, `mi` market index, `emi`
 estimated VN30, `f` foreign flow, `sd` security definition, `e` expected price,

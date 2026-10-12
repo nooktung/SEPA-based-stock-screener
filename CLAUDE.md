@@ -28,13 +28,13 @@ execution path, and do not "temporarily" bypass it for testing.
 | 2 | Market data (DNSE REST + websocket, universe, backfill) | Done — see notes |
 | 3 | News collection, dedup, ranking | Done for the focus list (CafeF ticker pages + CafeF/Vietstock RSS) |
 | 4 | Technical / pattern engine + SEPA screener | Done (patterns backtested, see docs/PATTERNS.md; screener untested on history) |
-| 5 | Fundamental engine | Tier A: CafeF quarterly income + growth grade (`src/quant/fundamentals.py`); banks/brokers not graded yet |
+| 5 | Fundamental engine | Tier A: CafeF quarterly income + growth grade (`src/quant/fundamentals.py`); banks/brokers from VNDirect finfo on their own templates (2026-10-12); insurers not yet |
 | 6 | Macro engine | Not started |
 | 7 | Flow engine | Partial (DNSE foreign flow, breadth) |
 | 8 | Analyst layer | **Claude Code in-session, no API** — see below |
 | 9 | Decision / scoring engine | Not started |
 | 10 | 08:00 pre-market report | Not started |
-| 11 | Intraday alerts | Not started |
+| 11 | Intraday alerts | `watch` (2026-10-12): pivot / stop / MA50 crossings from the DNSE websocket, page "Trong phiên" |
 | 12 | End-of-day evaluation | Not started |
 | 13 | Backtesting, self-evaluation | Engine + SEPA rule backtest (`src/backtest/sepa.py`, report in `data/backtest/`) |
 
@@ -277,7 +277,8 @@ code when none is stored. Display only.
   stop is never AT_PIVOT, TREND_TEMPLATE_RESTORED cancels its loss, BREAKOUT needs close >= pivot.
   `python -m src.main check` (src/web/checks.py, pipeline + 15:30 job, `GET /api/checks`) checks
   the invariants on the real data: the monitored states, plus the base rules on every ticker of
-  the market (~1,224 read afresh, ~15 s). Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
+  the market (~1,224 read afresh, ~15 s). The line it had under the VN-Index card was removed at
+  the user's request (2026-10-12); the report stays in `data/audit/invariants_<session>.json`. Nearest zones among every zone, on the tick grid. HCM/GAS/OIL/BIG
   are ambiguous news codes (`news.ticker_aliases`); `industry --names` reads Vietnamese names
   from Vietstock's profile title once.
 - Tester report 3 (2026-10-12, `Bao_cao_kiem_thu_lan_3_SEPA_Viet_Nam.docx`, R3-01..14): status
@@ -293,6 +294,21 @@ code when none is stored. Display only.
   trendlines skip opening spikes. UI: checks popup fixed in the window, price column "Giá · %",
   timeframe remembered per stock / index, tab clicks wired before the first load, TradingView tab
   only for HNX / UPCoM, SEPA lessons on the Learn page.
+- 2026-10-12 additions (user asked for all four):
+  RS line (`src/quant/rs_line.py`, `rs_line` thresholds): close / VN-Index, 100 at the first point,
+  dots where the line makes a 52-week high before the price; chart layer "Đường RS" (default off)
+  and a summary under the criteria. Display only, not the RS Rating.
+  Intraday alerts (`python -m src.main watch`, `src/quant/intraday.py`, `src/collectors/intraday_watch.py`,
+  append-only `intraday_alerts`, `GET /api/intraday`, page "Trong phiên"): matched trades from the
+  DNSE websocket (read-only channels) against the last close's pivot / stop / MA50; one alert per
+  ticker, type and day; never called a breakout. DNSE websocket volumes are in units of 10 shares
+  (`ws_volume_scale` in sources.yaml, measured live on 12 tickers) -- prices in thousands as REST.
+  A HOSE / HNX ticker whose reference today differs from the stored close is not watched.
+  Banks / brokers (`vndirect_finfo` source, user decision): CafeF-rejected tickers are read from
+  `api-finfo.vndirect.com.vn` (model 102 bank, 90 securities) by item code, names checked first;
+  graded on TOI / total operating revenue with the same thresholds; first saved run dropped STB
+  (FAIL). VCP review (`data/backtest/vcp_review_2026-10-12.md`): the 8x VCPs are relabelled
+  "Nền"; nothing holds out of sample since 05/2024; thresholds unchanged.
 - Backtest (`backtest-sepa`, 1,209 tickers, 2016-2026): most rules as
   implemented show no edge over a random liquid stock; valid breakouts of 8/8
   stocks help only in an UPTREND market and hurt under pressure. Thresholds
@@ -467,7 +483,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 873 tests currently pass.
+- Run `python -m pytest -q` after every change. 896 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

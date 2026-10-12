@@ -684,6 +684,10 @@ chú thị trường (mục 10).
 
 ## 17. Cổng cơ bản (BCTC quý)
 
+Từ 12/10/2026 ngân hàng và công ty chứng khoán đọc từ VNDirect theo mẫu riêng (doanh thu = tổng thu nhập hoạt động /
+tổng doanh thu hoạt động), cùng thang xếp hạng; tab "Cơ bản" ghi rõ mẫu BCTC và hiện thu nhập lãi thuần, dự phòng (ngân
+hàng) hoặc lãi tự doanh FVTPL, môi giới, cho vay ký quỹ (chứng khoán). Công thức: congthuc.md §9.
+
 **Nguồn:** trang kết quả kinh doanh theo quý của **CafeF** (tầng A — trang tổng hợp, cấp nguồn 3).
 Mọi số liệu lưu với nhãn **ESTIMATE** (chưa kiểm chứng) cho tới khi đối chiếu BCTC gốc.
 
@@ -952,6 +956,19 @@ bỏ qua. Tác vụ hằng ngày chạy lệnh này sau `monitor`.
   ô tổng ghi "k/n phiên có số liệu" (trước 12/10/2026 "5 phiên" là 5 dòng có số liệu, có thể trải nhiều tuần).
 
 Chỉ hiển thị, không tính vào điểm hay nhóm.
+
+## 26b. Cảnh báo trong phiên (12/10/2026)
+
+`python -m src.main watch` (giờ giao dịch, tự dừng 14:50) đọc lệnh khớp DNSE websocket của các mã đang theo dõi và báo khi
+giá chạm / vượt pivot, xuống tới stop, xuống dưới MA50 hoặc mã vừa breakout quay lại dưới pivot — mỗi loại một lần mỗi
+ngày, kèm nhịp khối lượng ước tính. Trang **Trong phiên** (thanh bên) hiện danh sách, tự làm mới 30 giây. Đây không phải
+breakout hay thủng stop: các sự kiện đó vẫn xét ở giá đóng cửa (mục 11). Công thức: congthuc.md §13a.
+
+## 26c. Đường RS (12/10/2026)
+
+Lớp **"Đường RS (so với VN-Index)"** trong "Lớp hiển thị": giá / VN-Index, 100 = điểm đầu biểu đồ, chấm xanh khi đường RS
+lập đỉnh 52 tuần trong khi giá chưa. Dòng tóm tắt dưới 8 tiêu chí: cách đỉnh 52 tuần, thay đổi 3 tháng, lần gần nhất
+đường RS dẫn trước giá. Chỉ hiển thị. Công thức: congthuc.md §16.5.
 
 ## 27. Học: mẫu nến và mô hình giá
 

@@ -34,6 +34,7 @@ n phiên trước; TB = trung bình; "phiên" = một ngày giao dịch.
 11. [Trạng thái thị trường](#11-trạng-thái-thị-trường)
 12. [Trạng thái của từng mã (3 câu hỏi)](#12-trạng-thái-của-từng-mã-3-câu-hỏi)
 13. [Sự kiện theo dõi hằng ngày](#13-sự-kiện-theo-dõi-hằng-ngày)
+13a. [Cảnh báo trong phiên](#13a-cảnh-báo-trong-phiên)
 14. [Chỉ báo kỹ thuật kiểu TradingView](#14-chỉ-báo-kỹ-thuật-kiểu-tradingview)
 15. [Mẫu nến](#15-mẫu-nến)
 16. [Biểu đồ: vùng giá, trendline, kênh, khung tuần/tháng](#16-biểu-đồ-vùng-giá-trendline-kênh-khung-tuầntháng)
@@ -324,7 +325,18 @@ gần_đỉnh      = max(0, 100 − 4 × (% cách đỉnh 52 tuần))      (các
 
 ## 9. Cơ bản (BCTC quý)
 
-**Nguồn**: CafeF, báo cáo kết quả kinh doanh theo quý (dữ liệu tổng hợp, chưa đối chiếu BCTC gốc).
+**Nguồn**: CafeF, báo cáo kết quả kinh doanh theo quý (dữ liệu tổng hợp, chưa đối chiếu BCTC gốc). **Ngân hàng và công ty
+chứng khoán** (từ 12/10/2026, lựa chọn của bạn): VNDirect finfo API, theo mẫu BCTC riêng của họ (ngân hàng TT49, chứng
+khoán TT334), đọc theo **mã chỉ tiêu** và kiểm tên chỉ tiêu trước khi lưu (đổi tên → từ chối, không đoán theo vị trí).
+Chỉ những mã CafeF từ chối mới đọc ở VNDirect.
+
+| Mẫu | "Doanh thu" dùng để xếp hạng | Hiện kèm (chỉ để đọc) |
+|---|---|---|
+| Doanh nghiệp thường | doanh thu thuần (CafeF) | – |
+| Ngân hàng | tổng thu nhập hoạt động (TOI, mã 421701) | thu nhập lãi thuần (% TOI), chi phí dự phòng rủi ro tín dụng, so với cùng kỳ |
+| Công ty chứng khoán | tổng doanh thu hoạt động (mã 21000) | lãi FVTPL (tự doanh, % doanh thu), doanh thu môi giới, lãi cho vay ký quỹ |
+
+Bảo hiểm (BVH…) chưa đọc được: vẫn "chưa có dữ liệu".
 
 **Nhận một quý chỉ khi**: có LNST và LNST công ty mẹ; doanh thu thuần > 0; và
 `|LNST − (LNST công ty mẹ + cổ đông thiểu số)| ≤ 1% × |LNST|` (loại các mẫu BCTC ngân hàng / chứng khoán
@@ -346,6 +358,9 @@ bị CafeF hiển thị sai dòng, thay vì chấm điểm sai).
 
 **Code 33** (chỉ hiển thị): tăng trưởng LNST, doanh thu và biên lợi nhuận đều tăng tốc 3 quý liền [SÁCH, O'Neil].
 FAIL đưa mã A/B ra khỏi danh sách chính. Ngưỡng là [TRIỂN KHAI] (Minervini/O'Neil tìm EPS tăng ≥ 20–25% và tăng tốc).
+Ngân hàng / chứng khoán dùng **cùng ngưỡng**. Lần đầu áp dụng (lượt lọc 09/10 lưu ngày 12/10): STB (LNST công ty mẹ
+quý 2/2026 −53%) rời nhóm B; VIX −94% (FAIL) đúng như ghi chú quý 2/2026. Một quý mà LNST ≠ công ty mẹ + thiểu số vẫn bị
+loại (SSI quý 2/2025 lệch 107 tỷ) nên SSI còn "chưa có dữ liệu".
 
 ---
 
@@ -488,6 +503,32 @@ tiền.
 
 ---
 
+## 13a. Cảnh báo trong phiên
+
+`python -m src.main watch` chạy trong giờ giao dịch (09:00–14:50), đọc **lệnh khớp** của các mã đang theo dõi qua
+websocket DNSE (chỉ kênh dữ liệu thị trường) và so với các mức của **phiên trước**. Chỉ hiển thị, không phải lệnh mua bán.
+
+| Cảnh báo | Khi nào (mỗi mã, mỗi loại tối đa 1 lần/ngày) |
+|---|---|
+| Chạm / vượt pivot | nền đang hình thành, giá đóng cửa hôm trước < pivot, giá khớp ≥ pivot. **Chưa phải breakout**: breakout xét giá đóng cửa và khối lượng cả phiên |
+| Xuống tới stop | stop còn hiệu lực (không phải đã thủng / dự kiến), giá đóng cửa hôm trước > stop, giá khớp ≤ stop |
+| Dưới MA50 | giá đóng cửa hôm trước > MA50 (50 phiên), giá khớp < MA50 |
+| Breakout quay lại dưới pivot | trạng thái "Vừa breakout", giá khớp < pivot |
+
+```
+Nhịp khối lượng = KL khớp tới lúc đó / (KL TB 50 phiên × phần thời gian khớp lệnh liên tục đã qua)
+  thời gian khớp liên tục: HOSE 09:15–11:30, 13:00–14:30; HNX 09:00–11:30, 13:00–14:30; UPCoM 09:00–11:30, 13:00–15:00
+  chưa tính khi < 10% ngày đã qua; ≥ 1,4 (= ngưỡng breakout của monitor, `monitor.breakout_volume_ratio`) ghi "khối lượng đang cao"
+  giả định khối lượng chia đều trong ngày — thực tế dồn vào đầu phiên và ATC: chỉ ước tính [TRIỂN KHAI]
+```
+Đơn vị DNSE websocket: giá theo nghìn đồng (như REST); **khối lượng theo đơn vị 10 cổ phiếu** (đo trực tiếp 12/10/2026 trên
+12 mã HOSE/HNX/UPCoM: giá trị khớp / giá / khối lượng = 10) — cả hai hệ số nằm trong `config/sources.yaml`.
+Không theo dõi một mã khi: chưa có trạng thái phiên trước; trạng thái cũ hơn giá; HOSE/HNX có giá tham chiếu hôm nay khác
+giá đóng cửa đã lưu > 0,1% (có thể có quyền, các mức chưa cùng thang). Mất kết nối thì không có gì được bù: trang "Trong
+phiên" ghi "mất kết nối?" khi tệp trạng thái quá 120 giây không cập nhật. Ngưỡng: `intraday` trong thresholds.yaml.
+
+---
+
 ## 14. Chỉ báo kỹ thuật kiểu TradingView
 
 View "Kỹ thuật". Chỉ để xem, không phải quy tắc SEPA, chưa kiểm định trên dữ liệu VN.
@@ -614,6 +655,20 @@ MA10 và MA40 tuần là hai đường MarketSmith dùng; MA30 tuần là đư�
 là [TRIỂN KHAI], co giãn theo độ dài nến. Vùng hỗ trợ / kháng cự ở khung tuần/tháng vẫn lấy từ biểu đồ ngày.
 Lọc, trạng thái, sự kiện luôn tính trên nến **ngày**.
 
+### 16.5 Đường RS (từ 12/10/2026) [SÁCH]
+
+```
+Đường RS     = giá đóng cửa / VN-Index đóng cửa cùng phiên, × hằng số để điểm đầu biểu đồ = 100
+               (tuần / tháng: tại phiên cuối của tuần / tháng; phiên thiếu một bên thì không có điểm)
+Đỉnh mới     = đường RS ≥ mọi giá trị của 250 phiên trước (tuần: 52, tháng: 12)
+Chấm xanh    = đỉnh mới của đường RS trong khi giá đóng cửa còn dưới đỉnh 250 phiên của chính nó
+               ("đường RS dẫn trước giá", Minervini / O'Neil)
+3 tháng      = % thay đổi của đường RS trong 63 phiên (tuần 13, tháng 3)
+```
+Khác **RS Rating** (§4: xếp hạng so với toàn thị trường). Lớp "Đường RS" trong "Lớp hiển thị" (mặc định tắt), vẽ ở phần dưới
+khung giá trên thang riêng; dòng tóm tắt dưới 8 tiêu chí. Chỉ hiển thị, không tính vào điểm, nhóm hay trạng thái.
+Ngưỡng: `rs_line` trong thresholds.yaml.
+
 ---
 
 ## 17. % thay đổi và giá tham chiếu
@@ -717,6 +772,11 @@ Có stop  : như trên, nhưng sau phiên ĐÓNG CỬA ≤ stop thì bán giá m
            Mốc so sánh (mã thanh khoản bất kỳ) cũng có stop 8%.
 ```
 Giới hạn: chỉ các mã đang niêm yết (thiên lệch sống sót), giá không cộng cổ tức tiền, trạng thái thị trường rút gọn.
+
+**Xem lại VCP (12/10/2026, `data/backtest/vcp_review_2026-10-12.md`)**: VCP nhiều gấp ~8 lần chủ yếu do **đổi nhãn** (nhịp
+chính luôn co hẹp dần, nên nhiều nền trước là "Nền" nay là VCP; 63% có đúng 2 nhịp). VCP vẫn tốt hơn "Nền" trong mẫu
+(T+20 +2,07% so với −0,04%), nhưng **ngoài mẫu (từ 05/2024) mọi loại breakout đều âm**, kể cả trong UPTREND. Cạn khối
+lượng tách tốt trong mẫu (+4,21% so với +1,53%) nhưng mất ngoài mẫu. Không đổi ngưỡng nào — bạn quyết định.
 
 ## 20b. Mẫu đánh ngắn hạn ≤ 2 tuần — CHỈ backtest, chưa hiện trên dashboard
 
