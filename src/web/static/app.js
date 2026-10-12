@@ -12,8 +12,23 @@ const dm = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : "–");
 
 async function get(url) {
   const r = await fetch(url);
+  noteVersion(r.headers.get("X-App-Version"));
   if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `${url}: ${r.status}`); }
   return r.json();
+}
+// A tab left open across an update kept running the old script against new data ("APPROACHING"
+// shown raw, a stock still in the group of the earlier screen run). The server tags every answer
+// with the page files' and the latest screen run's version; when it changes, offer a reload.
+let pageVersion = null;
+function noteVersion(v) {
+  if (!v) return;
+  if (pageVersion === null) { pageVersion = v; return; }
+  if (v === pageVersion || document.getElementById("reload-note")) return;
+  const b = document.createElement("button");
+  b.id = "reload-note"; b.type = "button"; b.className = "reload-note";
+  b.textContent = "Trang web hoặc lượt lọc đã được cập nhật — bấm để tải lại";
+  b.onclick = () => location.reload();
+  document.body.appendChild(b);
 }
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -106,38 +121,6 @@ function renderMarket(run) {
       ${breadthLine(m.session)}
     </div>${svg}`;
   $("#vni").title = note || "";
-}
-
-// The invariant check (python -m src.main check, src/web/checks.py): one line by the VN-Index card,
-// the rows on click. Numbers still from the earlier base rules are counted apart ("đang chuyển").
-async function loadChecks() {
-  let c;
-  try { c = await get("/api/checks"); } catch { return; }
-  const el = $("#checks-line");
-  if (!c || !el) return;
-  el.hidden = false;
-  el.className = `checks-line small ${c.violations ? "warn" : "muted"}`;
-  el.innerHTML = `Kiểm tra dữ liệu ${dm(c.session)}: <b>${c.violations}</b> vi phạm${c.transition ? ` · ${c.transition} mã đang chuyển` : ""}`;
-  const rows = [...c.rows.map((r) => ({ ...r, kind: "Vi phạm" })), ...c.transition_rows.map((r) => ({ ...r, kind: "Đang chuyển" })),
-    ...c.info_rows.map((r) => ({ ...r, kind: "Ghi nhận" }))];
-  $("#checks-pop").innerHTML = rows.length ? `<table><thead><tr><th>Mã</th><th>Loại</th><th>Quy tắc</th><th>Chi tiết</th></tr></thead><tbody>${rows.map((r) =>
-    `<tr data-t="${esc(r.ticker)}"><td><span class="tk">${esc(r.ticker)}</span></td><td>${esc(r.kind)}</td><td>${esc(r.text)}</td><td class="muted">${esc(vnText(r.detail))}</td></tr>`).join("")}</tbody></table>
-    <p class="sub">"Đang chuyển": pivot / stop còn tính theo cách trước ngày 11/10/2026, giữ tới hết thời gian giữ (5 phiên).</p>`
-    : `<p class="muted">Không có vi phạm (${c.checked} mã theo dõi${c.market_checked ? `, quy tắc nền trên ${c.market_checked} mã toàn thị trường` : ""}).</p>`;
-  // Placed inside the window from the line's position: anchored to the card it ran off the left edge (R3-10).
-  el.onclick = (e) => {
-    e.stopPropagation();
-    const pop = $("#checks-pop"), open = pop.hidden;
-    pop.hidden = !open;
-    if (!open) return;
-    const r = el.getBoundingClientRect(), w = Math.min(680, innerWidth - 16);
-    pop.style.width = `${w}px`;
-    pop.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
-    pop.style.top = `${r.bottom + 6}px`;
-    pop.style.maxHeight = `${Math.max(160, innerHeight - r.bottom - 24)}px`;
-  };
-  $("#checks-pop").onclick = (e) => e.stopPropagation();
-  document.addEventListener("click", () => { $("#checks-pop").hidden = true; });
 }
 
 // Advancers / unchanged / decliners of the session (DNSE market-index). Advancers include
@@ -567,6 +550,19 @@ function criteriaHtml(criteria) {
   }).join("");
 }
 
+// The RS line (close / VN-Index), display only: rising, and best when it makes a new high before the price.
+function rsLineHtml(r) {
+  const s = r && r.summary;
+  if (!s) return "";
+  const unit = { 250: "52 tuần", 52: "52 tuần", 12: "12 tháng" }[s.lookback_bars] || `${s.lookback_bars} phiên`;
+  const where = !s.full_window ? `chưa đủ ${unit} dữ liệu`
+    : s.at_new_high ? `<b class="pos">đang ở đỉnh ${unit}</b>`
+    : `cách đỉnh ${unit} <b>${pct(s.from_high_pct, 1)}</b> (đỉnh ${dmy(s.high_on)})`;
+  const lead = s.leads_on ? ` · lập đỉnh mới trước giá gần nhất <b>${dmy(s.leads_on)}</b>` : "";
+  return `<p class="sub" title="Đường RS = giá đóng cửa / ${esc(r.index || "VN-Index")}, bằng 100 ở điểm đầu biểu đồ. Khác RS Rating (xếp hạng trên toàn thị trường). Chỉ để tham khảo, không tính vào điểm hay nhóm.">
+    Đường RS (giá / ${esc(r.index || "VN-Index")}): ${where} · 3 tháng <b class="${tone(s.change_pct)}">${pct(s.change_pct, 1)}</b>${lead}</p>`;
+}
+
 const HOLD_TEXT = "5 phiên";
 function baseHtml(s) {
   if (!s) return `<p class="muted">Chưa có dữ liệu theo dõi. Chạy: python -m src.main monitor</p>`;
@@ -645,14 +641,18 @@ function fundHtml(f, demoted) {
   const yoy = (arr) => (arr || []).map((v) => `<span class="${tone(v)}">${pct(v, 0)}</span>`).join(" · ") || "–";
   const bn = (v) => (v === null || v === undefined ? "–" : fmt(v / 1e9, 0));
   const q = (f.quarters || []).map((r) => `<tr><td>${esc(r.period_end)}</td><td>${bn(r.revenue_net)}</td><td>${bn(r.net_income_parent)}</td></tr>`).join("");
+  // Banks and securities firms: their own template (VNDirect); "revenue" is that template's top line.
+  const rev = f.revenue_text || "doanh thu thuần", Rev = rev.charAt(0).toUpperCase() + rev.slice(1);
   return `${demoted ? `<p class="warn">${esc(demoted)}</p>` : ""}
-    <p>${fundBadge(f)} <b>${esc(f.grade_text || "")}</b>${f.code33 ? ' · <span class="lead">Code 33</span>' : ""}</p>
+    <p>${fundBadge(f)} <b>${esc(f.grade_text || "")}</b>${f.code33 ? ' · <span class="lead">Code 33</span>' : ""}${f.template_text
+      ? ` · <span class="muted">mẫu BCTC ${esc(f.template_text)}</span>` : ""}</p>
     ${(f.reasons || []).length ? `<p class="sub">${esc(f.reasons.join("; "))}</p>` : ""}
     <div class="kv col">
       <span>Lợi nhuận sau thuế công ty mẹ so với cùng kỳ (3 quý, mới nhất trước) <b>${yoy(f.profit_yoy)}</b></span>
-      <span>Doanh thu thuần so với cùng kỳ <b>${yoy(f.revenue_yoy)}</b></span>
-      <span>Biên lợi nhuận so với cùng kỳ <b>${f.margin_change == null ? "–" : (f.margin_change > 0 ? "+" : "") + fmt(f.margin_change, 1) + " điểm %"}</b></span></div>
-    ${q ? `<table class="qtable"><thead><tr><th>Quý</th><th>Doanh thu (tỷ đ)</th><th>LNST công ty mẹ (tỷ đ)</th></tr></thead><tbody>${q}</tbody></table>` : ""}
+      <span>${esc(Rev)} so với cùng kỳ <b>${yoy(f.revenue_yoy)}</b></span>
+      <span>Biên lợi nhuận so với cùng kỳ <b>${f.margin_change == null ? "–" : (f.margin_change > 0 ? "+" : "") + fmt(f.margin_change, 1) + " điểm %"}</b></span>
+      ${(f.notes || []).map((n) => `<span>${esc(n)}</span>`).join("")}</div>
+    ${q ? `<table class="qtable"><thead><tr><th>Quý</th><th>${esc(Rev)} (tỷ đ)</th><th>LNST công ty mẹ (tỷ đ)</th></tr></thead><tbody>${q}</tbody></table>` : ""}
     <p class="sub">Nguồn: ${esc(f.source || "")}. ${esc(f.eps_proxy || "")} thay cho EPS.</p>`;
 }
 
@@ -726,6 +726,7 @@ const LAYERS = [
   { k: "volume", label: "Khối lượng", color: "#94a3b8" },
   { k: "rsi", label: "RSI (14)", color: OSC_COLORS.RSI },
   { k: "macd", label: "MACD (12, 26, 9)", color: OSC_COLORS.MACD },
+  { k: "rsline", label: "Đường RS (so với VN-Index)", color: "#334155", kind: "stock" },
 ];
 // Chart timeframe: daily bars come with the ticker / index payload; weekly and monthly
 // bars (and their MAs, RSI, MACD) from /api/bars, cached for the page's life.
@@ -761,11 +762,11 @@ async function drawCurrentChart() {
   // A slower reply for another ticker or timeframe must not overwrite what was chosen since.
   if (state.detail !== d || state.tf !== tf) return;
   // Trendlines / channel come from the weekly or monthly candles; zones stay the daily chart's.
-  drawChart({ ...d, bars: tfd.bars, ma: tfd.ma, osc: tfd.osc, ma_periods: tfd.ma_periods, tf, daily_count: d.bars.length,
+  drawChart({ ...d, bars: tfd.bars, ma: tfd.ma, osc: tfd.osc, ma_periods: tfd.ma_periods, tf, daily_count: d.bars.length, rs_line: tfd.rs_line,
     levels: { ...(d.levels || {}), ...(tfd.levels || { trendlines: {}, channel: null }) } });
 }
 
-const DEFAULT_LAYERS = { MA20: false, MA50: true, MA150: true, MA200: true, pivot: true, dist: true, zones: false, channel: false, base: false, volume: true, rsi: true, macd: false };
+const DEFAULT_LAYERS = { MA20: false, MA50: true, MA150: true, MA200: true, pivot: true, dist: true, zones: false, channel: false, base: false, volume: true, rsi: true, macd: false, rsline: false };
 const LAYERS_KEY = "sepa.layers.v1";
 state.layers = { ...DEFAULT_LAYERS, ...store.get(LAYERS_KEY, {}) };
 
@@ -844,6 +845,19 @@ function drawChart(d) {
   for (const [k, pts] of Object.entries(d.ma)) {
     if (!L[k]) continue;
     price.addLineSeries({ color: MA_COLORS[k], lineWidth: k === "MA20" ? 1 : 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }).setData(pts);
+  }
+  // RS line: in the lower part of the price pane on its own hidden scale, as MarketSmith draws it;
+  // a dot where the line set a new high while the price had not (it leads the price).
+  const rsLine = L.rsline && state.detailKind !== "index" && d.rs_line && d.rs_line.points.length ? d.rs_line : null;
+  if (rsLine) {
+    const rsColor = dark ? "#cbd5e1" : "#334155";
+    const rsSeries = price.addLineSeries({ priceScaleId: "rs", color: rsColor, lineWidth: 1, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false });
+    price.priceScale("rs").applyOptions({ scaleMargins: { top: 0.58, bottom: L.volume ? 0.17 : 0.02 } });
+    rsSeries.setData(rsLine.points);
+    const lead = new Set(rsLine.leads || []);
+    rsSeries.setMarkers(rsLine.points.filter((p) => lead.has(p.time))
+      .map((p) => ({ time: p.time, position: "inBar", color: "#2563eb", shape: "circle", size: 0.4 })));
   }
   const base = d.base || {};
   const markers = [];
@@ -949,6 +963,7 @@ function drawChart(d) {
   const index = new Map(d.bars.map((b, i) => [b.trade_date, i]));
   const maAt = Object.fromEntries(Object.entries(d.ma).map(([k, pts]) => [k, new Map(pts.map((p) => [p.time, p.value]))]));
   const rsiAt = new Map(((d.osc && d.osc.RSI) || []).map((p) => [p.time, p.value]));
+  const rsLineAt = new Map(((rsLine && rsLine.points) || []).map((p) => [p.time, p.value]));
   const oscAt = (k) => new Map(((d.osc && d.osc[k]) || []).map((p) => [p.time, p.value]));
   const macdAt = oscAt("MACD"), sigAt = oscAt("SIGNAL"), histAt = oscAt("HIST");
   const baseLegend = L.base && base.top && base.low != null
@@ -965,7 +980,8 @@ function drawChart(d) {
     $("#legend").innerHTML = `<div class="lg-row"><b>${when}</b>${b.partial ? ' <span class="stale" title="Nến chưa kết thúc: giá đóng là giá phiên gần nhất">chưa kết thúc</span>' : ""}
         <span>Mở <b>${px(b.open)}</b></span><span>Cao <b>${px(b.high)}</b></span><span>Thấp <b>${px(b.low)}</b></span>
         <span>Đóng <b>${px(b.close)}</b> <span class="${tone(chg)}">${pct(chg, 2)}</span></span><span>KL <b>${fmt(b.volume)}</b></span></div>
-      <div class="lg-row">${mas}${L.rsi ? `<span><i style="background:${OSC_COLORS.RSI}"></i>RSI <b>${fmt(rsiAt.get(b.trade_date), 1)}</b></span>` : ""}
+      <div class="lg-row">${mas}${L.rsi ? `<span><i style="background:${OSC_COLORS.RSI}"></i>RSI <b>${fmt(rsiAt.get(b.trade_date), 1)}</b></span>` : ""}${rsLine
+        ? `<span title="Giá / ${esc(rsLine.index || "VN-Index")}, 100 = điểm đầu biểu đồ"><i style="background:${dark ? "#cbd5e1" : "#334155"}"></i>Đường RS <b>${fmt(rsLineAt.get(b.trade_date), 1)}</b></span>` : ""}
         ${L.macd ? `<span><i style="background:${OSC_COLORS.MACD}"></i>MACD <b>${mv(macdAt)}</b></span><span><i style="background:${OSC_COLORS.SIGNAL}"></i>Signal <b>${mv(sigAt)}</b></span><span>Hist <b>${mv(histAt)}</b></span>` : ""}
         ${L.pivot && pivot ? `<span><i style="background:#0ea5e9"></i>pivot <b>${px(pivot)}</b></span>` : ""}${L.pivot && stop ? `<span><i style="background:${breached || pending ? "#9aa4b2" : "#f43f5e"}"></i>${esc(stopTitle)} <b>${px(stop)}</b></span>` : ""}${baseLegend}</div>`;
   };
@@ -1329,7 +1345,8 @@ async function openDetail(ticker) {
   showChart("own");
   showDetailPane("chart");
   const crit = (d.state && d.state.criteria) || (sc && sc.criteria_json);
-  $("#d-criteria").innerHTML = criteriaHtml(crit) + (d.state ? `<p class="sub">TT1–TT7 theo phiên ${dmy(d.state.trade_date)}; TT8 (RS) theo lần lọc.</p>` : "");
+  $("#d-criteria").innerHTML = criteriaHtml(crit) + (d.state ? `<p class="sub">TT1–TT7 theo phiên ${dmy(d.state.trade_date)}; TT8 (RS) theo lần lọc.</p>` : "")
+    + rsLineHtml(d.rs_line);
   $("#d-base").innerHTML = baseHtml(d.state) + baseChecksHtml(d.base);
   $("#d-tech").innerHTML = techHtml((d.state || {}).tech);
   $("#d-questions").innerHTML = questionsHtml((d.state && d.state.setup && d.state.setup.status) ? d.state.setup : ((sc && sc.base_json) || {}).setup,
@@ -1452,6 +1469,35 @@ function renderAlerts() {
   $("#alerts-more").textContent = `Xem thêm (${Math.min(ALERT_PAGE, rows.length - A.shown)} / còn ${rows.length - A.shown})`;
 }
 
+// ---------------------------------------------------------------- intraday alerts (python -m src.main watch)
+const INTRADAY_TEXT = { PIVOT_CROSS: "Chạm / vượt pivot", STOP_TOUCH: "Xuống tới stop", MA50_LOST: "Dưới MA50", BREAKOUT_UNDO: "Breakout quay lại dưới pivot" };
+const INTRADAY_TONE = { PIVOT_CROSS: "BREAKOUT_WEAK", STOP_TOUCH: "STOP_BREACHED", MA50_LOST: "MA50_BREAK_HEAVY_VOLUME", BREAKOUT_UNDO: "BREAKOUT_FAILED" };
+async function loadIntraday() {
+  let d;
+  try { d = await get("/api/intraday"); } catch (err) { $("#intraday-status").textContent = err.message; return; }
+  const s = d.status, rows = d.alerts || [];
+  const hm = (iso) => (iso ? String(iso).slice(11, 19) : "–");
+  $("#n-intraday").textContent = rows.length && d.session_date === new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10) ? rows.length : "";
+  $("#intraday-status").innerHTML = !s
+    ? `Phiên ${dmy(d.session_date)}: chưa chạy theo dõi. Trong giờ giao dịch chạy: <code>python -m src.main watch</code>`
+    : `Phiên ${dmy(d.session_date)} · ${s.running ? (s.stale
+        ? `<span class="stale" title="Không nhận được dữ liệu mới; cảnh báo có thể bị thiếu">mất kết nối? cập nhật lần cuối ${hm(s.written_at)}</span>`
+        : `<b class="pos">đang theo dõi</b> ${s.watched_n} mã · lệnh khớp gần nhất ${hm(s.last_message_at)}`)
+      : `đã dừng lúc ${hm(s.ended_at)} · đã theo dõi ${s.watched_n} mã`} · <b>${rows.length}</b> cảnh báo${s.skipped_n
+        ? ` · <span class="muted" title="${esc(Object.entries(s.skipped || {}).map(([t, r]) => `${t}: ${r}`).join("\n"))}">bỏ qua ${s.skipped_n} mã</span>` : ""}${s.error ? ` · <span class="warn">${esc(s.error)}</span>` : ""}`;
+  const tbody = $("#intraday-table tbody");
+  tbody.innerHTML = rows.length ? rows.map((a) => `<tr data-t="${esc(a.ticker)}">
+      <td class="muted">${hm(a.traded_at)}</td>
+      <td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
+      <td><span class="badge b-${INTRADAY_TONE[a.alert_type] || ""}">${esc(INTRADAY_TEXT[a.alert_type] || a.alert_type)}</span></td>
+      <td class="num">${fmt(a.price)}</td><td class="num">${fmt(a.level)}</td>
+      <td class="num">${a.volume_pace == null ? "–" : fmt(a.volume_pace, 1) + "×"}</td>
+      <td class="wrap">${esc(a.what_changed)}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="empty">Chưa có cảnh báo trong phiên ${dmy(d.session_date)}.</td></tr>`;
+}
+// Refresh while the page is open; the watcher rewrites its status every few seconds.
+setInterval(() => { if ($("#tab-intraday").classList.contains("active") && !document.hidden) loadIntraday(); }, 30000);
+
 async function loadIndustries() {
   const runId = state.runId;
   const data = await get(`/api/industries${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`);
@@ -1501,6 +1547,7 @@ function showTab(t) {
     renderTable();
   }
   if (t.dataset.tab === "alerts") loadAlerts();
+  if (t.dataset.tab === "intraday") loadIntraday();
   if (t.dataset.tab === "industries") loadIndustries();
   if (t.dataset.tab === "news") loadNews();
   if (t.dataset.tab === "learn" && window.renderLearn) window.renderLearn();
@@ -1552,7 +1599,6 @@ async function init() {
       .map(([value, text]) => ({ value, text })), value: state.alerts.period, searchable: false,
     onPick: (v) => { state.alerts.period = v; state.alerts.shown = ALERT_PAGE; renderAlerts(); } });
   });
-  loadChecks();
   $$(".view-seg button").forEach((b) => b.addEventListener("click", () => {
     state.view = b.dataset.view; store.set("sepa.view.v2", state.view);
     if (!COLS[state.view].some((c) => c.k === state.sortKey)) state.sortKey = "";

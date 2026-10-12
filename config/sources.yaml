@@ -52,6 +52,10 @@ market_data:
     # Never inferred from magnitude -- see dnse_provider.normalize_price.
     price_scale: 1000.0
     index_scale: 1.0
+    # Websocket trade frames (tick.G1): matchPrice in thousands like REST, but matchQtty and
+    # totalVolumeTraded in units of 10 shares -- grossTradeAmount (billions of VND) / price /
+    # totalVolumeTraded = 10 on HOSE, HNX and UPCoM, 12 tickers measured live 2026-10-12.
+    ws_volume_scale: 10
     # /price/{index}/market-index amounts are billions of VND (VN-Index 08/10/2026: 15883.3)
     market_index_value_scale: 1000000000
     # Measured 2026-08-28 (docs/DNSE.md): continuous across SSI's 5:1 bonus and
@@ -188,6 +192,19 @@ financial:
     enabled: true
     priority: 30
     capabilities: [income_statement]
+    request_interval_seconds: 2.5
+
+  # Banks and securities firms on their own templates (TT49 bank, TT334 broker), from
+  # VNDirect's finfo API (user decision 2026-10-12): CafeF shows them on the TT200 template
+  # and they are rejected there. Aggregator (level 3), ESTIMATE until checked against the
+  # filing. Read-only; one request per ticker plus the item names once per run.
+  - id: vndirect_finfo
+    provider_class: src.collectors.providers.vndirect_finfo_provider.VndirectFinfoProvider
+    source_level: 3
+    enabled: true
+    priority: 31
+    capabilities: [income_statement_bank, income_statement_securities]
+    base_url: https://api-finfo.vndirect.com.vn/v4/
     request_interval_seconds: 2.5
 
   # Industry classification (sector > industry group > industry) from the

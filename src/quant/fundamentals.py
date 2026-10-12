@@ -14,6 +14,14 @@ stored quarterly figures into a grade, and nothing more:
 
 Inputs are tier-A (aggregator, unverified) figures; the grade says so. Net
 profit to the parent stands in for EPS because CafeF leaves EPS blank.
+
+Banks and securities firms (2026-10-12) come from VNDirect's finfo API on their own
+templates (src/collectors/providers/vndirect_finfo_provider.py); CafeF shows them on
+the manufacturing template and their quarters are rejected there. The grade is the
+same, with the template's own top line as "revenue": total operating income (TOI) for
+a bank, total operating revenue for a securities firm. A broker's proprietary trading
+(FVTPL gains) is shown beside it -- it is why VIX's Q2 2026 profit fell 94% while its
+revenue held (CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -24,6 +32,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from src.collectors.providers.cafef_financial_provider import SOURCE_ID, QuarterlyIncome
+from src.collectors.providers.vndirect_finfo_provider import REVENUE_TEXT, TEMPLATE_TEXT
+from src.collectors.providers.vndirect_finfo_provider import SOURCE_ID as VNDIRECT_ID
 from src.database import connect
 
 GRADES = ("A+", "A", "B", "WEAK", "FAIL", "NO_DATA")
@@ -42,6 +52,8 @@ class FundamentalRead:
     margin_change: float | None = None                              # pp, latest vs a year earlier
     code33: bool = False
     reasons: list[str] = field(default_factory=list)
+    template: str | None = None                 # None (ordinary company) | bank | securities
+    notes: list[str] = field(default_factory=list)
 
     @property
     def score(self) -> float | None:
@@ -53,7 +65,11 @@ class FundamentalRead:
                 "latest_quarter": self.latest_quarter.isoformat() if self.latest_quarter else None,
                 "profit_yoy": [r(v) for v in self.profit_yoy], "revenue_yoy": [r(v) for v in self.revenue_yoy],
                 "margin_change": r(self.margin_change), "code33": self.code33, "reasons": list(self.reasons),
-                "source": "CafeF (tổng hợp, chưa đối chiếu BCTC gốc)", "eps_proxy": "LNST công ty mẹ"}
+                "source": ("VNDirect (tổng hợp, chưa đối chiếu BCTC gốc)" if self.template
+                           else "CafeF (tổng hợp, chưa đối chiếu BCTC gốc)"),
+                "eps_proxy": "LNST công ty mẹ", "template": self.template,
+                "template_text": TEMPLATE_TEXT.get(self.template or "", None),
+                "revenue_text": REVENUE_TEXT.get(self.template or "", "doanh thu thuần"), "notes": list(self.notes)}
 
 
 def _yoy(now: float | None, before: float | None) -> float | None:
@@ -107,7 +123,7 @@ def grade(ticker: str, quarters: Mapping[date, Mapping[str, float | None]], sett
         read.reasons.append("lỗ trong quý gần nhất")
     elif p0 is not None and p0 <= float(cfg["fail_profit_decline_pct"]):
         read.grade = "FAIL"
-        read.reasons.append(f"LNST công ty mẹ giảm {p0:.0f}% so với cùng kỳ")
+        read.reasons.append(f"LNST công ty mẹ giảm {abs(p0):.0f}% so với cùng kỳ")
     elif p0 is not None and r0 is not None and p0 < 0 and r0 < 0:
         read.grade = "FAIL"
         read.reasons.append(f"cả LNST ({p0:.0f}%) và doanh thu ({r0:.0f}%) cùng giảm")
@@ -130,7 +146,7 @@ def grade(ticker: str, quarters: Mapping[date, Mapping[str, float | None]], sett
 # Storage
 # ---------------------------------------------------------------------------
 
-def store_income(data: QuarterlyIncome, path: Path | None = None) -> int:
+def store_income(data: QuarterlyIncome, path: Path | None = None, source_id: str = SOURCE_ID) -> int:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     url = data.source_urls[0] if data.source_urls else None
     n = 0
@@ -141,28 +157,39 @@ def store_income(data: QuarterlyIncome, path: Path | None = None) -> int:
                 "source_id, source_url, observed_at) VALUES (?, ?, 'Q', 1, 0, ?, ?, ?) "
                 "ON CONFLICT(ticker, period_end, period_type, is_consolidated) DO UPDATE SET "
                 "source_id=excluded.source_id, source_url=excluded.source_url, observed_at=excluded.observed_at",
-                (data.ticker, d.isoformat(), SOURCE_ID, url, now))
+                (data.ticker, d.isoformat(), source_id, url, now))
             for name, value in values.items():
                 conn.execute(
                     "INSERT INTO financial_metrics (ticker, period_end, period_type, metric_name, value, unit, "
                     "assertion_type, source_id, source_url, observed_at) VALUES (?, ?, 'Q', ?, ?, 'VND', 'ESTIMATE', ?, ?, ?) "
                     "ON CONFLICT(ticker, period_end, period_type, metric_name) DO UPDATE SET value=excluded.value, "
                     "source_id=excluded.source_id, source_url=excluded.source_url, observed_at=excluded.observed_at",
-                    (data.ticker, d.isoformat(), name, value, SOURCE_ID, url, now))
+                    (data.ticker, d.isoformat(), name, value, source_id, url, now))
                 n += 1
     return n
 
 
-def log_fetch(data: QuarterlyIncome, path: Path | None = None) -> None:
+def log_fetch(data: QuarterlyIncome, path: Path | None = None, source_id: str = SOURCE_ID) -> None:
     reasons = sorted(set(data.rejected.values()))
     with connect(path) as conn:
         conn.execute(
             "INSERT INTO financial_fetch_log (ticker, source_id, checked_at, accepted_quarters, latest_quarter, "
             "rejected_reason) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET "
-            "checked_at=excluded.checked_at, accepted_quarters=excluded.accepted_quarters, "
+            "source_id=excluded.source_id, checked_at=excluded.checked_at, accepted_quarters=excluded.accepted_quarters, "
             "latest_quarter=excluded.latest_quarter, rejected_reason=excluded.rejected_reason",
-            (data.ticker, SOURCE_ID, datetime.now(timezone.utc).isoformat(timespec="seconds"), len(data.quarters),
+            (data.ticker, source_id, datetime.now(timezone.utc).isoformat(timespec="seconds"), len(data.quarters),
              max(data.quarters).isoformat() if data.quarters else None, "; ".join(reasons) or None))
+
+
+def log_reason(ticker: str, source_id: str, reason: str, path: Path | None = None) -> None:
+    """Record a read that gave no usable quarter (so it is not retried every run)."""
+    with connect(path) as conn:
+        conn.execute(
+            "INSERT INTO financial_fetch_log (ticker, source_id, checked_at, accepted_quarters, latest_quarter, "
+            "rejected_reason) VALUES (?, ?, ?, 0, NULL, ?) ON CONFLICT(ticker) DO UPDATE SET "
+            "source_id=excluded.source_id, checked_at=excluded.checked_at, accepted_quarters=0, latest_quarter=NULL, "
+            "rejected_reason=excluded.rejected_reason",
+            (ticker.upper(), source_id, datetime.now(timezone.utc).isoformat(timespec="seconds"), reason))
 
 
 def fetch_log(ticker: str, path: Path | None = None) -> dict[str, Any] | None:
@@ -173,7 +200,11 @@ def fetch_log(ticker: str, path: Path | None = None) -> dict[str, Any] | None:
 
 def grade_ticker(ticker: str, settings: Mapping[str, Any], path: Path | None = None) -> FundamentalRead:
     """Grade from stored quarters; a rejected layout keeps its reason."""
-    read = grade(ticker, load_quarters(ticker, path), settings)
+    quarters = load_quarters(ticker, path)
+    read = grade(ticker, quarters, settings)
+    read.template = template_of(quarters)
+    if read.template:
+        read.notes = financial_notes(read.template, quarters)
     if read.grade == "NO_DATA":
         log = fetch_log(ticker, path)
         if log is None:
@@ -184,13 +215,60 @@ def grade_ticker(ticker: str, settings: Mapping[str, Any], path: Path | None = N
 
 
 def load_quarters(ticker: str, path: Path | None = None) -> dict[date, dict[str, float | None]]:
+    """The ticker's stored quarters: VNDirect's bank / securities template when it has one
+    (CafeF's rows for those firms are misplaced), else CafeF's."""
     with connect(path) as conn:
         rows = conn.execute(
-            "SELECT period_end, metric_name, value FROM financial_metrics WHERE ticker = ? AND period_type = 'Q' "
-            "AND source_id = ?", (ticker.upper(), SOURCE_ID)).fetchall()
+            "SELECT period_end, metric_name, value, source_id FROM financial_metrics WHERE ticker = ? "
+            "AND period_type = 'Q' AND source_id IN (?, ?)", (ticker.upper(), SOURCE_ID, VNDIRECT_ID)).fetchall()
+    use = VNDIRECT_ID if any(r[3] == VNDIRECT_ID for r in rows) else SOURCE_ID
     out: dict[date, dict[str, float | None]] = {}
-    for d, name, value in rows:
-        out.setdefault(date.fromisoformat(d), {})[name] = value
+    for d, name, value, source in rows:
+        if source == use:
+            out.setdefault(date.fromisoformat(d), {})[name] = value
+    return out
+
+
+def template_of(quarters: Mapping[date, Mapping[str, float | None]]) -> str | None:
+    """bank / securities from the metrics only those templates carry; None for an ordinary company."""
+    names = {k for v in quarters.values() for k in v}
+    if "net_interest_income" in names:
+        return "bank"
+    if "fvtpl_gain" in names:
+        return "securities"
+    return None
+
+
+def financial_notes(template: str, quarters: Mapping[date, Mapping[str, float | None]]) -> list[str]:
+    """What drives a bank's or a broker's quarter, beside the grade (display only)."""
+    from src.quant.vnfmt import num  # noqa: PLC0415
+
+    if not quarters:
+        return []
+    latest = max(quarters)
+    v = quarters[latest]
+    prev = quarters.get(date(latest.year - 1, latest.month, latest.day), {})
+    rev = v.get("revenue_net")
+    out: list[str] = []
+
+    def yoy(key: str) -> str:
+        a, b = v.get(key), prev.get(key)
+        return "" if a is None or not b or b <= 0 else f" ({'+' if a >= b else ''}{num((a / b - 1) * 100, 0)}% so với cùng kỳ)"
+
+    if template == "bank":
+        if v.get("net_interest_income") is not None and rev:
+            out.append(f"Thu nhập lãi thuần {num(v['net_interest_income'] / 1e9)} tỷ đồng, "
+                       f"{num(v['net_interest_income'] / rev * 100, 0)}% tổng thu nhập hoạt động{yoy('net_interest_income')}")
+        if v.get("provision_expense") is not None:
+            out.append(f"Chi phí dự phòng rủi ro tín dụng {num(abs(v['provision_expense']) / 1e9)} tỷ đồng{yoy('provision_expense')}")
+    else:
+        if v.get("fvtpl_gain") is not None and rev:
+            out.append(f"Lãi tài sản FVTPL (tự doanh) {num(v['fvtpl_gain'] / 1e9)} tỷ đồng = "
+                       f"{num(v['fvtpl_gain'] / rev * 100, 0)}% doanh thu hoạt động{yoy('fvtpl_gain')} — "
+                       "phần biến động mạnh nhất của lợi nhuận công ty chứng khoán")
+        for key, text in (("brokerage_revenue", "Doanh thu môi giới"), ("lending_income", "Lãi cho vay (ký quỹ)")):
+            if v.get(key) is not None:
+                out.append(f"{text} {num(v[key] / 1e9)} tỷ đồng{yoy(key)}")
     return out
 
 

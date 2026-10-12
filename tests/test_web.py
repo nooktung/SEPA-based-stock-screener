@@ -482,3 +482,28 @@ def test_old_event_texts_show_the_tt6_threshold(db):
                      "('t6','AAA','x','TREND_TEMPLATE_BROKEN','[2026-09-25] Mất tiêu chí TT6 (Giá cao hơn đáy 52 tuần ≥ X%).')")
     text = next(r for r in server.api_alerts({}, db) if r["alert_type"] == "TREND_TEMPLATE_BROKEN")["what_changed"]
     assert "≥ 30%" in text and "X%" not in text
+
+
+def test_the_ticker_carries_its_rs_line_against_the_index(db):
+    """The RS line is the close over VN-Index, on the daily and the weekly chart (display only)."""
+    assert server.api_ticker({"ticker": "AAA"}, db)["rs_line"] is None            # no index stored: no line
+    bars = server.api_ticker({"ticker": "AAA"}, db)["bars"]
+    with connect(db) as conn:
+        conn.executemany(
+            "INSERT INTO index_daily (symbol, trade_date, open, high, low, close, volume, source_id, observed_at) "
+            "VALUES ('VNINDEX',?,?,?,?,?,1000,'dnse_openapi','x')",
+            [(b["trade_date"], 1000.0, 1000.0, 1000.0, 1000.0) for b in bars])
+    line = server.api_ticker({"ticker": "AAA"}, db)["rs_line"]
+    assert len(line["points"]) == len(bars) and line["points"][0]["value"] == 100.0 and line["index"] == "VN-Index"
+    assert line["points"][-1]["value"] == round(bars[-1]["close"] / bars[0]["close"] * 100, 3)    # flat index
+    assert server.api_bars({"ticker": "AAA", "tf": "W"}, db)["rs_line"]["summary"]["lookback_bars"] == 52
+
+
+def test_the_version_changes_with_a_new_screen_run_so_an_open_tab_offers_a_reload(db):
+    """A tab opened before an update showed "APPROACHING" raw and HII in group B (2026-10-12)."""
+    before = server.app_version(db)
+    with connect(db) as conn:
+        conn.execute("INSERT INTO screen_runs (run_id, created_at, as_of_date, params_json, funnel_json, market_json) "
+                     "VALUES ('r2','2026-09-27','2026-09-26','{}','{}','{}')")
+    after = server.app_version(db)
+    assert before != after and after.endswith("-r2") and server.app_version(db) == after

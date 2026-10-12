@@ -472,12 +472,10 @@ td.num .two { align-items: flex-end; }
 .learn-sepa { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; margin-bottom: 18px; }
 @media (max-width: 700px) { .learn-sepa { grid-template-columns: 1fr; } }
 
-/* Invariant check line under the VN-Index card (src/web/checks.py) */
 .vni-wrap { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
-.checks-line { background: none; border: 0; padding: 0 4px; text-align: left; cursor: pointer; font: inherit; color: inherit; }
-.checks-line.warn { color: var(--down); }
-.checks-pop { position: fixed; z-index: 60; width: min(680px, 92vw); max-height: 60vh; overflow: auto;
-  background: var(--card, var(--bg)); border: 1px solid var(--line, #d0d5dd); border-radius: 10px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
-.checks-pop table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.checks-pop td, .checks-pop th { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--line, #eaecf0); }
 .more-btn { display: block; margin: 10px auto; }
+
+/* Shown when the server's page files or latest screen run changed since this tab loaded */
+.reload-note { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 90; cursor: pointer;
+  font: inherit; font-size: 13px; color: #fff; background: var(--accent); border: 0; border-radius: 999px;
+  padding: 8px 16px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }

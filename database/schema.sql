@@ -449,6 +449,30 @@ CREATE TRIGGER IF NOT EXISTS screen_members_append_only
 BEFORE UPDATE ON screen_members
 BEGIN SELECT RAISE(ABORT, 'screen_members is append-only'); END;
 
+-- Intraday alerts (Phase 11, src/collectors/intraday_watch.py): a matched trade of a monitored
+-- ticker reaching its pivot / stop / MA50 during the session. One per ticker, type and day.
+-- Append-only; display only (never an order, never a buy / sell instruction).
+CREATE TABLE IF NOT EXISTS intraday_alerts (
+    alert_id      TEXT PRIMARY KEY,          -- session_date:ticker:alert_type
+    session_date  TEXT NOT NULL,
+    ticker        TEXT NOT NULL,
+    alert_type    TEXT NOT NULL CHECK (alert_type IN ('PIVOT_CROSS','STOP_TOUCH','MA50_LOST','BREAKOUT_UNDO')),
+    price         REAL NOT NULL,             -- VND
+    level         REAL NOT NULL,             -- the pivot / stop / MA50 it reached
+    traded_at     TEXT NOT NULL,             -- the trade's time (Vietnam)
+    volume        REAL,                      -- the session's matched volume so far
+    volume_pace   REAL,                      -- volume / (50-session average x share of the day elapsed)
+    what_changed  TEXT NOT NULL,
+    source_id     TEXT NOT NULL,
+    source_level  INTEGER NOT NULL,
+    observed_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intraday_alerts_day ON intraday_alerts(session_date);
+
+CREATE TRIGGER IF NOT EXISTS intraday_alerts_append_only
+BEFORE UPDATE ON intraday_alerts
+BEGIN SELECT RAISE(ABORT, 'intraday_alerts is append-only'); END;
+
 -- Daily computed state of each monitored ticker. Recomputable from bars at any
 -- time; stored so a report can show how a name has evolved.
 CREATE TABLE IF NOT EXISTS monitor_state (

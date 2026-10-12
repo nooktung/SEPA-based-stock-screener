@@ -24,6 +24,7 @@ Usage:
     python -m src.main index-session [--days 300]                    # VN-Index matched volume, breadth + DNSE calendar
     python -m src.main index-check [--sessions 60] [--no-fetch]      # VN-Index bars vs HOSE's own values (report only)
     python -m src.main check                                         # invariants on what the dashboard shows (report)
+    python -m src.main watch [--until 14:50] [--dry-run]             # intraday alerts for the focus list (DNSE websocket)
 """
 
 from __future__ import annotations
@@ -284,7 +285,7 @@ def screen(args: list[str]) -> int:
         print("\nChưa có phân ngành (chạy: python -m src.main industry)")
     print(f"\nCSV: {out}")
     print("Tầng RS: Mạnh ≥ 90, Dẫn 80-89, Đạt 70-79. Cách = % so với pivot (âm: dưới pivot). Trạng thái: "
-          "Ở vùng pivot / Đang theo dõi / Vừa breakout / Mất hiệu lực -- không phải tín hiệu mua. "
+          "Ở vùng pivot (pivot tới +5%) / Sắp tới pivot (dưới pivot tối đa 5%) / Đang theo dõi / Vừa breakout / Mất hiệu lực -- không phải tín hiệu mua. "
           "Rủi ro = pivot tới stop. T+2 = lỗ nếu giảm sàn liên tiếp tới chiều T+2 (không phải giới hạn trên). "
           "TK = hạng thanh khoản: Cao ≥ 10 tỷ, Khá 8-10 tỷ, Thấp 3-8 tỷ/phiên (Thấp: khó mua bán lượng lớn, dễ kẹt khi giảm sàn).")
     return 0
@@ -448,11 +449,12 @@ def fundamentals(args: list[str]) -> int:
     from collections import Counter
     from datetime import date
 
-    from src.collectors.base import ProviderError
+    from src.collectors.base import ProviderDataMissing, ProviderError
+    from src.collectors.providers import vndirect_finfo_provider as vnd
     from src.collectors.providers.cafef_financial_provider import (
-        fetch_quarterly_income, latest_completed_quarter, quarter_end)
+        SOURCE_ID as CAFEF_ID, fetch_quarterly_income, latest_completed_quarter, quarter_end)
     from src.collectors.providers.web_news import PoliteFetcher
-    from src.quant.fundamentals import fetch_log, grade_ticker, log_fetch, store_income
+    from src.quant.fundamentals import fetch_log, grade_ticker, log_fetch, log_reason, store_income
     from src.quant.screener import liquid_tickers, screen_settings
 
     parser = argparse.ArgumentParser(prog="python -m src.main fundamentals")
@@ -466,29 +468,58 @@ def fundamentals(args: list[str]) -> int:
     tickers = [t.upper() for t in opts.tickers] if opts.tickers else liquid_tickers()
     wanted = quarter_end(*reversed(latest_completed_quarter(date.today()))).isoformat()
     fetcher = PoliteFetcher(2.5, 20.0)
+    as_json = vnd.json_fetcher(fetcher)
+    models_checked = False
     started = time.monotonic()
-    fetched = skipped = 0
+    fetched = skipped = from_vnd = 0
     for n, t in enumerate(tickers, 1):
         log = fetch_log(t)
         recent = log and log.get("checked_at", "")[:10] >= date.today().isoformat()[:8] + "01"
-        if not opts.refresh and log and (log.get("latest_quarter") == wanted or (recent and not log.get("accepted_quarters"))):
+        on_vnd = bool(log) and log.get("source_id") == vnd.SOURCE_ID
+        rejected = bool(log) and not log.get("accepted_quarters")
+        vnd_tried = rejected and "VNDirect" in (log.get("rejected_reason") or "")
+        if not opts.refresh and log and (log.get("latest_quarter") == wanted or (recent and rejected and (vnd_tried or on_vnd))):
             skipped += 1
             continue
+        # CafeF for ordinary companies; a bank's or a broker's layout is misplaced there, so a
+        # ticker CafeF rejected (or already read from VNDirect) goes to VNDirect's own template.
+        if not (on_vnd or (rejected and log.get("source_id") == CAFEF_ID)):
+            try:
+                data = fetch_quarterly_income(t, date.today(), fetch=fetcher)
+            except ProviderError as exc:
+                print(f"  {t}: {exc}")
+                continue
+            if data.quarters:
+                store_income(data)
+                log_fetch(data)
+                fetched += 1
+                continue
+            log_fetch(data)
         try:
-            data = fetch_quarterly_income(t, date.today(), fetch=fetcher)
-        except ProviderError as exc:
-            print(f"  {t}: {exc}")
+            if not models_checked:
+                vnd.check_items(vnd.fetch_models(as_json))
+                models_checked = True
+            template, data = vnd.fetch_quarterly_income(t, date.today(), as_json)
+        except ProviderDataMissing as exc:
+            prior = (fetch_log(t) or {}).get("rejected_reason") or "CafeF: không có quý hợp lệ"
+            log_reason(t, CAFEF_ID, f"{prior.split('; VNDirect')[0]}; VNDirect: {exc}")
             continue
-        store_income(data)
-        log_fetch(data)
+        except ProviderError as exc:
+            print(f"  {t} (VNDirect): {exc}")
+            continue
+        store_income(data, source_id=vnd.SOURCE_ID)
+        log_fetch(data, source_id=vnd.SOURCE_ID)
         fetched += 1
+        from_vnd += 1
+        print(f"  {t}: mẫu {vnd.TEMPLATE_TEXT[template]} (VNDirect), {len(data.quarters)} quý")
         if n % 25 == 0:
             print(f"  [{n}/{len(tickers)}] {time.monotonic() - started:.0f}s", flush=True)
     grades = {t: grade_ticker(t, settings) for t in tickers}
     count = Counter(g.grade for g in grades.values())
-    print(f"BCTC: tải {fetched}, bỏ qua {skipped} (đã có quý {wanted}), {len(tickers)} mã")
+    print(f"BCTC: tải {fetched} (ngân hàng / chứng khoán từ VNDirect: {from_vnd}), bỏ qua {skipped} "
+          f"(đã có quý {wanted}), {len(tickers)} mã")
     print("  hạng: " + "  ".join(f"{k}={count.get(k, 0)}" for k in ("A+", "A", "B", "WEAK", "FAIL", "NO_DATA")))
-    print("  (số liệu CafeF, chưa đối chiếu BCTC gốc; LNST công ty mẹ thay cho EPS)")
+    print("  (số liệu CafeF / VNDirect, chưa đối chiếu BCTC gốc; LNST công ty mẹ thay cho EPS)")
     return 0
 
 
@@ -1055,6 +1086,49 @@ def check(args: list[str]) -> int:
     return 1 if report["violations"] else 0
 
 
+def watch(args: list[str]) -> int:
+    """Intraday alerts during the session (src/collectors/intraday_watch.py): pivot, stop and MA50
+    reached by a matched trade. Read-only market data; display only."""
+    import argparse
+    import asyncio
+    import time as _time
+    from datetime import datetime, time
+
+    from src.collectors.intraday_watch import VN_TZ, build_levels, intraday_settings, run_watch
+    from src.env import load_dotenv
+    from src.market_calendar import is_trading_day
+
+    parser = argparse.ArgumentParser(prog="python -m src.main watch")
+    parser.add_argument("--until", help="stop at this VN time, HH:MM (default intraday.stop)")
+    parser.add_argument("--dry-run", action="store_true", help="print alerts, do not store them")
+    opts = parser.parse_args(args)
+    load_dotenv()
+    init_db()
+    cfg = intraday_settings()
+    now = datetime.now(VN_TZ)
+    if not is_trading_day(now.date()):
+        print(f"{now:%d/%m/%Y} không phải phiên giao dịch.")
+        return 0
+    start, end = time.fromisoformat(str(cfg["start"])), time.fromisoformat(opts.until or str(cfg["stop"]))
+    if now.time() >= end:
+        print(f"Phiên đã qua {end:%H:%M}; không theo dõi.")
+        return 0
+    levels = build_levels(now.date())
+    watched = [t for t, lv in levels.items() if not lv.skip_reason]
+    print(f"Theo dõi trong phiên {len(watched)} mã (pivot / stop / MA50 của phiên trước), tới {end:%H:%M}.")
+    for t, lv in sorted(levels.items()):
+        if lv.skip_reason:
+            print(f"  bỏ qua {t:<4} {lv.skip_reason}")
+    wait = (datetime.combine(now.date(), start, VN_TZ) - now).total_seconds()
+    if wait > 0:
+        print(f"Chờ tới {start:%H:%M}…")
+        _time.sleep(wait)
+    status = asyncio.run(run_watch(until=end, dry_run=opts.dry_run))
+    print(f"Kết thúc: {status.trades} lệnh khớp đã đọc, {status.alerts} cảnh báo"
+          + (f", lỗi: {status.error}" if status.error else ""))
+    return 0
+
+
 COMMANDS = {
     "doctor": lambda args: doctor(),
     "initdb": lambda args: initdb(),
@@ -1079,6 +1153,7 @@ COMMANDS = {
     "check": check,
     "ssi": ssi,
     "crosscheck": crosscheck,
+    "watch": watch,
 }
 
 

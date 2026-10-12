@@ -150,6 +150,23 @@ def _chart_series(bars: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, 
 INDEX_NAMES = {"VNINDEX": "VN-Index", "VN30": "VN30", "HNXINDEX": "HNX-Index"}
 
 
+def _rs_line(bars: list[dict[str, Any]], tf: str, path: Path | None) -> dict[str, Any] | None:
+    """The stock's RS line against the market index on these bars (src/quant/rs_line.py)."""
+    from src.quant import rs_line as rsl  # noqa: PLC0415
+
+    if not bars:
+        return None
+    symbol = screen_settings()["market"]["index"]
+    closes = dict((r["trade_date"], r["close"]) for r in _rows(
+        "SELECT trade_date, close FROM index_daily WHERE symbol = ? AND trade_date >= ?",
+        (symbol, bars[0]["trade_date"]), path))
+    lookback, trend = rsl.settings(load_config().thresholds, tf)
+    out = rsl.rs_line(bars, closes, lookback, trend, "trade_date" if tf == "D" else "period_end")
+    if out:
+        out["index"] = INDEX_NAMES.get(symbol, symbol)
+    return out
+
+
 def _daily_periods() -> dict[str, int]:
     from src.quant.timeframes import periods  # noqa: PLC0415
 
@@ -195,7 +212,8 @@ def api_bars(q: dict[str, str], path: Path | None = None) -> Any:
                               "về tương lai là ước tính.")
         except Exception:  # noqa: BLE001 - the chart must still load without the overlays
             log.exception("%s levels for %s", tf, index or ticker)
-    return {"tf": tf, "bars": bars, "ma": ma, "osc": osc, "ma_periods": per, "levels": levels}
+    return {"tf": tf, "bars": bars, "ma": ma, "osc": osc, "ma_periods": per, "levels": levels,
+            "rs_line": _rs_line(bars, tf, path) if ticker else None}
 
 
 # Index columns the market status reads (distribution days, FTD) plus the session's breadth.
@@ -336,6 +354,7 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
                     if closes.get(d) and refprices.plausible(closes.get(d), r["reference"], info[0]["exchange"] if info else None)},
         "fundamentals": fundamentals,
         "industry": industry[0] if industry else None,
+        "rs_line": _rs_line(bars, "D", path),
     }
 
 
@@ -820,6 +839,32 @@ def api_checks(q: dict[str, str], path: Path | None = None) -> Any:
     return summary(latest_report())
 
 
+def api_intraday(q: dict[str, str], path: Path | None = None) -> Any:
+    """The session's intraday alerts (python -m src.main watch) and the watcher's status. Read-only.
+    Without a date: today, or the latest session that has alerts."""
+    from src.collectors.intraday_watch import intraday_settings, read_status  # noqa: PLC0415
+
+    day = q.get("date") or datetime.now(VN_TZ).date().isoformat()
+    sql = ("SELECT a.*, t.name FROM intraday_alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
+           "WHERE a.session_date = ? ORDER BY a.traded_at DESC")
+    rows = _rows(sql, (day,), path)
+    if not rows and not q.get("date"):
+        last = _rows("SELECT MAX(session_date) AS d FROM intraday_alerts", path=path)
+        if last and last[0]["d"]:
+            day = last[0]["d"]
+            rows = _rows(sql, (day,), path)
+    status = read_status(date.fromisoformat(day))
+    if status:
+        written = status.get("written_at")
+        age = (datetime.now(VN_TZ) - datetime.fromisoformat(written)).total_seconds() if written else None
+        status["running"] = not status.get("ended_at")
+        status["stale"] = bool(status["running"] and (age is None or age > float(intraday_settings()["status_stale_seconds"])))
+        status["skipped_n"] = len(status.get("skipped") or {})
+        status["watched_n"] = len(status.get("watched") or [])
+        status.pop("last", None)                        # last prices: not needed by the page
+    return {"session_date": day, "alerts": rows, "status": status}
+
+
 def api_news(q: dict[str, str], path: Path | None = None) -> Any:
     days = int(q.get("days", 30))
     since = (datetime.now(VN_TZ) - timedelta(days=days)).isoformat()
@@ -845,6 +890,7 @@ ROUTES: dict[str, Callable[..., Any]] = {
     "/api/bars": api_bars,
     "/api/alerts": api_alerts,
     "/api/checks": api_checks,
+    "/api/intraday": api_intraday,
     "/api/news": api_news,
 }
 
@@ -853,17 +899,33 @@ WRITE_ROUTES: dict[str, Callable[..., Any]] = {"/api/mylist": mylist_write}
 MAX_BODY_BYTES = 2048
 
 
+def app_version(path: Path | None = None) -> str:
+    """What an open page was built against: the page's own files and the latest screen run.
+    A tab left open across an update kept its old script ("APPROACHING" shown raw, HII still in
+    group B from the earlier run); the page compares this with the value it first saw."""
+    stamp = max((f.stat().st_mtime_ns for f in STATIC.iterdir() if f.is_file()), default=0)
+    try:
+        with connect(path) as conn:
+            row = conn.execute("SELECT run_id FROM screen_runs ORDER BY created_at DESC LIMIT 1").fetchone()
+    except Exception:  # noqa: BLE001 - a version header must never break a response
+        row = None
+    return f"{stamp:x}-{row[0] if row else '-'}"
+
+
 class Handler(BaseHTTPRequestHandler):
     db_path: Path | None = None
 
     def log_message(self, fmt: str, *args: Any) -> None:  # quiet console
         log.debug(fmt, *args)
 
-    def _send(self, status: int, body: bytes, content_type: str, cache: str = "no-store") -> None:
+    def _send(self, status: int, body: bytes, content_type: str, cache: str = "no-store",
+              version: str | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
+        if version:
+            self.send_header("X-App-Version", version)
         self.end_headers()
         self.wfile.write(body)
 
@@ -914,7 +976,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 payload = _clean(route(query, self.db_path))
                 body = json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False).encode("utf-8")
-                self._send(200, body, "application/json; charset=utf-8")
+                self._send(200, body, "application/json; charset=utf-8", version=app_version(self.db_path))
             except KeyError as exc:
                 self._send(404, json.dumps({"error": str(exc)}).encode(), "application/json")
             except Exception as exc:  # noqa: BLE001 - a dashboard error must not kill the server

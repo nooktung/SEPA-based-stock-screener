@@ -49,6 +49,9 @@
     <button class="tab" data-tab="alerts" role="tab"
       data-title="Sự kiện" data-desc="Breakout, thủng stop, mất tiêu chí… của các mã đang theo dõi, mới nhất trước.">
       <span class="ico">⚑</span>Sự kiện</button>
+    <button class="tab" data-tab="intraday" role="tab"
+      data-title="Cảnh báo trong phiên" data-desc="Giá khớp lệnh chạm pivot, stop, MA50 của phiên trước (DNSE, thời gian thực). Chưa phải breakout hay thủng stop: các sự kiện đó xét ở giá đóng cửa.">
+      <span class="ico">◷</span>Trong phiên<span class="n" id="n-intraday"></span></button>
     <button class="tab" data-tab="news" role="tab"
       data-title="Tin tức" data-desc="Tin 30 ngày của các mã đang theo dõi, đã gộp trùng.">
       <span class="ico">✉</span>Tin tức</button>
@@ -70,8 +73,6 @@
     <div class="top-end">
       <div class="vni-wrap">
         <div id="vni" class="vni" role="button" tabindex="0" aria-label="Mở biểu đồ VN-Index"></div>
-        <button id="checks-line" class="checks-line small muted" type="button" hidden></button>
-        <div id="checks-pop" class="checks-pop" hidden></div>
       </div>
       <div class="run" title="Danh sách được lọc toàn thị trường vào ngày này; giá và chỉ báo vẫn cập nhật hằng ngày">
         <span>Danh sách lọc ngày</span>
@@ -139,6 +140,15 @@
         <tbody></tbody>
       </table></div>
       <button id="alerts-more" class="linkbtn more-btn" type="button" hidden>Xem thêm</button>
+    </section>
+
+    <!-- intraday alerts -->
+    <section id="tab-intraday" class="panel">
+      <div class="toolbar"><span id="intraday-status" class="muted"></span></div>
+      <div class="table-wrap"><table id="intraday-table">
+        <thead><tr><th>Giờ</th><th>Mã</th><th>Cảnh báo</th><th class="num">Giá</th><th class="num">Mức</th><th class="num" title="Khối lượng tới lúc đó so với nhịp bình quân 50 phiên (giả định khối lượng chia đều trong ngày, chỉ ước tính)">KL / nhịp</th><th>Diễn giải</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
     </section>
 
     <!-- news -->

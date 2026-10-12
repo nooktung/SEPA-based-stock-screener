@@ -538,6 +538,34 @@ chart_timeframes:
   W: [4, 10, 30, 40]
   M: [5, 10, 20, 40]
 
+# RS line on the stock chart (src/quant/rs_line.py): close / VN-Index close, display only.
+# A new high of the line over `lookback` bars gets a dot (IBD's blue dot: 52 weeks); a new high
+# while the price is below its own `lookback` high is "the RS line leads" [SÁCH]. `trend` bars
+# is the change shown beside it (63 sessions = 3 months, the RS Rating's latest quarter).
+rs_line:
+  lookback: {D: 250, W: 52, M: 12}
+  trend: {D: 63, W: 13, M: 3}
+
+# Intraday alerts (Phase 11, `python -m src.main watch`, src/quant/intraday.py): matched trades
+# from DNSE's websocket against the focus list's pivot / stop / MA50 of the last close. Display only.
+intraday:
+  start: "09:00"                    # VN time; `watch` waits until then
+  stop: "14:50"                     # and ends itself after the ATC
+  board_id: G1                      # round lot
+  # Continuous-trading minutes per exchange, the clock for the volume pace (ATO / ATC left out).
+  sessions:
+    HOSE: [["09:15", "11:30"], ["13:00", "14:30"]]
+    HNX: [["09:00", "11:30"], ["13:00", "14:30"]]
+    UPCOM: [["09:00", "11:30"], ["13:00", "15:00"]]
+  min_session_fraction: 0.1         # no pace before ~10% of the day (one large opening print would dominate)
+  avg_volume_sessions: 50           # the pace's average, as the monitor's breakout rule
+  ma_sessions: 50
+  # HOSE / HNX: today's reference price must equal the stored close (within this %), else the levels
+  # may be on another price scale (a corporate action) and the ticker is not watched today.
+  reference_tolerance_pct: 0.1
+  status_every_seconds: 15          # how often the status file the dashboard reads is rewritten
+  status_stale_seconds: 120         # the dashboard calls the feed stale after this long without a write
+
 # `python -m src.main start`: update everything, then open the dashboard (src/pipeline.py).
 pipeline:
   session_closed_after: "15:05"     # VN time; before this, today's bar is still forming
