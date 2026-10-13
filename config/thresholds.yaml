@@ -566,6 +566,14 @@ intraday:
   status_every_seconds: 15          # how often the status file the dashboard reads is rewritten
   status_stale_seconds: 120         # the dashboard calls the feed stale after this long without a write
 
+# Static copy of the dashboard for a few chosen viewers (src/web/export.py, `export-site`, then
+# scripts/deploy_site.ps1 -> Cloudflare Pages behind Cloudflare Access; user decision 2026-10-12).
+# Read-only: no database, no keys, no write route; written to data/site/ (never committed).
+site:
+  out_dir: data/site
+  runs: 5                         # screen runs offered in "Danh sách lọc ngày" on the copy
+  pages_project: sepa-vn          # Cloudflare Pages project the deploy script uploads to
+
 # `python -m src.main start`: update everything, then open the dashboard (src/pipeline.py).
 pipeline:
   session_closed_after: "15:05"     # VN time; before this, today's bar is still forming

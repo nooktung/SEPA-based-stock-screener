@@ -61,3 +61,13 @@ if ((Step "ssi --days 3") -eq 0) { Step "crosscheck --days 30" | Out-Null }
 # rebuilds the whole-market table on the new RS. Before 2026-10-11 the 15:30 job never screened,
 # so sessions without a manual `start` had no screen run (tester report B21).
 Step "start --update-only" | Out-Null
+# The read-only copy for the viewers the user chose (run.md, "Bản web cho người khác"): export-site
+# refuses (exit 2) unless the data is the latest closed session and its screen run exists, and the
+# published copy then stays as it is; the upload runs only after a good export. Without the
+# Cloudflare keys in .env the upload step says so and exits 3.
+if ((Step "export-site") -eq 0) {
+    Note "=== deploy_site ==="
+    $deploy = Join-Path $root "scripts\deploy_site.ps1"
+    & "$env:SystemRoot\System32\cmd.exe" /d /c "powershell -NoProfile -ExecutionPolicy Bypass -File `"$deploy`" >> `"$log`" 2>&1"
+    Note "deploy_site xong, exit=$LASTEXITCODE"
+}

@@ -10,7 +10,44 @@ const tone = (v) => (v > 0 ? "pos" : v < 0 ? "neg" : "");
 const dmy = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : "–");
 const dm = (s) => (s ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : "–");
 
+// Static copy (python -m src.main export-site, published to Cloudflare Pages): no server; every
+// /api/<route>?<query> the page asks is a JSON file at staticPath(), written by the same Python
+// functions (src/web/export.py static_path). site.json says the page is that copy; the local
+// server has none, so the same script runs in both places.
+let SITE = null;
+function staticPath(url) {
+  const u = new URL(url, location.href);
+  const safe = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, "_");
+  const route = safe(u.pathname.replace(/^\/api\//, ""));
+  const ps = [...u.searchParams.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return ps.length ? `data/${route}/${ps.map(([k, v]) => `${safe(k)}-${safe(v)}`).join("_")}.json` : `data/${route}.json`;
+}
+async function detectSite() {
+  let s = null;
+  try { const r = await fetch("site.json", { cache: "no-store" }); if (r.ok) s = await r.json(); } catch { /* local server */ }
+  if (!s || !s.static) return;
+  SITE = s;
+  document.body.classList.add("static-site");
+  const made = s.generated_at ? `${s.generated_at.slice(11, 16)} ${dmy(s.generated_at.slice(0, 10))}` : "";
+  $("#site-note").hidden = false;
+  $("#site-note").textContent = `Bản web chỉ đọc · dữ liệu phiên ${dmy(s.session)}${made ? ` · cập nhật lúc ${made}` : ""}`;
+  pageVersion = s.version;
+  // A new copy is published after each session: offer a reload to a tab left open.
+  setInterval(async () => {
+    try { const r = await fetch("site.json", { cache: "no-store" }); if (r.ok) noteVersion((await r.json()).version); } catch { /* offline */ }
+  }, 600000);
+}
+
 async function get(url) {
+  if (SITE && url.startsWith("/api/")) {
+    const r = await fetch(staticPath(url), { cache: "no-cache" });
+    if (!r.ok) {
+      const t = new URL(url, location.href).searchParams.get("ticker");
+      throw new Error(t ? `Bản web chỉ có biểu đồ chi tiết của các mã đang theo dõi; ${t} chỉ xem được trên bản chạy trên máy.`
+        : "Bản web không có mục này.");
+    }
+    return r.json();
+  }
   const r = await fetch(url);
   noteVersion(r.headers.get("X-App-Version"));
   if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `${url}: ${r.status}`); }
@@ -26,7 +63,7 @@ function noteVersion(v) {
   if (v === pageVersion || document.getElementById("reload-note")) return;
   const b = document.createElement("button");
   b.id = "reload-note"; b.type = "button"; b.className = "reload-note";
-  b.textContent = "Trang web hoặc lượt lọc đã được cập nhật — bấm để tải lại";
+  b.textContent = SITE ? "Đã có dữ liệu phiên mới — bấm để tải lại" : "Trang web hoặc lượt lọc đã được cập nhật — bấm để tải lại";
   b.onclick = () => location.reload();
   document.body.appendChild(b);
 }
@@ -75,7 +112,7 @@ const stBadge = (st) => (st ? `<span class="stbadge st-${esc(st)}" title="${esc(
 // Company logo (python -m src.main logos); a tinted tile with the code when none is stored.
 const hue = (t) => [...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
 const logoTile = (t, size = "") => (state.logos.has(t)
-  ? `<span class="clogo${size}" style="--h:${hue(t)}"><img src="/logo/${esc(t)}" alt="" loading="lazy" onerror="this.parentNode.classList.add('mono');this.replaceWith('${esc(t)}')"></span>`
+  ? `<span class="clogo${size}" style="--h:${hue(t)}"><img src="${SITE ? `logo/${esc((SITE.logos || {})[t] || t)}` : `/logo/${esc(t)}`}" alt="" loading="lazy" onerror="this.parentNode.classList.add('mono');this.replaceWith('${esc(t)}')"></span>`
   : `<span class="clogo mono${size}" style="--h:${hue(t)}" aria-hidden="true">${esc(t)}</span>`);
 // Above a million shares the exact count stops helping a scan: 55.332.492 -> 55,3 tr.
 const vol = (v, signed = false) => (v == null ? "–" : Math.abs(v) >= 1e6 ? `${signed && v > 0 ? "+" : ""}${fmt(v / 1e6, 1)} tr` : signed ? sfmt(v) : fmt(v));
@@ -1496,7 +1533,7 @@ async function loadIntraday() {
     : `<tr><td colspan="7" class="empty">Chưa có cảnh báo trong phiên ${dmy(d.session_date)}.</td></tr>`;
 }
 // Refresh while the page is open; the watcher rewrites its status every few seconds.
-setInterval(() => { if ($("#tab-intraday").classList.contains("active") && !document.hidden) loadIntraday(); }, 30000);
+setInterval(() => { if (!SITE && $("#tab-intraday").classList.contains("active") && !document.hidden) loadIntraday(); }, 30000);
 
 async function loadIndustries() {
   const runId = state.runId;
@@ -1560,6 +1597,7 @@ function syncView() {
 async function init() {
   // Wired before the first request: a click on the menu while the page loads used to be lost (R3-12).
   $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t)));
+  await detectSite();
   try { state.logos = new Set(await get("/api/logos")); } catch { /* tiles with the code instead */ }
   const runs = await get("/api/runs");
   const runText = (r) => `${dmy(r.as_of_date)} · ${r.members} mã${r === runs[0] ? " (mới nhất)" : ""}`;

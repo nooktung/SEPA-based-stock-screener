@@ -479,3 +479,8 @@ td.num .two { align-items: flex-end; }
 .reload-note { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 90; cursor: pointer;
   font: inherit; font-size: 13px; color: #fff; background: var(--accent); border: 0; border-radius: 999px;
   padding: 8px 16px; box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+
+/* Static copy (export-site): read-only, no position check, no "Của tôi" edits */
+.site-note { margin: 4px 0 0; color: var(--muted); }
+body.static-site [data-star], body.static-site #d-star, body.static-site #mine-form,
+body.static-site .tab[data-group="mine"], body.static-site .dtab[data-pane="position"] { display: none !important; }

@@ -25,6 +25,7 @@ Usage:
     python -m src.main index-check [--sessions 60] [--no-fetch]      # VN-Index bars vs HOSE's own values (report only)
     python -m src.main check                                         # invariants on what the dashboard shows (report)
     python -m src.main watch [--until 14:50] [--dry-run]             # intraday alerts for the focus list (DNSE websocket)
+    python -m src.main export-site [--force] [--out data/site]       # read-only static copy of the dashboard
 """
 
 from __future__ import annotations
@@ -1129,6 +1130,28 @@ def watch(args: list[str]) -> int:
     return 0
 
 
+def export_site(args: list[str]) -> int:
+    """Static copy of the dashboard for Cloudflare Pages (src/web/export.py). Exit 2 when the data
+    is not the latest closed session: the published copy is then left as it is."""
+    import argparse
+    from pathlib import Path
+
+    from src.web.export import ExportRefused, export_site as run_export
+
+    parser = argparse.ArgumentParser(prog="python -m src.main export-site")
+    parser.add_argument("--out", help="output folder (default site.out_dir, data/site)")
+    parser.add_argument("--force", action="store_true", help="export even when the data is not the latest session")
+    opts = parser.parse_args(args)
+    try:
+        report = run_export(out_dir=Path(opts.out) if opts.out else None, force=opts.force)
+    except ExportRefused as exc:
+        print(f"Không xuất bản: {exc}")
+        return 2
+    print(f"Bản web tĩnh phiên {report.session}: {report.files} file, {report.bytes / 1e6:.1f} MB -> {report.out_dir}")
+    print(f"  biểu đồ chi tiết: {len(report.detail)} mã" + (f"; bỏ qua {len(report.skipped)} file (API trả 404)" if report.skipped else ""))
+    return 0
+
+
 COMMANDS = {
     "doctor": lambda args: doctor(),
     "initdb": lambda args: initdb(),
@@ -1154,6 +1177,7 @@ COMMANDS = {
     "ssi": ssi,
     "crosscheck": crosscheck,
     "watch": watch,
+    "export-site": export_site,
 }
 
 
