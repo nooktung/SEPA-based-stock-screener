@@ -112,6 +112,29 @@ python -m pytest -q                        # chạy bộ kiểm thử
 Từ đó tác vụ 15:30 tự lấy dữ liệu SSI và đối chiếu mỗi ngày. DNSE vẫn là nguồn chính; chỉ đổi sang dùng SSI
 cho phần cập nhật hằng ngày sau khi bạn xem báo cáo vài tuần và đồng ý. Chi tiết: `docs/SSI.md`.
 
+## 7. Bản web cho người khác xem (chỉ đọc, người bạn chọn)
+
+Máy bạn vẫn tính toán như cũ; sau tác vụ 15:30, một bản **chỉ đọc** (HTML + số liệu đã tính, không có
+database, không có khóa) được đẩy lên Cloudflare Pages. Chỉ email bạn cho phép mới mở được. Cài một lần:
+
+1. Tạo tài khoản Cloudflare (miễn phí). **Workers & Pages → Create → Pages → Upload assets**, đặt tên dự án
+   `sepa-vn` (trùng `site.pages_project` trong `config/thresholds.yaml`). Địa chỉ: `https://sepa-vn.pages.dev`.
+2. **My Profile → API Tokens → Create Token**, quyền *Account → Cloudflare Pages → Edit*. Chép token và
+   **Account ID** (trang Workers & Pages) vào `.env` (không dán vào chat với ai):
+   ```
+   CLOUDFLARE_API_TOKEN=...
+   CLOUDFLARE_ACCOUNT_ID=...
+   ```
+3. **Zero Trust → Access → Applications → Add → Self-hosted**: tên miền `sepa-vn.pages.dev` và
+   `*.sepa-vn.pages.dev`; policy **Allow**, *Include → Emails*: email của bạn và của người được xem
+   (họ đăng nhập bằng mã gửi qua email). Gói miễn phí tới 50 người.
+4. Thử: `python -m src.main export-site` rồi `powershell -ExecutionPolicy Bypass -File scripts\deploy_site.ps1 -Branch preview`
+   (bản xem thử ở `preview.sepa-vn.pages.dev`), mở bằng một email được phép và một email không được phép.
+5. Từ đó tác vụ 15:30 tự xuất và đẩy bản mới (~16:45). Ngày dữ liệu chưa đủ mới, bản cũ được giữ nguyên.
+
+Trên bản web không có "Của tôi", "Kiểm tra vị thế", và biểu đồ chi tiết chỉ có cho các mã đang theo dõi.
+Trước khi chia sẻ, hãy đọc điều khoản DNSE OpenAPI (và các nguồn tin) về việc cho người khác xem dữ liệu.
+
 ## Lưu ý
 
 - **Tự chạy hằng ngày:** tác vụ Windows **"SEPA - cap nhat hang ngay"** chạy `monitor`, `flow`, `news`, `logos`,

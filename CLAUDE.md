@@ -77,6 +77,18 @@ dashboard -- so another site open in the browser cannot write. Do not add
 other write routes, and never anything order-like. All CLI output
 is forced to UTF-8 in `main()` because Windows consoles default to cp1252.
 
+Static copy for a few viewers (2026-10-12, user decision, branch `web-tinh`):
+`python -m src.main export-site` (src/web/export.py) writes `data/site/` -- the page
+files plus one JSON per `/api/<route>?<query>` the page asks, produced by the same
+`api_*` functions (`static_path`, mirrored by app.js `staticPath`; `site.json` turns the
+page into the read-only copy). `scripts/deploy_site.ps1` uploads it to Cloudflare Pages
+(wrangler, keys CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID in .env), opened only by
+the emails listed in Cloudflare Access; the 15:30 job runs both after `start --update-only`.
+The database, the keys and the computing stay on this machine. The copy has no write,
+no position check, charts only for the monitored tickers; the export refuses (exit 2)
+unless the data is the latest closed session with its screen run, and stops on any
+value from .env in the output. `data/site` is never committed.
+
 `start` (2026-10-05, user decision) runs `src/pipeline.py` first: backfill ->
 index-session -> index-check -> industry -> fundamentals -> screen -> refprices -> monitor
 --no-fetch -> flow -> news -> logos -> market, each as its own CLI process, skipping what is already done
@@ -483,7 +495,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 896 tests currently pass.
+- Run `python -m pytest -q` after every change. 902 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.
