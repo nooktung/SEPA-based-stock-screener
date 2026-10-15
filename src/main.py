@@ -26,6 +26,9 @@ Usage:
     python -m src.main check                                         # invariants on what the dashboard shows (report)
     python -m src.main watch [--until 14:50] [--dry-run]             # intraday alerts for the focus list (DNSE websocket)
     python -m src.main export-site [--force] [--out data/site]       # read-only static copy of the dashboard
+    python -m src.main mylist-sync [--refresh]                       # the user's list from Cloudflare KV -> this machine
+    python -m src.main site-user add|remove|list [NAME] [--role owner|viewer]   # accounts of the web copy's login
+    python -m src.main mylist-refresh PNJ [FPT ...]                  # prices, technicals, flow, news of tickers just added
 """
 
 from __future__ import annotations
@@ -306,11 +309,16 @@ def monitor(args: list[str]) -> int:
     parser.add_argument("--no-fetch", action="store_true", help="use stored bars; do not call DNSE")
     parser.add_argument("--keep-events", action="store_true",
                         help="recompute the states, keep the session's stored events (re-run after a rule change)")
+    parser.add_argument("--tickers", nargs="+",
+                        help="only these monitored tickers (mylist-refresh); the session's brief is not rewritten")
     opts = parser.parse_args(args)
 
     load_dotenv()
     init_db()
     tickers, _, _ = monitored_tickers()
+    if opts.tickers:
+        wanted = {t.upper() for t in opts.tickers}
+        tickers = [t for t in tickers if t in wanted]
     if not opts.no_fetch:
         with connect() as conn:
             exchanges = {r[0]: r[1] for r in conn.execute("SELECT ticker, exchange FROM tickers")}
@@ -324,12 +332,13 @@ def monitor(args: list[str]) -> int:
             print(f"cập nhật giá {len(scope)} mã + chỉ số: {report.status}"
                   + (f"  (stale: {', '.join(stale)})" if stale else ""))
 
-    result = run_monitor(keep_events=opts.keep_events)
-    brief = render_brief(result)
-    out_dir = Path("data/briefs")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"monitor_{result.as_of}.md"
-    out.write_text(brief, encoding="utf-8")
+    result = run_monitor(keep_events=opts.keep_events, only=opts.tickers)
+    if not opts.tickers:                                # a part of the list never replaces the session's brief
+        brief = render_brief(result)
+        out_dir = Path("data/briefs")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"monitor_{result.as_of}.md"
+        out.write_text(brief, encoding="utf-8")
 
     m = result.market
     print(f"Theo dõi {len(result.states)}/{len(result.tickers)} mã, phiên {result.as_of}  "
@@ -340,7 +349,8 @@ def monitor(args: list[str]) -> int:
         print("  không có sự kiện mới")
     for e in sorted(result.events, key=lambda e: (e.event_type, e.ticker)):
         print(f"  {e.ticker:<4} {e.event_type:<24} {e.what_changed}")
-    print(f"\nTóm tắt: {out}")
+    if not opts.tickers:
+        print(f"\nTóm tắt: {out}")
     return 0
 
 
@@ -1136,20 +1146,166 @@ def export_site(args: list[str]) -> int:
     import argparse
     from pathlib import Path
 
-    from src.web.export import ExportRefused, export_site as run_export
+    from src.web.export import ExportRefused, export_site as run_export, update_site
 
     parser = argparse.ArgumentParser(prog="python -m src.main export-site")
     parser.add_argument("--out", help="output folder (default site.out_dir, data/site)")
     parser.add_argument("--force", action="store_true", help="export even when the data is not the latest session")
+    parser.add_argument("--update", action="store_true",
+                        help="only what a list change alters (scripts/mylist_poll.ps1); the full export when the copy is of another run")
     opts = parser.parse_args(args)
+    out = Path(opts.out) if opts.out else None
     try:
-        report = run_export(out_dir=Path(opts.out) if opts.out else None, force=opts.force)
+        report = update_site(out_dir=out, force=opts.force) if opts.update else run_export(out_dir=out, force=opts.force)
     except ExportRefused as exc:
         print(f"Không xuất bản: {exc}")
         return 2
+    if report.mode == "update":
+        print(f"Bản web tĩnh phiên {report.session}: cập nhật {report.files} file, {report.bytes / 1e6:.1f} MB -> {report.out_dir}")
+        print(f"  biểu đồ chi tiết mới: {', '.join(report.detail) or 'không có'}")
+        return 0
     print(f"Bản web tĩnh phiên {report.session}: {report.files} file, {report.bytes / 1e6:.1f} MB -> {report.out_dir}")
     print(f"  biểu đồ chi tiết: {len(report.detail)} mã" + (f"; bỏ qua {len(report.skipped)} file (API trả 404)" if report.skipped else ""))
     return 0
+
+
+def site_user(args: list[str]) -> int:
+    """Accounts of the web copy's login (src/web/site_users.py). The password is typed at a hidden
+    prompt and stored nowhere in clear; the hashes go to Cloudflare as a secret, in effect from the
+    next deployment (scripts/deploy_site.ps1). Exit 1 when nothing was changed."""
+    import argparse
+    import getpass
+
+    from src.env import load_dotenv
+    from src.web import site_users as su
+
+    parser = argparse.ArgumentParser(prog="python -m src.main site-user")
+    parser.add_argument("action", choices=("add", "remove", "list"))
+    parser.add_argument("name", nargs="?")
+    parser.add_argument("--role", choices=su.ROLES, default="viewer",
+                        help="owner: may edit 'Danh sách của tôi' on the web; viewer (default): reads only")
+    parser.add_argument("--no-upload", action="store_true", help="change data/site_users.json only")
+    parser.add_argument("--password-stdin", action="store_true",
+                        help="read the password from standard input (scripts/site_user_gui.ps1), never from the command line")
+    opts = parser.parse_args(args)
+    users = su.load()
+    if opts.action == "list":
+        for name, rec in sorted(users.items()):
+            print(f"  {name}  ({rec.get('role')})")
+        print(f"{len(users)} tài khoản" if users else "Chưa có tài khoản nào.")
+        return 0
+    if not opts.name:
+        parser.error("cần tên tài khoản")
+    cfg = load_config().thresholds.raw["site"]["login"]
+    try:
+        if opts.action == "add":
+            name = su.check_name(opts.name)
+            if opts.password_stdin:                     # the window already asked twice
+                # Windows PowerShell 5.1 puts a UTF-8 BOM before what it pipes: it is not part of the password.
+                password = sys.stdin.readline().rstrip("\r\n").removeprefix("﻿")
+            else:
+                print(f"Đặt mật khẩu cho tài khoản '{name}' (ít nhất {cfg['min_password_length']} ký tự; khi gõ sẽ không hiện chữ).")
+                password = getpass.getpass("Mật khẩu: ")
+                if getpass.getpass("Nhập lại mật khẩu: ") != password:
+                    raise su.SiteUserError("hai lần nhập không khớp")
+            new = su.add(users, name, password, opts.role, cfg)
+        else:
+            new = su.remove(users, opts.name)
+        if not opts.no_upload:
+            load_dotenv()
+            su.upload(new, load_config().thresholds.raw["site"]["pages_project"])
+    except su.SiteUserError as exc:
+        print(f"Không đổi gì: {exc}")
+        return 1
+    su.save(new)
+    verb = "Đã lưu" if opts.action == "add" else "Đã xóa"
+    print(f"{verb} tài khoản '{su.check_name(opts.name)}'" + (f" ({opts.role})" if opts.action == "add" else "")
+          + ("." if opts.no_upload else " lên Cloudflare (mọi người phải đăng nhập lại)."))
+    if not opts.no_upload:
+        print("Có hiệu lực từ lần đẩy kế tiếp: powershell -ExecutionPolicy Bypass -File scripts/deploy_site.ps1")
+    return 0
+
+
+def mylist_refresh(args: list[str]) -> int:
+    """Bring tickers just added to the user's list up to date, as the daily job would: prices,
+    the monitor's state (technicals, base, status), foreign flow, 30 days of news. Started in the
+    background by the dashboard after an add, and by `mylist-sync --refresh`."""
+    import argparse
+
+    from src.env import load_dotenv
+
+    parser = argparse.ArgumentParser(prog="python -m src.main mylist-refresh")
+    parser.add_argument("tickers", nargs="+")
+    opts = parser.parse_args(args)
+    load_dotenv()
+    init_db()
+    tickers = [t.upper() for t in opts.tickers]
+    print(f"Cập nhật mã mới trong danh sách của tôi: {', '.join(tickers)}", flush=True)
+    worst = 0
+    # Only the new tickers at each step (the monitor too: recomputing every list's tickers took
+    # ~0.4 s each, minutes once the web accounts' lists are in); their logos for the web copy.
+    for step in (["backfill", "--tickers", *tickers], ["monitor", "--no-fetch", "--keep-events", "--tickers", *tickers],
+                 ["flow", "--tickers", *tickers], ["news", "--tickers", *tickers, "--no-rss"],
+                 ["logos", "--tickers", *tickers]):
+        try:
+            code = COMMANDS[step[0]](step[1:])
+        except SystemExit as exc:                      # argparse / a step that exits: report, go on
+            code = exc.code if isinstance(exc.code, int) else 1
+        except Exception as exc:  # noqa: BLE001       # one step failing must not skip the others
+            print(f"  {step[0]}: lỗi {type(exc).__name__}: {exc}", flush=True)
+            code = 1
+        print(f"  {' '.join(step)}: exit {code}", flush=True)
+        worst = max(worst, int(code or 0))
+    return 0 if worst == 0 else 1
+
+
+def mylist_sync(args: list[str]) -> int:
+    """Every account's list from Cloudflare KV (the masters the web edits) into this machine:
+    site.local_account's into the local list, the other accounts' (data/site_users.json) into
+    web_watchlist, so every ticker in any list is monitored and published. Exit 0 unchanged,
+    10 changed, 3 when the web list is not set up, 1 on a KV error (nothing changed).
+    --refresh brings the tickers just added up to date (mylist-refresh)."""
+    import argparse
+
+    from src.collectors import cloudflare_kv as kv
+    from src.env import load_dotenv
+    from src.quant.user_watchlist import as_items, mirror, mirror_web
+    from src.web import site_users
+
+    parser = argparse.ArgumentParser(prog="python -m src.main mylist-sync")
+    parser.add_argument("--refresh", action="store_true", help="update the tickers just added (prices, technicals, flow, news)")
+    opts = parser.parse_args(args)
+    load_dotenv()
+    init_db()
+    if not kv.configured():
+        print("Chưa cấu hình danh sách trên web (CLOUDFLARE_API_TOKEN / ACCOUNT_ID / KV_MYLIST_ID trong .env): bỏ qua.")
+        return 3
+    site = load_config().thresholds.raw["site"]
+    local, cap = site["local_account"], int(site["mylist_max_per_account"])
+    others = sorted(a for a in site_users.load() if a != local)
+    try:
+        master = kv.read_or_seed(local, as_items())
+        lists = {a: kv.read_list(a)["items"] for a in others}      # never written yet: an empty list
+    except kv.KvError as exc:
+        print(f"Không đọc được danh sách trên web: {exc} — giữ nguyên danh sách trên máy.")
+        return 1
+    mine = mirror(master["items"], None)
+    web = mirror_web(lists, cap)
+    for t, why in mine["skipped"]:
+        print(f"  bỏ qua {t}: {why}")
+    for a, t, why in web["skipped"]:
+        print(f"  bỏ qua {t} của {a}: {why}")
+    print(f"Danh sách của {local}: thêm {', '.join(mine['added']) or '–'}; bỏ {', '.join(mine['removed']) or '–'} "
+          f"({len(master['items'])} mã)")
+    if others:
+        print(f"Danh sách của {len(others)} tài khoản khác ({', '.join(others)}): "
+              f"thêm {', '.join(web['added']) or '–'}; bỏ {', '.join(web['removed']) or '–'}")
+    if not (mine["added"] or mine["removed"] or web["added"] or web["removed"]):
+        return 0
+    added = sorted(set(mine["added"]) | set(web["added"]))
+    if opts.refresh and added:
+        mylist_refresh(added)
+    return 10
 
 
 COMMANDS = {
@@ -1178,6 +1334,9 @@ COMMANDS = {
     "crosscheck": crosscheck,
     "watch": watch,
     "export-site": export_site,
+    "mylist-sync": mylist_sync,
+    "site-user": site_user,
+    "mylist-refresh": mylist_refresh,
 }
 
 

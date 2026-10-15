@@ -98,6 +98,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE flow_daily ADD COLUMN foreign_buy_volume REAL")
         conn.execute("ALTER TABLE flow_daily ADD COLUMN foreign_sell_volume REAL")
 
+    # 2026-10-13: the foreign side of the matched board (G1) beside the all-board day totals. The totals
+    # include put-through deals, so "domestic = matched volume - foreign" read them wrongly (HDB 06/10:
+    # foreign sold 76.6M with 13.8M matched). Rows stored before stay boards_split = 0 and are read again.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(flow_daily)")}
+    if cols and "boards_split" not in cols:
+        for col in ("foreign_buy_volume_matched", "foreign_sell_volume_matched",
+                    "foreign_buy_value_matched", "foreign_sell_value_matched"):
+            conn.execute(f"ALTER TABLE flow_daily ADD COLUMN {col} REAL")
+        conn.execute("ALTER TABLE flow_daily ADD COLUMN boards_split INTEGER NOT NULL DEFAULT 0")
+
     # 2026-10-06: how a reference price was obtained (published by DNSE, or UPCoM's prior average).
     cols = {r[1] for r in conn.execute("PRAGMA table_info(reference_prices)")}
     if cols and "method" not in cols:

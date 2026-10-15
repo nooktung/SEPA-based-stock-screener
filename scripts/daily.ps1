@@ -35,6 +35,9 @@ function Step($name) {
     return $code
 }
 
+# The user's list edited on the web (Cloudflare KV) first, so today's monitor, flow and news cover it.
+# Without the web list set up in .env it says so and exits 3; nothing changes.
+Step "mylist-sync" | Out-Null
 # Reference / ceiling / floor of today's session (DNSE publishes the next session's at ~20:45,
 # so 15:30 still reads today's): the dashboard's % follows the price boards (~1-2 min).
 Step "refprices" | Out-Null
@@ -61,6 +64,13 @@ if ((Step "ssi --days 3") -eq 0) { Step "crosscheck --days 30" | Out-Null }
 # rebuilds the whole-market table on the new RS. Before 2026-10-11 the 15:30 job never screened,
 # so sessions without a manual `start` had no screen run (tester report B21).
 Step "start --update-only" | Out-Null
+# A `start` the user opened while this job ran holds the pipeline lock, and its screen run is what
+# the export needs (14/10/2026: this job exported at 20:06, was refused, the web stayed on 13/10).
+# Wait for it (up to 90 minutes, within the task's 3 hours) instead of exporting at once.
+$lock = Join-Path $root "data\pipeline.lock"
+$waited = 0
+while ((Test-Path $lock) -and $waited -lt 90) { Start-Sleep -Seconds 60; $waited++ }
+if ($waited -gt 0) { Note "đã chờ lượt cập nhật khác chạy xong: $waited phút" }
 # The read-only copy for the viewers the user chose (run.md, "Bản web cho người khác"): export-site
 # refuses (exit 2) unless the data is the latest closed session and its screen run exists, and the
 # published copy then stays as it is; the upload runs only after a good export. Without the

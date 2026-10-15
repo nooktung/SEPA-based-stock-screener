@@ -711,16 +711,27 @@ Ví dụ GMD 06/10/2026 (thưởng 2:1, hệ số 2/3): 52.000 / (2/3) = 78.000;
 
 ## 18. Khối ngoại và khối nội
 
-Nguồn: DNSE, theo **số cổ phiếu** từng phiên.
+Nguồn: DNSE (`/price/{mã}/foreign-trading`, ảnh chụp cuối phiên), theo **số cổ phiếu** từng phiên. DNSE trả hai loại
+số: tổng cả ngày của **mọi bảng** (khớp lệnh G1 + thỏa thuận T1, T3 + lô lẻ G4 — đúng số sàn và các công ty chứng khoán
+công bố, trùng VNDirect) và số **riêng bảng khớp lệnh G1** (sửa 13/10/2026).
 
 ```
-Ngoại ròng (cp)      = Ngoại mua − Ngoại bán
-Ngoại ròng (đồng)    = giá trị ròng DNSE trả về
-Ngoại ròng 5 phiên   = tổng ngoại ròng của 5 phiên giao dịch gần nhất (theo bảng giá), phiên DNSE không có số liệu
-                       khối ngoại không cộng gì
-Nội mua              = KL khớp phiên − Ngoại mua        (không âm)
-Nội bán              = KL khớp phiên − Ngoại bán        (không âm)
+Ngoại mua / bán khớp  = khối ngoại mua / bán qua khớp lệnh (bảng G1)
+Ngoại ròng (cp)       = tổng ngoại mua − tổng ngoại bán     (mọi bảng, như số sàn công bố)
+Thỏa thuận (cp)       = ngoại ròng − (ngoại mua khớp − ngoại bán khớp)     (gồm cả lô lẻ, thường rất nhỏ)
+Ngoại ròng (đồng)     = tổng giá trị mua − tổng giá trị bán
+Ngoại ròng 5 phiên    = tổng ngoại ròng của 5 phiên giao dịch gần nhất (theo bảng giá), phiên DNSE không có số liệu
+                        khối ngoại không cộng gì
+Nội mua               = KL khớp phiên − Ngoại mua KHỚP     (không âm)
+Nội bán               = KL khớp phiên − Ngoại bán KHỚP
+Mỗi phiên: KL khớp = ngoại mua khớp + nội mua = ngoại bán khớp + nội bán
+Chia / thưởng cổ phiếu: khối lượng các phiên đến hết phiên trước ngày giao dịch không hưởng quyền chia cho hệ số
+                        (giá mới / giá cũ) -> số cổ phiếu theo thang hiện nay, như giá; giá trị (đồng) giữ nguyên
 ```
+
+Trước 13/10/2026 khối nội lấy KL khớp trừ **tổng** khối ngoại (gồm thỏa thuận), hai con số khác phạm vi: HDB 06/10 khối
+ngoại bán 76,6 triệu cp (2,3 triệu khớp lệnh, 74,3 triệu thỏa thuận) trong phiên chỉ khớp 13,8 triệu → khối nội bị để
+trống hoặc sai; và tổng 10 / 20 phiên của HDB cộng lẫn cổ phiếu trước và sau đợt chia 1,3 : 1 (09/10).
 
 "Khối nội" là phần còn lại sau khi trừ khối ngoại. DNSE không tách cá nhân / tổ chức / tự doanh trong nước,
 nên không bao giờ trình bày khối nội là "cá nhân".

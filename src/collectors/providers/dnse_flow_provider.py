@@ -18,6 +18,15 @@ why the collector skips days already stored and skips weekends before asking.
 encoded anywhere in this system; they simply produce no snapshot, and no
 snapshot means no record rather than a zero.
 
+**Day totals cover every board; the board's own figures do not.** On every row,
+`totalBuyVolume` / `totalSellVolume` / `total*TradedAmount` are the day's totals over all
+boards -- matched round lot (G1), put-through (T1, and T3 after 14:45) and odd lot (G4) --
+the same numbers on every board and the ones exchanges and brokers publish. `buyVolume`,
+`sellVolume`, `buyTradedAmount`, `sellTradedAmount` on the last G1 snapshot are that board's
+own day: G1 + T1 + T3 + G4 add up to the totals exactly (HDB 06/10/2026: sold 2,299,100
+matched + 43,770,000 + 30,534,352 put-through + 95 odd lot = 76,603,547; checked on FPT, PNJ,
+HPG too). Only the matched part is comparable with the session's matched volume.
+
 Room fields (`foreignerOrderLimitQuantity`, `foreignerBuyPossibleQuantity`)
 come back on every row and are genuinely useful for Vietnamese equities, where
 a foreign-ownership limit being reached changes who can buy at all. They have
@@ -179,10 +188,20 @@ class DnseFlowProvider(FlowDataProvider):
             total_match_value=None,
             foreign_buy_volume=_as_float(row.get("totalBuyVolume")),
             foreign_sell_volume=_as_float(row.get("totalSellVolume")),
+            # The board's own day, read only from a G1 row (the one asked for).
+            **(_matched(row) if str(row.get("boardId") or "") == DEFAULT_BOARD_ID == self._board_id else {}),
             provenance=self._provenance(
                 url=f"{self._base_url}/price/{symbol}/foreign-trading?boardId={self._board_id}"
             ),
         )
+
+
+def _matched(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {"foreign_buy_volume_matched": _as_float(row.get("buyVolume")),
+            "foreign_sell_volume_matched": _as_float(row.get("sellVolume")),
+            "foreign_buy_value_matched": _as_float(row.get("buyTradedAmount")),
+            "foreign_sell_value_matched": _as_float(row.get("sellTradedAmount")),
+            "boards_split": True}
 
 
 def _as_float(value: Any) -> float | None:

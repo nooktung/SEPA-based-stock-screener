@@ -105,6 +105,7 @@ def _record(day=date(2026, 8, 27), buy=100.0, sell=60.0, key="SSI"):
             source_level=SourceLevel.DATA_VENDOR,
             observed_at=datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc),
         ),
+        boards_split=True,
     )
 
 
@@ -443,6 +444,7 @@ def test_a_session_read_intraday_is_refetched_after_it_closes(db, monkeypatch):
             "dnse_foreign_flow", SourceLevel.DATA_VENDOR,
             datetime(2026, 8, 28, 6, 33, tzinfo=timezone.utc),   # 13:33 in Vietnam
         ),
+        boards_split=True,
     )
     upsert_flows([midday], path=db)
 
@@ -475,6 +477,7 @@ def test_a_session_read_after_its_close_is_left_alone(db, monkeypatch):
             "dnse_foreign_flow", SourceLevel.DATA_VENDOR,
             datetime(2026, 8, 28, 8, 40, tzinfo=timezone.utc),   # 15:40 in Vietnam
         ),
+        boards_split=True,
     )
     upsert_flows([settled], path=db)
 
@@ -489,3 +492,23 @@ def test_a_session_read_after_its_close_is_left_alone(db, monkeypatch):
     )
     assert called == []
     assert "up to date" in report.outcomes[0].note
+
+
+# -- the matched board beside the day totals (2026-10-13) ------------------------------------
+
+def test_the_matched_board_is_kept_beside_the_totals_that_include_put_through():
+    """HDB 06/10/2026: totals sold 76,603,547 (G1 2,299,100 + put-through 74,304,352 + odd lot 95)."""
+    client = RecordingClient(default=snapshot(87_876_890_950, 2_045_523_747_850, totalBuyVolume=3_157_848,
+                                         totalSellVolume=76_603_547, buyVolume=3_157_800, sellVolume=2_299_100,
+                                         buyTradedAmount=87_875_000_000, sellTradedAmount=62_000_000_000))
+    [rec] = _provider(client).get_flows("TICKER", "HDB", date(2026, 10, 6), date(2026, 10, 6))
+    assert (rec.foreign_buy_volume, rec.foreign_sell_volume) == (3_157_848, 76_603_547)
+    assert (rec.foreign_buy_volume_matched, rec.foreign_sell_volume_matched) == (3_157_800, 2_299_100)
+    assert rec.foreign_sell_value_matched == 62_000_000_000 and rec.boards_split
+
+
+def test_a_session_stored_before_the_board_split_is_read_again(db):
+    from dataclasses import replace
+    old = replace(_record(day=date(2026, 8, 25)), boards_split=False)
+    upsert_flows([old, _record(day=date(2026, 8, 26))], path=db)
+    assert stored_flow_dates("TICKER", "SSI", date(2026, 8, 20), date(2026, 8, 31), path=db) == {date(2026, 8, 26)}

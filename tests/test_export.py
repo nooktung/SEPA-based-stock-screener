@@ -67,14 +67,19 @@ def test_the_copy_holds_the_api_answers_and_nothing_to_write(db, tmp_path):
                                 env_file=tmp_path / "none.env", logo_dir=tmp_path / "logos")
     meta = json.loads((out / "site.json").read_text(encoding="utf-8"))
     assert meta["static"] and meta["session"] == "2026-10-09" and meta["detail"] == ["AAA"] == report.detail
+    assert meta["local_account"] == "admin" and meta["mylist_max"] == 40      # read by functions/api/mylist.js
     from src.web import server
     stocks = json.loads((out / "data/stocks/run_id-r1.json").read_text(encoding="utf-8"))
     assert stocks == json.loads(json.dumps(server._clean(server.api_stocks({"run_id": "r1"}, db)), default=str))
     for name in ("index.html", "app.js", "data/runs.json", "data/ticker/ticker-AAA.json",
-                 "data/bars/tf-W_ticker-AAA.json", "data/flow/sessions-30_ticker-AAA.json", "data/news/days-30.json"):
+                 "data/bars/tf-W_ticker-AAA.json", "data/flow/sessions-30_ticker-AAA.json", "data/news.json",
+                 "data/universe.json"):
         assert (out / name).is_file(), name
     assert not (out / "data/position").exists() and not (out / "data/mylist").exists()
     assert not (out.parent / "site.new").exists()
+    # Every path behind the login on Cloudflare, the public logos excepted.
+    assert json.loads((out / "_routes.json").read_text(encoding="utf-8")) == \
+        {"version": 1, "include": ["/*"], "exclude": ["/logo/*"]}
 
 
 def test_a_value_from_env_anywhere_in_the_output_stops_the_export(db, tmp_path):
@@ -86,3 +91,73 @@ def test_a_value_from_env_anywhere_in_the_output_stops_the_export(db, tmp_path):
         export.export_site(out_dir=tmp_path / "site", path=db, now=datetime(2026, 10, 9, 16, 0, tzinfo=VN),
                            env_file=env, logo_dir=tmp_path / "logos")
     assert not (tmp_path / "site").exists() and not (tmp_path / "site.new").exists()
+
+
+def _pick(db, ticker, name):
+    """A second listed ticker with a year of prices, just added to the local list."""
+    days = pd.bdate_range(end="2026-10-09", periods=260)
+    with connect(db) as conn:
+        conn.execute("INSERT INTO tickers (ticker, exchange, name, created_at, updated_at) VALUES (?,'HOSE',?,'x','x')",
+                     (ticker, name))
+        conn.executemany("INSERT INTO prices_daily (ticker, trade_date, open, high, low, close, volume, source_id, "
+                         "observed_at) VALUES (?,?,10000,10000,10000,10000,1000,'dnse_openapi','x')",
+                         [(ticker, d.date().isoformat()) for d in days])
+        conn.execute("INSERT INTO user_watchlist (ticker, added_at) VALUES (?, '2026-10-09T09:00:00+00:00')", (ticker,))
+
+
+def _kw(db, tmp_path, env=None):
+    return dict(path=db, now=datetime(2026, 10, 9, 16, 0, tzinfo=VN), env_file=env or tmp_path / "none.env",
+                logo_dir=tmp_path / "logos")
+
+
+def test_an_update_writes_only_what_a_new_ticker_changes(db, tmp_path):
+    out = tmp_path / "site"
+    export.export_site(out_dir=out, **_kw(db, tmp_path))
+    before = json.loads((out / "site.json").read_text(encoding="utf-8"))
+    alerts = out / export.static_path("alerts", {"limit": export.ALERTS_LIMIT})
+    alerts_time = alerts.stat().st_mtime_ns
+    _pick(db, "BBB", "CTCP B")
+    rep = export.update_site(out_dir=out, **_kw(db, tmp_path))
+    assert rep.mode == "update" and rep.detail == ["BBB"]
+    meta = json.loads((out / "site.json").read_text(encoding="utf-8"))
+    assert meta["detail"] == ["AAA", "BBB"] and meta["run_id"] == "r1" and meta["version"] != before["version"]
+    for name in ("data/ticker/ticker-BBB.json", "data/bars/tf-W_ticker-BBB.json", "data/bars/tf-M_ticker-BBB.json",
+                 "data/flow/sessions-30_ticker-BBB.json"):
+        assert (out / name).is_file(), name
+    for name in ("data/stocks.json", "data/stocks/run_id-r1.json"):
+        assert "BBB" in [r["ticker"] for r in json.loads((out / name).read_text(encoding="utf-8"))], name
+    assert alerts.stat().st_mtime_ns == alerts_time                       # untouched: not part of an update
+    assert not (tmp_path / "site.upd").exists()
+    assert export.update_site(out_dir=out, **_kw(db, tmp_path)).detail == []   # nothing new the second time
+
+
+def test_an_update_without_a_copy_of_this_run_is_the_full_export(db, tmp_path):
+    out = tmp_path / "site"
+    rep = export.update_site(out_dir=out, **_kw(db, tmp_path))
+    assert rep.mode == "full" and (out / "index.html").is_file() and rep.detail == ["AAA"]
+    meta = json.loads((out / "site.json").read_text(encoding="utf-8"))
+    (out / "site.json").write_text(json.dumps({**meta, "run_id": "older"}), encoding="utf-8")
+    assert export.update_site(out_dir=out, **_kw(db, tmp_path)).mode == "full"
+    assert json.loads((out / "site.json").read_text(encoding="utf-8"))["run_id"] == "r1"
+
+
+def test_an_update_carrying_a_value_from_env_changes_nothing(db, tmp_path):
+    out = tmp_path / "site"
+    env = tmp_path / ".env"
+    env.write_text("SOME_KEY=Cong ty BBB bi mat\n", encoding="utf-8")
+    export.export_site(out_dir=out, **_kw(db, tmp_path, env))
+    before = (out / "site.json").read_text(encoding="utf-8")
+    _pick(db, "BBB", "Cong ty BBB bi mat")
+    with pytest.raises(export.ExportRefused, match=".env"):
+        export.update_site(out_dir=out, **_kw(db, tmp_path, env))
+    assert (out / "site.json").read_text(encoding="utf-8") == before
+    assert not (out / "data/ticker/ticker-BBB.json").exists() and not (tmp_path / "site.upd").exists()
+
+
+def test_the_monitor_can_be_limited_to_the_tickers_just_added(db):
+    from src.quant.monitor import run_monitor
+
+    _pick(db, "BBB", "CTCP B")
+    res = run_monitor(persist=False, path=db, keep_events=True, only=["bbb"])
+    assert res.tickers == ["BBB"] and set(res.states) <= {"BBB"}
+    assert "AAA" in run_monitor(persist=False, path=db, keep_events=True).tickers

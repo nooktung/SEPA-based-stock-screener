@@ -184,6 +184,11 @@ def upsert_flows(records: Sequence[FlowRecord], path: Path | None = None) -> int
             _observed_from(record.provenance.observed_at),
             record.foreign_buy_volume,
             record.foreign_sell_volume,
+            record.foreign_buy_volume_matched,
+            record.foreign_sell_volume_matched,
+            record.foreign_buy_value_matched,
+            record.foreign_sell_value_matched,
+            1 if record.boards_split else 0,
         )
         for record in records
     ]
@@ -194,8 +199,10 @@ def upsert_flows(records: Sequence[FlowRecord], path: Path | None = None) -> int
             INSERT INTO flow_daily
                 (scope, scope_key, trade_date, foreign_buy_value, foreign_sell_value,
                  foreign_net_value, prop_net_value, etf_net_value, total_match_value,
-                 source_id, observed_at, foreign_buy_volume, foreign_sell_volume)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_id, observed_at, foreign_buy_volume, foreign_sell_volume,
+                 foreign_buy_volume_matched, foreign_sell_volume_matched, foreign_buy_value_matched,
+                 foreign_sell_value_matched, boards_split)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope, scope_key, trade_date) DO UPDATE SET
                 foreign_buy_value=excluded.foreign_buy_value,
                 foreign_sell_value=excluded.foreign_sell_value,
@@ -206,7 +213,12 @@ def upsert_flows(records: Sequence[FlowRecord], path: Path | None = None) -> int
                 source_id=excluded.source_id,
                 observed_at=excluded.observed_at,
                 foreign_buy_volume=excluded.foreign_buy_volume,
-                foreign_sell_volume=excluded.foreign_sell_volume
+                foreign_sell_volume=excluded.foreign_sell_volume,
+                foreign_buy_volume_matched=excluded.foreign_buy_volume_matched,
+                foreign_sell_volume_matched=excluded.foreign_sell_volume_matched,
+                foreign_buy_value_matched=excluded.foreign_buy_value_matched,
+                foreign_sell_value_matched=excluded.foreign_sell_value_matched,
+                boards_split=excluded.boards_split
             """,
             rows,
         )
@@ -239,7 +251,7 @@ def stored_flow_observations(
         rows = conn.execute(
             """
             SELECT trade_date, observed_at FROM flow_daily
-             WHERE scope = ? AND scope_key = ? AND trade_date BETWEEN ? AND ?
+             WHERE scope = ? AND scope_key = ? AND trade_date BETWEEN ? AND ? AND boards_split = 1
             """,
             (scope, scope_key.upper(), start.isoformat(), end.isoformat()),
         ).fetchall()

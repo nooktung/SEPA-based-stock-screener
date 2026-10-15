@@ -1,7 +1,7 @@
 """`python -m src.main export-site`: a read-only static copy of the dashboard (2026-10-12).
 
-For a few viewers the user chooses: the copy is published to Cloudflare Pages behind
-Cloudflare Access (scripts/deploy_site.ps1). The computing stays on this machine -- the
+For a few viewers the user chooses: the copy is published to Cloudflare Pages behind the
+copy's own login (scripts/deploy_site.ps1, cloudflare/functions/_middleware.js). The computing stays on this machine -- the
 database, the DNSE keys and every rule never leave it; what is published is what the
 local dashboard would answer, written once after the daily job:
 
@@ -39,10 +39,9 @@ from src.database import connect
 STATIC = PROJECT_ROOT / "src" / "web" / "static"
 OUT_DIR = PROJECT_ROOT / "data" / "site"
 PAGE_FILES = ("index.html", "app.js", "learn.js", "style.css")
-# The queries app.js sends (loadFlow, loadAlerts, loadNews): the copy must hold exactly these.
+# The queries app.js sends (loadFlow, loadAlerts): the copy must hold exactly these.
 FLOW_SESSIONS = "30"
 ALERTS_LIMIT = "1000"
-NEWS_DAYS = "30"
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -115,6 +114,7 @@ class ExportReport:
     bytes: int = 0
     detail: list[str] = field(default_factory=list)
     skipped: dict[str, str] = field(default_factory=dict)
+    mode: str = "full"                    # "update": only what changed (update_site)
 
 
 def export_site(out_dir: Path | None = None, path: Path | None = None, now: datetime | None = None,
@@ -138,17 +138,7 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
     (work / "data").mkdir(parents=True)
     report = ExportReport(out_dir, fresh["run_session"] or "")
 
-    def write(route: str, query: Mapping[str, str], fn: Callable[..., Any]) -> bool:
-        try:
-            payload = server._clean(fn(dict(query), path))
-        except KeyError as exc:                     # the local server would answer 404: no file either
-            report.skipped[static_path(route, query)] = str(exc)
-            return False
-        target = work / static_path(route, query)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False), encoding="utf-8")
-        return True
-
+    write = _api_writer(work, path, report)
     run_list = server.api_runs({}, path)[:n_runs]
     write_json(work / static_path("runs"), server._clean(run_list))
     for q in [{}] + [{"run_id": r["run_id"]} for r in run_list]:
@@ -156,20 +146,14 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
         write("stocks", q, server.api_stocks)
         write("industries", q, server.api_industries)
     for route, q, fn in (("market", {}, server.api_market), ("alerts", {"limit": ALERTS_LIMIT}, server.api_alerts),
-                         ("news", {"days": NEWS_DAYS}, server.api_news), ("index", {}, server.api_index),
+                         ("news", {}, server.api_news), ("index", {}, server.api_index),
                          ("intraday", {}, server.api_intraday),
                          ("bars", {"index": "VNINDEX", "tf": "W"}, server.api_bars),
                          ("bars", {"index": "VNINDEX", "tf": "M"}, server.api_bars)):
         write(route, q, fn)
 
     # Charts for the monitored tickers (the rows of the latest run's table).
-    tickers = sorted({r["ticker"] for r in server.api_stocks({}, path)})
-    for t in tickers:
-        if write("ticker", {"ticker": t}, server.api_ticker):
-            report.detail.append(t)
-            for tf in ("W", "M"):
-                write("bars", {"ticker": t, "tf": tf}, server.api_bars)
-            write("flow", {"ticker": t, "sessions": FLOW_SESSIONS}, server.api_flow)
+    _write_details(write, sorted({r["ticker"] for r in server.api_stocks({}, path)}), report)
 
     # Logos: copied with their own extension; the page reads the name from site.json.
     logo_files: dict[str, str] = {}
@@ -180,9 +164,17 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
             shutil.copy2(src, work / "logo" / src.name)
             logo_files[t] = src.name
     write_json(work / static_path("logos"), sorted(logo_files))
+    # The tickers the web list may take (cloudflare/functions/api/mylist.js): listed shares with prices.
+    with connect(path) as conn:
+        write_json(work / "data" / "universe.json", [r[0] for r in conn.execute(
+            "SELECT t.ticker FROM tickers t WHERE EXISTS (SELECT 1 FROM prices_daily p WHERE p.ticker = t.ticker) "
+            "ORDER BY t.ticker")])
 
     for name in PAGE_FILES:
         shutil.copy2(STATIC / name, work / name)
+    # Cloudflare Pages: every path goes through the login (cloudflare/functions/_middleware.js) except
+    # the company logos -- public images, most of a page's requests (the free plan counts invocations).
+    write_json(work / "_routes.json", {"version": 1, "include": ["/*"], "exclude": ["/logo/*"]})
 
     digest = hashlib.sha1()
     for f in sorted((work / "data").rglob("*.json")):
@@ -191,18 +183,12 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
         digest.update((work / name).read_bytes())
     meta = {"static": True, "session": fresh["run_session"], "run_id": fresh["run_id"],
             "generated_at": now.isoformat(timespec="seconds"), "version": digest.hexdigest()[:16],
-            "detail": report.detail, "logos": logo_files}
+            "detail": report.detail, "logos": logo_files,
+            # Read by cloudflare/functions/api/mylist.js: one list per account of the login.
+            "local_account": cfg.get("local_account", "admin"), "mylist_max": int(cfg.get("mylist_max_per_account", 40))}
     write_json(work / "site.json", meta)
 
-    # No value from .env may leave this machine.
-    secrets = secret_values(env_file)
-    for f in work.rglob("*"):
-        if f.is_file() and f.suffix in (".json", ".html", ".js", ".css"):
-            text = f.read_text(encoding="utf-8", errors="ignore")
-            if any(s in text for s in secrets):
-                shutil.rmtree(work)
-                raise ExportRefused(f"{f.relative_to(work)} chứa một giá trị trong .env — dừng, không xuất bản")
-
+    _refuse_secrets(work, env_file)
     report.files = sum(1 for f in work.rglob("*") if f.is_file())
     report.bytes = sum(f.stat().st_size for f in work.rglob("*") if f.is_file())
     if out_dir.exists():
@@ -214,3 +200,118 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
 def write_json(target: Path, payload: Any) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False), encoding="utf-8")
+
+
+def _api_writer(work: Path, path: Path | None, report: ExportReport) -> Callable[..., bool]:
+    """Write one /api/<route>?<query> answer under `work` at its static path."""
+    from src.web import server  # noqa: PLC0415
+
+    def write(route: str, query: Mapping[str, str], fn: Callable[..., Any]) -> bool:
+        try:
+            payload = server._clean(fn(dict(query), path))
+        except KeyError as exc:                     # the local server would answer 404: no file either
+            report.skipped[static_path(route, query)] = str(exc)
+            return False
+        write_json(work / static_path(route, query), payload)
+        return True
+    return write
+
+
+def _write_details(write: Callable[..., bool], tickers: list[str], report: ExportReport) -> None:
+    """A ticker's chart page: its detail, weekly / monthly bars and foreign flow."""
+    from src.web import server  # noqa: PLC0415
+
+    for t in tickers:
+        if write("ticker", {"ticker": t}, server.api_ticker):
+            report.detail.append(t)
+            for tf in ("W", "M"):
+                write("bars", {"ticker": t, "tf": tf}, server.api_bars)
+            write("flow", {"ticker": t, "sessions": FLOW_SESSIONS}, server.api_flow)
+
+
+def _refuse_secrets(work: Path, env_file: Path | None) -> None:
+    """No value from .env may leave this machine: the staged files are dropped on any match."""
+    secrets = secret_values(env_file)
+    for f in work.rglob("*"):
+        if f.is_file() and f.suffix in (".json", ".html", ".js", ".css"):
+            text = f.read_text(encoding="utf-8", errors="ignore")
+            if any(s in text for s in secrets):
+                shutil.rmtree(work)
+                raise ExportRefused(f"{f.relative_to(work)} chứa một giá trị trong .env — dừng, không xuất bản")
+
+
+def update_site(out_dir: Path | None = None, path: Path | None = None, now: datetime | None = None,
+                force: bool = False, env_file: Path | None = None, logo_dir: Path | None = None) -> ExportReport:
+    """`export-site --update` (2026-10-14): after a list changed (scripts/mylist_poll.ps1), write only
+    what a new ticker changes into the published copy -- the latest run's tables (stocks, screen,
+    industries), the market table and the news -- plus the chart pages and logos of the tickers the
+    copy does not hold yet, and the page files. ~2 minutes instead of rewriting every ticker's charts
+    (~1.9 s each, ~12 minutes with ten accounts' lists). Older runs' tables wait for the full export
+    of the daily job. Same gate and .env check as the full export: the files are staged, checked,
+    then moved in, site.json last. A copy of another session or screen run, or none, gets the full
+    export instead (report.mode)."""
+    from src.collectors import logos  # noqa: PLC0415
+    from src.web import server  # noqa: PLC0415
+
+    cfg = load_config().thresholds.raw.get("site", {})
+    out_dir = Path(out_dir or PROJECT_ROOT / cfg.get("out_dir", "data/site"))
+    now = now or datetime.now(server.VN_TZ)
+    fresh = freshness(now, path)
+    if not force:
+        check_fresh(fresh)
+    try:
+        meta = json.loads((out_dir / "site.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = None
+    if not isinstance(meta, dict) or meta.get("run_id") != fresh["run_id"] or meta.get("session") != fresh["run_session"]:
+        return export_site(out_dir, path, now, force=force, env_file=env_file, logo_dir=logo_dir)
+
+    work = out_dir.with_name(out_dir.name + ".upd")
+    if work.exists():
+        shutil.rmtree(work)
+    (work / "data").mkdir(parents=True)
+    report = ExportReport(out_dir, fresh["run_session"] or "", mode="update")
+    write = _api_writer(work, path, report)
+
+    rows = server._clean(server.api_stocks({}, path))           # the same answer with the run's id: computed once
+    for q in ({}, {"run_id": fresh["run_id"]}):
+        write_json(work / static_path("stocks", q), rows)
+        write("screen", q, server.api_screen)
+        write("industries", q, server.api_industries)
+    write("market", {}, server.api_market)
+    write("news", {}, server.api_news)
+    held = set(meta.get("detail") or [])
+    _write_details(write, sorted({r["ticker"] for r in rows} - held), report)
+
+    logo_files = dict(meta.get("logos") or {})
+    for t in report.detail:
+        src = logos.logo_file(t, logo_dir or logos.LOGO_DIR)
+        if src is not None and t not in logo_files:
+            (work / "logo").mkdir(exist_ok=True)
+            shutil.copy2(src, work / "logo" / src.name)
+            logo_files[t] = src.name
+    if logo_files != (meta.get("logos") or {}):
+        write_json(work / static_path("logos"), sorted(logo_files))
+    for name in PAGE_FILES:
+        shutil.copy2(STATIC / name, work / name)
+    _refuse_secrets(work, env_file)
+
+    staged = sorted(f for f in work.rglob("*") if f.is_file())
+    digest = hashlib.sha1(str(meta.get("version")).encode("utf-8"))
+    for f in staged:
+        digest.update(f.read_bytes())
+    report.files = len(staged) + 1
+    report.bytes = sum(f.stat().st_size for f in staged)
+    for f in staged:
+        target = out_dir / f.relative_to(work)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(f, target)
+    shutil.rmtree(work)
+    meta.update({"generated_at": now.isoformat(timespec="seconds"), "version": digest.hexdigest()[:16],
+                 "detail": sorted(held | set(report.detail)), "logos": logo_files,
+                 "local_account": cfg.get("local_account", "admin"),
+                 "mylist_max": int(cfg.get("mylist_max_per_account", 40))})
+    tmp = out_dir / "site.json.tmp"
+    write_json(tmp, meta)
+    os.replace(tmp, out_dir / "site.json")
+    return report

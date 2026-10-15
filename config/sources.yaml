@@ -129,7 +129,10 @@ news:
     list_url: https://cafef.vn/du-lieu/Ajax/Events_RelatedNews_New.aspx
     base_url: https://cafef.vn
     page_size: 30
-    max_pages: 3
+    # A cap only: reading stops at the first item older than the lookback (30 days a day), so a
+    # daily run reads 1-3 pages. 20 pages (600 items) let a one-off `news --days 150` reach
+    # five months back (PNJ: ~75 items a month; CafeF's list goes back years).
+    max_pages: 20
     request_interval_seconds: 2.5
     timeout_seconds: 20
     notes: "Aggregator: disclosures are reposts, so level 3 until checked against the original PDF."

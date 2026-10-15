@@ -261,8 +261,14 @@ CREATE TABLE IF NOT EXISTS flow_daily (
     total_match_value REAL,
     source_id         TEXT NOT NULL,
     observed_at       TEXT NOT NULL,
-    foreign_buy_volume  REAL,            -- shares bought by foreign investors (matched board)
-    foreign_sell_volume REAL,
+    foreign_buy_volume  REAL,            -- shares bought by foreign investors, the day's total over every board
+    foreign_sell_volume REAL,            -- (matched G1 + put-through T1 / T3 + odd lot G4), as exchanges publish it
+    -- The matched board alone (G1), comparable with the session's matched volume (2026-10-13):
+    foreign_buy_volume_matched  REAL,
+    foreign_sell_volume_matched REAL,
+    foreign_buy_value_matched   REAL,
+    foreign_sell_value_matched  REAL,
+    boards_split      INTEGER NOT NULL DEFAULT 0,   -- 1 once the per-board figures were read
     PRIMARY KEY (scope, scope_key, trade_date)
 );
 
@@ -626,4 +632,15 @@ CREATE TABLE IF NOT EXISTS user_watchlist (
     ticker      TEXT PRIMARY KEY,
     added_at    TEXT NOT NULL,
     note        TEXT
+);
+
+-- "Danh sách của tôi" of the web copy's OTHER accounts (one list per account, 2026-10-14), mirrored
+-- from Cloudflare KV by `mylist-sync`: their tickers are monitored and published too. The list of
+-- site.local_account is user_watchlist above.
+CREATE TABLE IF NOT EXISTS web_watchlist (
+    account     TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    added_at    TEXT NOT NULL,
+    note        TEXT,
+    PRIMARY KEY (account, ticker)
 );

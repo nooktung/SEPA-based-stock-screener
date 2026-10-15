@@ -1,5 +1,5 @@
 ﻿# Upload data\site (python -m src.main export-site) to Cloudflare Pages: the read-only copy of the
-# dashboard, opened only by the viewers listed in Cloudflare Access (run.md, "Bản web cho người khác").
+# dashboard, opened only with an account of its login (site-user; run.md, "Bản web cho người khác").
 # Reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from .env (never committed) and the project
 # name from config/thresholds.yaml site.pages_project. Uses Cloudflare's own CLI (wrangler, via npx).
 # Exit 3 without the two keys, 2 without an exported copy: nothing is uploaded then.
@@ -7,6 +7,9 @@
 param([string]$Branch = "main")
 
 $ErrorActionPreference = "Continue"
+# UTF-8 output: in the daily job's log the Vietnamese lines came out garbled (console code page).
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -36,5 +39,7 @@ if (-not (Test-Path (Join-Path $site "site.json"))) {
 }
 $project = & $python -c "from src.config import load_config; print(load_config().thresholds.raw['site']['pages_project'])"
 Write-Output "Đẩy $site lên Cloudflare Pages, dự án $project, nhánh $Branch"
+# From cloudflare\ so wrangler also uploads cloudflare\functions (the list's /api/mylist on the web).
+Set-Location (Join-Path $root "cloudflare")
 & npx --yes wrangler pages deploy $site --project-name $project --branch $Branch --commit-dirty=true
 exit $LASTEXITCODE

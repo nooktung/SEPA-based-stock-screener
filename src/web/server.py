@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 
-from src.config import load_config
+from src.config import PROJECT_ROOT, load_config
 from src.database import connect
 from src.collectors import logos, refprices
 from src.quant.channel import chart_levels, trend_overlays
@@ -547,7 +547,7 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
     from src.quant.fundamentals import grade_ticker  # noqa: PLC0415
     from src.quant.screener import liquidity_tier  # noqa: PLC0415
     from src.quant.themes import load_themes  # noqa: PLC0415
-    from src.quant.user_watchlist import entries as my_entries  # noqa: PLC0415
+    from src.quant.user_watchlist import entries as my_entries, web_tickers  # noqa: PLC0415
 
     latest = _rows("SELECT run_id FROM screen_runs ORDER BY created_at DESC LIMIT 1", path=path)
     latest_id = latest[0]["run_id"] if latest else None
@@ -568,6 +568,9 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
     order = list(members) + [t for t in leaders if t not in members] \
         + [t for t in mine if t not in members and t not in leaders] \
         + sorted(watch - set(members) - set(leaders) - set(mine))
+    # The other web accounts' lists (2026-10-14): rows for the web copy, where each account's page
+    # picks its own list; here they belong to no group and stay out of every table.
+    order += [t for t in web_tickers(path) if t not in set(order)]
     if not order:
         return []
     marks = ",".join("?" * len(order))
@@ -592,8 +595,8 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
         (run[0]["as_of_date"], *order), path)} if old_run else {}
     level = screen_settings().get("industry", {}).get("level", 2)
     flows: dict[str, list[dict[str, Any]]] = {}
-    for r in _rows(f"SELECT f.scope_key, f.trade_date, f.foreign_buy_volume, f.foreign_sell_volume, f.foreign_net_value, "
-                   f"p.volume FROM flow_daily f LEFT JOIN prices_daily p ON p.ticker = f.scope_key "
+    for r in _rows(f"SELECT f.scope_key, f.trade_date, {_FLOW_COLS}, p.volume AS vol "
+                   f"FROM flow_daily f LEFT JOIN prices_daily p ON p.ticker = f.scope_key "
                    f"AND p.trade_date = f.trade_date WHERE f.scope = 'TICKER' AND f.scope_key IN ({marks}) "
                    f"ORDER BY f.trade_date DESC", tuple(order), path):
         flows.setdefault(r["scope_key"], []).append(r)
@@ -615,17 +618,13 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
             avg = _rows("SELECT AVG(close * volume) AS v FROM (SELECT close, volume FROM prices_daily WHERE ticker = ? "
                         "ORDER BY trade_date DESC LIMIT 20)", (t,), path)
             liq = avg[0]["v"] if avg else None
-        f = flows.get(t) or []
-
-        def net_vol(r: Mapping[str, Any]) -> float | None:
-            if r.get("foreign_buy_volume") is None or r.get("foreign_sell_volume") is None:
-                return None
-            return r["foreign_buy_volume"] - r["foreign_sell_volume"]
+        scale = share_scale(t, path)
+        f = [{"trade_date": r["trade_date"], **flow_row(r, scale(r["trade_date"]))} for r in flows.get(t) or []]
 
         # "5 phiên" = the ticker's last five SESSIONS, not the last five stored rows: DNSE has no
         # snapshot for a session without foreign trading, and ABB's five rows ran 14/09-30/09 (R3-03).
         sessions5 = {b["trade_date"] for b in (last_bars.get(t) or [])}
-        last5 = [net_vol(r) for r in f if r["trade_date"] in sessions5]
+        last5 = [r["foreign_net"] for r in f if r["trade_date"] in sessions5]
         fund = bj.get("fundamentals") or grade_ticker(t, settings, path).as_dict()
         state_date = states[t]["trade_date"] if t in states else None
         close, change, trade_date = st.get("close", m["close"] if m else None), st.get("change_pct"), state_date
@@ -658,11 +657,16 @@ def api_stocks(q: dict[str, str], path: Path | None = None) -> Any:
             "themes": bj.get("themes") or [{"name": n, "hot": hot.get(n, False)} for n, ts in themes.items() if t in ts],
             "industry": {"name": ind_name, "rs_percentile": ind_stat.get("rs_percentile"), "leading": ind_stat.get("leading")},
             "tech": st.get("tech") or {},
-            "flow": {"date": f[0]["trade_date"] if f else None, "net_volume": net_vol(f[0]) if f else None,
-                     "buy_volume": f[0]["foreign_buy_volume"] if f else None,
-                     "sell_volume": f[0]["foreign_sell_volume"] if f else None,
+            "flow": {"date": f[0]["trade_date"] if f else None, "net_volume": f[0]["foreign_net"] if f else None,
+                     "buy_volume": f[0]["foreign_buy"] if f else None,
+                     "sell_volume": f[0]["foreign_sell"] if f else None,
                      "net_value": f[0]["foreign_net_value"] if f else None,
                      "volume": f[0]["volume"] if f else None,
+                     "buy_volume_matched": f[0]["foreign_buy_matched"] if f else None,
+                     "sell_volume_matched": f[0]["foreign_sell_matched"] if f else None,
+                     "net_volume_put_through": f[0]["foreign_net_put_through"] if f else None,
+                     "domestic_buy": f[0]["domestic_buy"] if f else None,
+                     "domestic_sell": f[0]["domestic_sell"] if f else None,
                      "net5_volume": sum(v for v in last5 if v is not None) if any(v is not None for v in last5) else None,
                      "net5_value": (sum(r["foreign_net_value"] or 0 for r in f if r["trade_date"] in sessions5)
                                     if last5 else None),
@@ -744,51 +748,144 @@ def api_logos(q: dict[str, str], path: Path | None = None) -> Any:
     return logos.available(logos.LOGO_DIR)
 
 
-def api_flow(q: dict[str, str], path: Path | None = None) -> Any:
-    """Foreign and domestic buying / selling per session (shares), newest first.
+def share_scale(ticker: str, path: Path | None = None) -> Callable[[str], float]:
+    """Multiplier putting a session's share counts on today's scale. DNSE rescales a ticker's
+    prices on a stock dividend or split but neither its volumes nor the foreign figures, so a
+    sum over sessions across the ex-date mixes two kinds of share (HDB 09/10/2026, factor
+    0.769): a session up to an adjustment's `through_session` is divided by its factor."""
+    adj = [(r["through_session"], r["factor"]) for r in _rows(
+        "SELECT through_session, factor FROM price_adjustments WHERE ticker = ?", (ticker.upper(),), path)]
 
-    Domestic = matched volume of the session minus the foreign side -- DNSE does not
-    split domestic investors (individuals, institutions, proprietary desks) further."""
+    def scale(day: str) -> float:
+        k = 1.0
+        for through, factor in adj:
+            if factor and str(day) <= str(through):
+                k /= float(factor)
+        return k
+    return scale
+
+
+def flow_row(r: Mapping[str, Any], k: float = 1.0) -> dict[str, Any]:
+    """One session's foreign and domestic figures (shares on today's scale via `k`, values in VND).
+
+    Foreign totals (buy / sell / net) cover every board, as exchanges and brokers publish them:
+    matched (G1), put-through (T1, T3) and odd lot. Domestic = matched volume minus the foreign
+    MATCHED side (user's definition, 2026-10-03; until 2026-10-13 it took the totals, so a
+    put-through block made it wrong or blank: HDB 06/10 sold 76.6M with 13.8M matched)."""
+    def sh(v: Any) -> float | None:
+        return None if v is None else float(v) * k
+
+    fb, fs, vol = sh(r.get("fb")), sh(r.get("fs")), sh(r.get("vol"))
+    split = bool(r.get("split"))
+    fbm, fsm = (sh(r.get("fbm")), sh(r.get("fsm"))) if split else (None, None)
+    net = None if fb is None or fs is None else fb - fs
+    net_m = None if fbm is None or fsm is None else fbm - fsm
+
+    def dom(f: float | None) -> float | None:
+        return None if vol is None or f is None or f > vol + 0.5 else max(vol - f, 0.0)
+
+    return {"volume": vol, "has_flow": fb is not None or fs is not None, "adjusted": k != 1.0,
+            "foreign_buy": fb, "foreign_sell": fs, "foreign_net": net,
+            "foreign_net_value": None if r.get("fbv") is None or r.get("fsv") is None else r["fbv"] - r["fsv"],
+            "foreign_buy_matched": fbm, "foreign_sell_matched": fsm, "foreign_net_matched": net_m,
+            # put-through (and the odd lot): the totals minus the matched board
+            "foreign_net_put_through": None if net is None or net_m is None else net - net_m,
+            "domestic_buy": dom(fbm), "domestic_sell": dom(fsm)}
+
+
+_FLOW_COLS = ("f.foreign_buy_volume AS fb, f.foreign_sell_volume AS fs, f.foreign_buy_value AS fbv, "
+              "f.foreign_sell_value AS fsv, f.foreign_buy_volume_matched AS fbm, f.foreign_sell_volume_matched AS fsm, "
+              "f.boards_split AS split")
+
+
+def api_flow(q: dict[str, str], path: Path | None = None) -> Any:
+    """Foreign and domestic buying / selling per session, newest first (src.web.server.flow_row).
+
+    DNSE does not split domestic investors (individuals, institutions, proprietary desks) further."""
     ticker = (q.get("ticker") or "").upper()
     n = min(int(q.get("sessions", 20)), 60)
+    scale = share_scale(ticker, path)
     # One row per price session: a session DNSE holds no foreign snapshot for stays in the list,
     # blank, instead of the list reaching back a month to fill N rows (ABB, tester R3-03).
-    rows = _rows("SELECT p.trade_date, f.foreign_buy_volume AS fb, f.foreign_sell_volume AS fs, "
-                 "f.foreign_buy_value AS fbv, f.foreign_sell_value AS fsv, p.volume AS vol, p.close "
+    rows = _rows(f"SELECT p.trade_date, p.volume AS vol, p.close, {_FLOW_COLS} "
                  "FROM (SELECT * FROM prices_daily WHERE ticker = ? ORDER BY trade_date DESC LIMIT ?) p "
                  "LEFT JOIN flow_daily f ON f.scope = 'TICKER' AND f.scope_key = p.ticker AND f.trade_date = p.trade_date "
                  "ORDER BY p.trade_date DESC", (ticker, n), path)
-    out = []
-    for r in rows:
-        fb, fs, vol = r["fb"], r["fs"], r["vol"]
-        out.append({
-            "date": r["trade_date"], "close": r["close"], "volume": vol, "has_flow": fb is not None or fs is not None,
-            "foreign_buy": fb, "foreign_sell": fs,
-            "foreign_net": None if fb is None or fs is None else fb - fs,
-            "foreign_net_value": None if r["fbv"] is None or r["fsv"] is None else r["fbv"] - r["fsv"],
-            # Foreign volume includes put-through deals; when it exceeds the matched volume the
-            # subtraction says nothing (VHM 09/10: 0 / 0), so the domestic side is left blank (tester B16).
-            "domestic_buy": None if vol is None or fb is None or fb > vol else vol - fb,
-            "domestic_sell": None if vol is None or fs is None or fs > vol else vol - fs,
-        })
+    out = [{"date": r["trade_date"], "close": r["close"], **flow_row(r, scale(r["trade_date"]))} for r in rows]
     return {"ticker": ticker, "rows": out,
-            "note": "Khối ngoại: DNSE (bảng khớp lệnh). Khối nội = tổng khối lượng khớp − phần khối ngoại. "
+            "note": "Khối ngoại: DNSE. Mua / bán khớp = bảng khớp lệnh; thỏa thuận = phần còn lại của tổng ngày "
+                    "(gồm lô lẻ); ngoại ròng = tổng, như số sàn công bố. Khối nội = khối lượng khớp − khối ngoại khớp. "
                     "Phiên để trống: DNSE không có số liệu khối ngoại (thường là không có giao dịch khối ngoại)."}
 
 
 def mylist_write(body: dict[str, Any], path: Path | None = None) -> Any:
-    """The dashboard's one write: add / remove a ticker in the user's picks. Nothing else."""
-    from src.quant.user_watchlist import WatchlistError, add, remove  # noqa: PLC0415
+    """The dashboard's one write: add / remove a ticker in the user's picks. Nothing else.
+
+    With the web copy set up (src/collectors/cloudflare_kv.py) the master list is on Cloudflare:
+    it is read first (a ticker added on the web is not lost here) and written after; on a KV
+    error the local list is put back and nothing changes. A ticker added is brought up to date
+    in the background (`mylist-refresh`: its state, technicals, foreign flow, news)."""
+    from src.collectors import cloudflare_kv as kv  # noqa: PLC0415
+    from src.quant.user_watchlist import WatchlistError, add, as_items, entries, mirror, remove  # noqa: PLC0415
 
     action = body.get("action")
+    if action not in ("add", "remove"):
+        raise ValueError("action phải là add hoặc remove")
+    ticker = str(body.get("ticker", "")).strip().upper()
+    site = load_config().thresholds.raw["site"]
+    account = site["local_account"]                   # this machine's list is that account's on the web
+    web = _web_list_enabled(path)
     try:
+        if web:
+            mirror(kv.read_or_seed(account, as_items(path))["items"], path)
+        before = {e["ticker"]: e for e in entries(path)}
         if action == "add":
-            return {"ok": True, "added": add(str(body.get("ticker", "")), body.get("note"), path)}
-        if action == "remove":
-            return {"ok": True, "removed": remove(str(body.get("ticker", "")), path)}
+            result: dict[str, Any] = {"ok": True, "added": add(ticker, body.get("note"), path,
+                                                                max_items=int(site["mylist_max_per_account"]))}
+        else:
+            result = {"ok": True, "removed": remove(ticker, path)}
+        if web:
+            try:
+                kv.write_list(account, as_items(path))
+            except kv.KvError:
+                mirror(list(before.values()), path)  # put the local list back as it was
+                raise
     except WatchlistError as exc:
         raise ValueError(str(exc)) from exc
-    raise ValueError("action phải là add hoặc remove")
+    except kv.KvError as exc:
+        raise ValueError(f"{exc} — danh sách không đổi") from exc
+    result["web"] = web
+    if action == "add" and path is None:          # the real database only: never from a test
+        result["refreshing"] = _spawn_refresh(ticker)
+    return result
+
+
+def _web_list_enabled(path: Path | None) -> bool:
+    """The real database with the web list set up in .env; a test database never reaches Cloudflare."""
+    from src.collectors import cloudflare_kv as kv  # noqa: PLC0415
+    from src.env import load_dotenv  # noqa: PLC0415
+
+    if path is not None:
+        return False
+    load_dotenv()
+    return kv.configured()
+
+
+def _spawn_refresh(ticker: str) -> bool:
+    """`python -m src.main mylist-refresh <ticker>` in the background, logged to data/logs."""
+    import subprocess  # noqa: PLC0415
+
+    log_dir = PROJECT_ROOT / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        with open(log_dir / f"mylist_{datetime.now(VN_TZ).date().isoformat()}.log", "ab") as out:
+            subprocess.Popen([sys.executable, "-m", "src.main", "mylist-refresh", ticker], cwd=PROJECT_ROOT,
+                             stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags)
+    except OSError:
+        log.exception("mylist-refresh %s", ticker)
+        return False
+    return True
 
 
 STOP_IN_TEXT = re.compile(r"stop tham chiếu ([\d.,]+)")
@@ -865,13 +962,22 @@ def api_intraday(q: dict[str, str], path: Path | None = None) -> Any:
     return {"session_date": day, "alerts": rows, "status": status}
 
 
+# The article a news card opens: CafeF's first (the user reads news there), else the earliest.
+_NEWS_ARTICLE = ("FROM news_articles a WHERE a.event_id = e.event_id "
+                 "ORDER BY a.source_id NOT LIKE 'cafef%', a.published_at LIMIT 1")
+NEWS_ROWS_CAP = 10000  # a ticker-event row each (~900 a month, 2026-10-12): every row in the window reaches the search
+
+
 def api_news(q: dict[str, str], path: Path | None = None) -> Any:
-    days = int(q.get("days", 30))
+    """News of the monitored tickers, newest first, over `days` (default news.page_days)."""
+    days = int(q.get("days") or load_config().thresholds.raw["news"].get("page_days", 30))
     since = (datetime.now(VN_TZ) - timedelta(days=days)).isoformat()
-    return _rows("SELECT t.ticker, t.role, e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, "
-                 "e.best_source_level, e.assertion_type, e.what_happened, e.direction "
+    return _rows("SELECT t.ticker, tk.name, t.role, e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, "
+                 f"e.best_source_level, e.assertion_type, e.what_happened, e.direction, "
+                 f"(SELECT a.url {_NEWS_ARTICLE}) AS url, (SELECT a.source_id {_NEWS_ARTICLE}) AS url_source "
                  "FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id "
-                 "WHERE e.occurred_at >= ? ORDER BY e.occurred_at DESC LIMIT 500", (since,), path)
+                 "LEFT JOIN tickers tk ON tk.ticker = t.ticker "
+                 f"WHERE e.occurred_at >= ? ORDER BY e.occurred_at DESC LIMIT {NEWS_ROWS_CAP}", (since,), path)
 
 
 ROUTES: dict[str, Callable[..., Any]] = {
@@ -990,6 +1096,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, b"not found", "text/plain")
             else:
                 self._send(200, target.read_bytes(), logos.CONTENT_TYPES[target.suffix[1:]], "max-age=86400")
+            return
+        if parts.path == "/site.json":
+            # The page asks whether it is the static web copy (src/web/export.py writes one there); this is not.
+            self._send(200, b'{"static": false}', "application/json; charset=utf-8")
             return
         name = "index.html" if parts.path in ("/", "") else parts.path.lstrip("/")
         target = (STATIC / name).resolve()

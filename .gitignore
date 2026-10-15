@@ -23,3 +23,8 @@ data/**
 
 # Logs
 *.log
+
+# Cloudflare CLI (wrangler): local cache and the local test secrets of `wrangler pages dev`
+cloudflare/.wrangler/
+cloudflare/.dev.vars
+cloudflare/node_modules/

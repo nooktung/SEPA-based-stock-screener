@@ -35,7 +35,7 @@ python -m src.main start          # cập nhật mọi thứ rồi mở web http
 - `start` chiếm terminal → mở thêm terminal (nút **+**) để chạy lệnh khác. Đổi cổng: `--port 8766`.
 
 **Trên trang web:**
-- Thanh bên trái chọn nhóm mã (Danh sách chính, Theo dõi mở rộng, Của tôi, Đầu ngành, Tất cả theo dõi) — cùng một bảng.
+- Thanh bên trái chọn nhóm mã (Danh sách chính, Theo dõi mở rộng, Của tôi, Đầu ngành) — cùng một bảng.
 - Nút **Tổng quan / Kỹ thuật / Dòng tiền** đổi cột của bảng; bấm tiêu đề cột để sắp xếp.
 - Bấm một mã → biểu đồ (nút **Ngày / Tuần / Tháng** đổi khung nến; **Lớp hiển thị** bật / tắt MA, hỗ trợ / kháng cự, trendline, RSI, MACD…),
   phân tích SEPA, dòng tiền 20 phiên, cơ bản, tin tức, **Kiểm tra vị thế** (nhập giá vốn).
@@ -112,34 +112,52 @@ python -m pytest -q                        # chạy bộ kiểm thử
 Từ đó tác vụ 15:30 tự lấy dữ liệu SSI và đối chiếu mỗi ngày. DNSE vẫn là nguồn chính; chỉ đổi sang dùng SSI
 cho phần cập nhật hằng ngày sau khi bạn xem báo cáo vài tuần và đồng ý. Chi tiết: `docs/SSI.md`.
 
-## 7. Bản web cho người khác xem (chỉ đọc, người bạn chọn)
+## 7. Bản web cho người khác xem (chỉ đọc, cần đăng nhập)
 
-Máy bạn vẫn tính toán như cũ; sau tác vụ 15:30, một bản **chỉ đọc** (HTML + số liệu đã tính, không có
-database, không có khóa) được đẩy lên Cloudflare Pages. Chỉ email bạn cho phép mới mở được. Cài một lần:
+Máy bạn vẫn tính toán như cũ. Sau tác vụ 15:30, một bản **chỉ đọc** (HTML + số liệu đã tính, không có
+database, không có khóa) được đẩy lên Cloudflare Pages: **https://sepa-vn.pages.dev**. Muốn xem phải đăng nhập
+bằng tài khoản bạn tạo; không có tài khoản thì không thấy gì (chỉ logo công ty là ảnh công khai).
 
-1. Tạo tài khoản Cloudflare (miễn phí). **Workers & Pages → Create → Pages → Upload assets**, đặt tên dự án
-   `sepa-vn` (trùng `site.pages_project` trong `config/thresholds.yaml`). Địa chỉ: `https://sepa-vn.pages.dev`.
-2. **My Profile → API Tokens → Create Token**, quyền *Account → Cloudflare Pages → Edit*. Chép token và
-   **Account ID** (trang Workers & Pages) vào `.env` (không dán vào chat với ai):
-   ```
-   CLOUDFLARE_API_TOKEN=...
-   CLOUDFLARE_ACCOUNT_ID=...
-   ```
-3. **Zero Trust → Access → Applications → Add → Self-hosted**: tên miền `sepa-vn.pages.dev` và
-   `*.sepa-vn.pages.dev`; policy **Allow**, *Include → Emails*: email của bạn và của người được xem
-   (họ đăng nhập bằng mã gửi qua email). Gói miễn phí tới 50 người.
-4. Thử: `python -m src.main export-site` rồi `powershell -ExecutionPolicy Bypass -File scripts\deploy_site.ps1 -Branch preview`
-   (bản xem thử ở `preview.sepa-vn.pages.dev`), mở bằng một email được phép và một email không được phép.
-5. Từ đó tác vụ 15:30 tự xuất và đẩy bản mới (~16:45). Ngày dữ liệu chưa đủ mới, bản cũ được giữ nguyên.
+**Đã cài (13/10/2026):** dự án Pages `sepa-vn`, kho KV `MYLIST` (gắn vào dự án), `.env` có `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_MYLIST_ID`; tác vụ "SEPA - danh sach cua toi" (mỗi 30 phút, 07:00–22:30).
+Token cần quyền *Cloudflare Pages: Edit* và *Workers KV Storage: Edit*.
 
-Trên bản web không có "Của tôi", "Kiểm tra vị thế", và biểu đồ chi tiết chỉ có cho các mã đang theo dõi.
+**Tài khoản** (bạn tự gõ mật khẩu; mật khẩu không được lưu ở đâu dưới dạng chữ, chỉ lưu bản băm):
+
+```
+python -m src.main site-user add admin --role owner     # tài khoản của bạn (danh sách = danh sách trên máy này)
+python -m src.main site-user add ban1                   # người xem
+python -m src.main site-user list
+python -m src.main site-user remove ban1
+```
+
+Ô mật khẩu trong cửa sổ dòng lệnh không hiện gì khi gõ; nếu khó gõ, dùng cửa sổ nhỏ (ô mật khẩu hiện dấu chấm, có
+"Hiện mật khẩu"): `powershell -ExecutionPolicy Bypass -File scripts/site_user_gui.ps1 -Name admin -Role owner`
+(người xem: `-Name ban1 -Role viewer`). Nên tắt bộ gõ tiếng Việt khi gõ mật khẩu.
+
+Mỗi lần thêm / xóa / đổi mật khẩu (chạy lại `add` với cùng tên), mọi người phải đăng nhập lại, và thay đổi có
+hiệu lực từ lần đẩy kế tiếp: `powershell -ExecutionPolicy Bypass -File scripts/deploy_site.ps1` (hoặc chờ tác vụ
+15:30). Đăng nhập giữ 7 ngày; sai 8 lần từ một địa chỉ thì khóa 15 phút. Mật khẩu nên dài (≥ 12 ký tự).
+
+**Đẩy tay:** `python -m src.main export-site` (hoặc `export-site --update`: chỉ ghi phần đổi khi thêm mã, vài giây), rồi
+`deploy_site.ps1` (bản chính) hoặc `deploy_site.ps1 -Branch preview`
+(bản thử ở `preview.sepa-vn.pages.dev`). Ngày dữ liệu chưa đủ mới, `export-site` từ chối và bản cũ được giữ nguyên.
+
+**Danh sách của tôi trên web: mỗi tài khoản một danh sách riêng** (từ 14/10/2026), tối đa 40 mã
+(`site.mylist_max_per_account`). Ai đăng nhập cũng bấm ☆ / ô thêm mã để sửa danh sách của chính mình, không thấy
+danh sách của người khác. Danh sách của `admin` chính là "Danh sách của tôi" trên dashboard máy này (thêm trên máy
+cũng ghi lên web). Máy đọc danh sách của mọi tài khoản và tính kỹ thuật, dòng tiền, tin cho mọi mã trong đó: mã thêm
+trên máy có dữ liệu ngay (1–2 phút); mã thêm trên web có dữ liệu sau lần đọc kế tiếp (≤ 30 phút nếu máy đang bật)
+hoặc sau tác vụ 15:30, trong lúc chờ trang ghi "Đang chờ dữ liệu".
+
+Trên bản web không có "Kiểm tra vị thế", và biểu đồ chi tiết chỉ có cho các mã đang theo dõi.
 Trước khi chia sẻ, hãy đọc điều khoản DNSE OpenAPI (và các nguồn tin) về việc cho người khác xem dữ liệu.
 
 ## Lưu ý
 
 - **Tự chạy hằng ngày:** tác vụ Windows **"SEPA - cap nhat hang ngay"** chạy `monitor`, `flow`, `news`, `logos`,
   rồi tải giá **toàn thị trường** (`backfill`, ~30–45 phút) và dựng bảng "Toàn thị trường" (`market`).
-  Cả lượt mất khoảng 1 giờ (giới hạn của tác vụ: 2 giờ)
+  Cả lượt mất khoảng 1 giờ (giới hạn của tác vụ: 3 giờ; mỗi mã thêm vào danh sách của các tài khoản tốn thêm ~10 giây)
   lúc **15:30 thứ 2–6** (script `scripts\daily.ps1`). Log: `data\logs\daily_<ngày>.log`.
   - Máy phải bật và bạn đã đăng nhập Windows. Nếu lỡ giờ (máy tắt), tác vụ tự chạy bù khi máy bật lại.
   - Ngày lễ không có phiên: tác vụ vẫn chạy nhưng không có dữ liệu mới, không sao.

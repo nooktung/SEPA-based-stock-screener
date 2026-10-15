@@ -567,7 +567,7 @@ VN-Index không còn mang sang chi tiết mã).
 ### 12.4 Giao diện web (làm lại 03/10/2026)
 
 **Bố cục**: thanh bên trái chia ba phần.
-- **Cổ phiếu**: Danh sách chính (A + B) · Theo dõi mở rộng (C) · Của tôi · Đầu ngành · Tất cả theo dõi.
+- **Cổ phiếu**: Danh sách chính (A + B) · Theo dõi mở rộng (C) · Của tôi · Đầu ngành (trang "Tất cả theo dõi" đã bỏ 13/10/2026).
   Năm nhóm dùng **chung một bảng và một bộ lọc**; số bên cạnh là số mã.
 - **Thị trường**: Ngành & sóng · Sự kiện · Tin tức.
 - **Kiến thức**: Học (mục 27).
@@ -603,7 +603,9 @@ Template, nền giá, chỉ báo kỹ thuật) · **Dòng tiền** · **Cơ bả
 ## 13. Tin tức
 
 `python -m src.main news` — tin theo mã từ **CafeF** (gồm công bố thông tin, kèm link PDF văn bản
-gốc) và RSS của **CafeF, Vietstock**, chỉ cho các mã đang theo dõi (80 mã + đầu ngành + watchlist), 30 ngày.
+gốc) và RSS của **CafeF, Vietstock**, chỉ cho các mã đang theo dõi (80 mã + đầu ngành + watchlist), 30 ngày
+mỗi lần chạy. Ngày 13/10/2026 đã lấy bù 5 tháng (`news --days 150 --no-rss`); trang **Tin tức** hiện
+`news.page_days` = 150 ngày, bấm vào tin để đọc bài trên CafeF, ô tìm theo mã hoặc tên công ty (không cần dấu).
 
 - Bài trùng được gộp thành một **sự kiện**; phân loại theo **tiêu đề trước**: pháp lý, giao dịch
   nội bộ, cổ tức, tăng vốn/phát hành, kết quả kinh doanh, đại hội cổ đông, M&A, niêm yết, quản trị.
@@ -911,7 +913,7 @@ bạn — một trang web khác mở trong trình duyệt không thể thêm/b�
 ## 25. Chỉ báo kỹ thuật kiểu TradingView
 
 Nút **"Kỹ thuật"** phía trên bảng (mục 12.4) chuyển sang bảng giống bộ lọc *Technicals* của TradingView,
-cho bất kỳ nhóm mã nào ở thanh bên (kể cả Của tôi, Đầu ngành, Tất cả theo dõi); khung chi tiết (thẻ
+cho bất kỳ nhóm mã nào ở thanh bên (kể cả Của tôi, Đầu ngành); khung chi tiết (thẻ
 "Phân tích SEPA") có bảng từng phiếu. Tính hằng ngày trong bước
 theo dõi (`src/quant/tv_ratings.py`, `src/quant/candles.py`; tham số `tv_ratings`, `candles` trong
 `config/thresholds.yaml`).
@@ -947,9 +949,12 @@ vào `flow_daily` (`foreign_buy_volume`, `foreign_sell_volume`, cùng giá trị
 bỏ qua. Tác vụ hằng ngày chạy lệnh này sau `monitor`.
 
 - **Khối ngoại ròng** = mua − bán (cổ phiếu); giá trị ròng tính bằng tỷ đồng.
-- **Khối nội** = tổng khối lượng khớp của phiên − phần khối ngoại (nội mua = tổng − ngoại mua, nội bán
-  = tổng − ngoại bán). DNSE không tách cá nhân / tổ chức / tự doanh trong nước, nên đây chỉ là phần
-  còn lại sau khối ngoại; khối nội ròng luôn bằng khối ngoại ròng đổi dấu.
+- **Khối nội** = khối lượng khớp của phiên − khối ngoại **khớp lệnh** (nội mua = KL khớp − ngoại mua khớp,
+  nội bán = KL khớp − ngoại bán khớp). Khối ngoại còn mua bán qua **thỏa thuận**: cột "Thỏa thuận" là phần đó,
+  "Ngoại ròng" là tổng (khớp + thỏa thuận) như số sàn công bố. Sửa 13/10/2026: trước đó lấy tổng khối ngoại
+  (gồm thỏa thuận) trừ vào KL khớp nên khối nội sai. DNSE không tách cá nhân / tổ chức / tự doanh trong nước.
+- Mã có chia / thưởng cổ phiếu: khối lượng trước ngày giao dịch không hưởng quyền được quy về số cổ phiếu hiện nay
+  (dấu *), như giá; giá trị (tỷ đồng) giữ nguyên.
 - Bảng **Dòng tiền** hiện phiên gần nhất có dữ liệu; ngày màu vàng là dữ liệu cũ hơn phiên giá.
 - Thẻ **Dòng tiền** của mỗi mã: tổng ngoại ròng 1 / 5 / 10 / 20 **phiên giao dịch** (cổ phiếu, tỷ đồng, số phiên
   mua ròng), biểu đồ cột ngoại ròng từng phiên, bảng mọi phiên. Phiên DNSE không có số liệu khối ngoại để trống và

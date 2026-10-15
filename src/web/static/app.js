@@ -22,6 +22,11 @@ function staticPath(url) {
   const ps = [...u.searchParams.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return ps.length ? `data/${route}/${ps.map(([k, v]) => `${safe(k)}-${safe(v)}`).join("_")}.json` : `data/${route}.json`;
 }
+// The web copy's login (cloudflare/functions/_middleware.js): a session that ended goes back to the form.
+function toLogin() {
+  location.href = `/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`;
+  throw new Error("Phiên đăng nhập đã hết — đang chuyển tới trang đăng nhập.");
+}
 async function detectSite() {
   let s = null;
   try { const r = await fetch("site.json", { cache: "no-store" }); if (r.ok) s = await r.json(); } catch { /* local server */ }
@@ -41,6 +46,7 @@ async function detectSite() {
 async function get(url) {
   if (SITE && url.startsWith("/api/")) {
     const r = await fetch(staticPath(url), { cache: "no-cache" });
+    if (r.status === 401) toLogin();
     if (!r.ok) {
       const t = new URL(url, location.href).searchParams.get("ticker");
       throw new Error(t ? `Bản web chỉ có biểu đồ chi tiết của các mã đang theo dõi; ${t} chỉ xem được trên bản chạy trên máy.`
@@ -128,9 +134,8 @@ const state = {
 const GROUPS = {
   main: (r) => r.grp === "A" || r.grp === "B",
   ext: (r) => r.grp === "C",
-  mine: (r) => r.mine,
+  mine: (r) => state.mine.has(r.ticker),
   leaders: (r) => !!r.leader_of,
-  all: () => true,
   market: () => true,
 };
 // "Toàn thị trường" reads the whole-market snapshot (/api/market); every other group the monitored rows.
@@ -385,10 +390,11 @@ const flowGap = (f) => (f.net5_of && f.net5_sessions < f.net5_of
 const ttText = (r) => ((r.not_assessable || []).length >= 6
   ? (r.history === "SPARSE" ? "giao dịch thưa · chưa đủ phiên để đo" : "mới niêm yết · chưa đủ lịch sử")
   : `${r.tt_passed}/8 tiêu chí`);
-// Foreign volume includes put-through deals: when it exceeds the matched volume the domestic side is unknown, not 0.
-const domSide = (v, f) => (v == null || f == null || f > v ? null : v - f);
-const domBuy = (r) => domSide(fl(r).volume, fl(r).buy_volume);
-const domSell = (r) => domSide(fl(r).volume, fl(r).sell_volume);
+// Domestic = matched volume - the foreign MATCHED side, from the server (server.flow_row): the foreign
+// day totals include put-through deals and are not comparable with the matched volume (HDB 06/10).
+const domBuy = (r) => fl(r).domestic_buy;
+const domSell = (r) => fl(r).domestic_sell;
+const ptCell = (v) => (v == null || Math.abs(v) < 0.5 ? '<span class="muted">–</span>' : `<span class="${tone(v)}">${sfmt(v)}</span>`);
 const tv = (key) => (r) => { const x = techOf(r)[key]; return x && x.score != null ? x.score : null; };
 const val = (key) => (r) => (techOf(r).values || {})[key];
 
@@ -433,14 +439,15 @@ const COLS = {
     { k: "ticker", label: "Mã", cell: tickerCell, sort: (r) => r.ticker, text: true },
     { k: "close", label: "Giá", num: true, cell: priceCell, sort: (r) => r.change_pct },
     { k: "fdate", label: "Phiên", cell: (r) => `<span class="${r.trade_date && fl(r).date < r.trade_date ? "stale" : "muted"}">${dm(fl(r).date)}</span>`, sort: (r) => fl(r).date, text: true },
-    { k: "fb", label: "Ngoại mua", num: true, title: "Khối lượng khối ngoại mua (cổ phiếu)", cell: (r) => fmt(fl(r).buy_volume), sort: (r) => fl(r).buy_volume },
-    { k: "fs", label: "Ngoại bán", num: true, cell: (r) => fmt(fl(r).sell_volume), sort: (r) => fl(r).sell_volume },
-    { k: "fn", label: "Ngoại ròng", num: true, title: "Mua − bán (cổ phiếu)", cell: (r) => `<b class="${tone(fl(r).net_volume)}">${sfmt(fl(r).net_volume)}</b>`, sort: (r) => fl(r).net_volume },
-    { k: "fv", label: "Ròng (tỷ đ)", num: true, cell: (r) => `<span class="${tone(fl(r).net_value)}">${fl(r).net_value == null ? "–" : sfmt(fl(r).net_value / 1e9, 2)}</span>`, sort: (r) => fl(r).net_value },
-    { k: "f5", label: "Ngoại ròng 5 phiên", num: true, title: "Tổng 5 phiên giao dịch gần nhất; phiên không có số liệu khối ngoại không được cộng",
+    { k: "fb", label: "Ngoại mua khớp", num: true, title: "Khối ngoại mua qua khớp lệnh (cổ phiếu)", cell: (r) => fmt(fl(r).buy_volume_matched), sort: (r) => fl(r).buy_volume_matched },
+    { k: "fs", label: "Ngoại bán khớp", num: true, title: "Khối ngoại bán qua khớp lệnh (cổ phiếu)", cell: (r) => fmt(fl(r).sell_volume_matched), sort: (r) => fl(r).sell_volume_matched },
+    { k: "fpt", label: "Thỏa thuận", num: true, title: "Khối ngoại mua − bán qua giao dịch thỏa thuận (và lô lẻ), cổ phiếu", cell: (r) => ptCell(fl(r).net_volume_put_through), sort: (r) => fl(r).net_volume_put_through },
+    { k: "fn", label: "Ngoại ròng", num: true, title: "Tổng khối ngoại mua − bán: khớp lệnh + thỏa thuận, như số sàn công bố (cổ phiếu)", cell: (r) => `<b class="${tone(fl(r).net_volume)}">${sfmt(fl(r).net_volume)}</b>`, sort: (r) => fl(r).net_volume },
+    { k: "fv", label: "Ròng (tỷ đ)", num: true, title: "Tổng giá trị khối ngoại mua − bán (khớp lệnh + thỏa thuận)", cell: (r) => `<span class="${tone(fl(r).net_value)}">${fl(r).net_value == null ? "–" : sfmt(fl(r).net_value / 1e9, 2)}</span>`, sort: (r) => fl(r).net_value },
+    { k: "f5", label: "Ngoại ròng 5 phiên", num: true, title: "Tổng 5 phiên giao dịch gần nhất (khớp lệnh + thỏa thuận); phiên không có số liệu khối ngoại không được cộng",
       cell: (r) => `<div class="two"><span class="${tone(fl(r).net5_volume)}">${sfmt(fl(r).net5_volume)}</span>${flowGap(fl(r))}</div>`, sort: (r) => fl(r).net5_volume },
-    { k: "db", label: "Nội mua", num: true, title: "Tổng khối lượng khớp − phần khối ngoại mua", cell: (r) => fmt(domBuy(r)), sort: domBuy },
-    { k: "ds", label: "Nội bán", num: true, title: "Tổng khối lượng khớp − phần khối ngoại bán", cell: (r) => fmt(domSell(r)), sort: domSell },
+    { k: "db", label: "Nội mua", num: true, title: "Khối lượng khớp − khối ngoại mua khớp lệnh", cell: (r) => fmt(domBuy(r)), sort: domBuy },
+    { k: "ds", label: "Nội bán", num: true, title: "Khối lượng khớp − khối ngoại bán khớp lệnh", cell: (r) => fmt(domSell(r)), sort: domSell },
   ],
 };
 const maChips = (r) => `<span class="ma-chips" title="Giá so với MA50 / MA150 / MA200 (xanh = trên, đỏ = dưới)">${["50", "150", "200"].map((n) => {
@@ -469,9 +476,19 @@ const NOTES = {
   overview: "Bấm một mã để xem biểu đồ và phân tích. Nền giá và pivot là cách đo triển khai [TRIỂN KHAI], chưa backtest trên dữ liệu Việt Nam.",
   tech: "Chỉ báo ngắn hạn theo công thức TradingView, nhãn trung tính (\"Tích cực mạnh\" ≈ \"Mua mạnh\" trên TradingView). Không phải quy tắc SEPA, chưa kiểm định trên dữ liệu Việt Nam, không phải tín hiệu mua bán.",
   market: "",
-  flow: "Khối ngoại: DNSE, bảng khớp lệnh, phiên gần nhất có dữ liệu. Khối nội = tổng khối lượng khớp − phần khối ngoại (DNSE không tách cá nhân / tổ chức trong nước). Bấm một mã, tab \"Dòng tiền\" để xem 20 phiên.",
+  flow: "Khối ngoại: DNSE, phiên gần nhất có dữ liệu. Mua / bán khớp = qua khớp lệnh; Thỏa thuận = khối ngoại ròng qua giao dịch thỏa thuận (và lô lẻ); Ngoại ròng = tổng, như số sàn công bố. Khối nội = khối lượng khớp − khối ngoại khớp (DNSE không tách cá nhân / tổ chức trong nước). Bấm một mã, tab \"Dòng tiền\" để xem 20 phiên.",
 };
-const starCell = (t) => `<td class="star-col"><button class="star${state.mine.has(t) ? " on" : ""}" data-star="${esc(t)}" title="${state.mine.has(t) ? "Bỏ khỏi" : "Thêm vào"} Của tôi">${state.mine.has(t) ? "★" : "☆"}</button></td>`;
+// A star before every ticker, in every list: one click adds it to (or takes it off) "Danh sách của tôi".
+const starBtn = (t) => `<button type="button" class="star${state.mine.has(t) ? " on" : ""}" data-star="${esc(t)}" title="${state.mine.has(t) ? "Bỏ khỏi" : "Thêm vào"} Danh sách của tôi" aria-label="${state.mine.has(t) ? "Bỏ" : "Thêm"} ${esc(t)}">${state.mine.has(t) ? "★" : "☆"}</button>`;
+const starCell = (t) => `<td class="star-col">${starBtn(t)}</td>`;
+function syncStars() {
+  $$("[data-star]").forEach((b) => {
+    const on = state.mine.has(b.dataset.star);
+    b.classList.toggle("on", on);
+    b.textContent = on ? "★" : "☆";
+    b.title = `${on ? "Bỏ khỏi" : "Thêm vào"} Danh sách của tôi`;
+  });
+}
 
 // The columns on screen: the whole-market table has its own; every other group uses the chosen view.
 const shownCols = () => (state.group === "market" ? COLS.market : COLS[state.view]);
@@ -553,10 +570,11 @@ async function loadMarket(force = false) {
 }
 
 function setCounts() {
-  for (const [id, g] of [["n-main", "main"], ["n-ext", "ext"], ["n-mine", "mine"], ["n-leaders", "leaders"], ["n-all", "all"]]) {
+  for (const [id, g] of [["n-main", "main"], ["n-ext", "ext"], ["n-leaders", "leaders"]]) {
     const n = state.rows.filter(GROUPS[g]).length;
     $(`#${id}`).textContent = n || "";
   }
+  $("#n-mine").textContent = state.mine.size || "";
 }
 
 async function loadStocks() {
@@ -564,8 +582,61 @@ async function loadStocks() {
   state.rows = await get(`/api/stocks${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`);
   state.lastSession = state.rows.reduce((m, r) => (r.trade_date && r.trade_date > m ? r.trade_date : m), "");
   state.mine = new Set(state.rows.filter((r) => r.mine).map((r) => r.ticker));
+  if (SITE) await loadLiveList();
   setCounts();
+  renderMinePending();
   renderTable(true);
+}
+
+// The web copy: each logged-in account's own list lives on Cloudflare (cloudflare/functions/api/mylist.js),
+// newer than the exported rows. Without the function (a local preview) the export's flags stand.
+async function loadLiveList() {
+  try {
+    const r = await fetch("/api/mylist", { cache: "no-store" });
+    if (r.status === 401) toLogin();
+    if (!r.ok) return;
+    const d = await r.json();
+    state.mine = new Set((d.items || []).map((i) => i.ticker));
+    state.canEdit = !!d.can_edit;
+    document.body.classList.toggle("can-edit", state.canEdit);
+    if (d.user && !$("#site-user")) {
+      $("#site-note").insertAdjacentHTML("beforeend",
+        ` · <span id="site-user">${esc(d.user)}</span> · <a href="/logout" class="site-logout">Đăng xuất</a>`);
+    }
+  } catch (e) { if (/đăng nhập/.test(e.message)) throw e; /* no function: read-only */ }
+}
+
+// Suggestions for the add box: the code first (exact, then its start), then the company name; the most
+// traded first. Read from the whole-market table, i.e. every listed share with prices.
+const suggest = { hits: [], at: -1 };
+async function renderSuggest() {
+  const box = $("#mine-suggest"), raw = $("#mine-ticker").value.trim(), q = fold(raw);
+  if (!q) { box.hidden = true; suggest.hits = []; return; }
+  if (!state.market) await loadMarket();
+  if (fold($("#mine-ticker").value.trim()) !== q) return;        // typed on while the table loaded
+  suggest.hits = (state.market || []).map((r) => {
+    const t = fold(r.ticker), n = fold(r.name || "");
+    return [t === q ? 0 : t.startsWith(q) ? 1 : n.includes(q) ? 2 : 9, r];
+  }).filter(([k]) => k < 9).sort((a, b) => a[0] - b[0] || (b[1].liquidity_vnd || 0) - (a[1].liquidity_vnd || 0))
+    .slice(0, 8).map(([, r]) => r);
+  suggest.at = suggest.hits.length ? 0 : -1;
+  box.innerHTML = suggest.hits.length ? suggest.hits.map((r, i) => `<div class="sg${i === suggest.at ? " on" : ""}" role="option" data-add="${esc(r.ticker)}">
+      ${logoTile(r.ticker, " sm")}<span class="sg-t"><b>${esc(r.ticker)}</b><small>${esc(r.exchange || "")} · ${esc(r.name || "")}</small></span>
+      <span class="sg-p">${fmt(r.close)}</span>${state.mine.has(r.ticker) ? '<span class="sg-in">★ Đã có</span>' : ""}</div>`).join("")
+    : `<div class="sg-empty">Không tìm thấy mã hoặc công ty "${esc(raw)}".</div>`;
+  box.hidden = false;
+}
+
+// Tickers of the list still waiting for their data: on the web, not yet in the published rows; on this
+// machine, added but not yet given a state (technicals) by mylist-refresh.
+function renderMinePending() {
+  const rowOf = new Map(state.rows.map((r) => [r.ticker, r]));
+  const pending = [...state.mine].filter((t) => !rowOf.has(t) || !Object.keys(rowOf.get(t).tech || {}).length);
+  const el = $("#mine-pending");
+  el.hidden = state.group !== "mine" || !pending.length;
+  el.innerHTML = pending.length ? `Đang chờ dữ liệu: <b>${pending.map(esc).join(", ")}</b> — ${SITE
+    ? "kỹ thuật, dòng tiền và biểu đồ có sau khi máy nhà cập nhật (khoảng 30 phút nếu máy đang bật, hoặc sau 15:30)."
+    : "hệ thống đang lấy kỹ thuật, dòng tiền và tin (1–2 phút), bảng tự làm mới."}` : "";
 }
 
 async function loadRun(runId) {
@@ -741,7 +812,9 @@ function newsItem(e) {
   const seen = new Set();
   const arts = (e.articles || []).filter((a) => !seen.has(a.source_id) && seen.add(a.source_id))
     .map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(SOURCE_TEXT[a.source_id] || a.source_id)}</a>`).join(" · ");
-  return `<div class="item${e.role === "mention" ? " mention" : ""}"><span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}<b>${esc(e.headline)}</b>
+  const main = (e.articles || []).find((a) => String(a.source_id).startsWith("cafef")) || (e.articles || [])[0];
+  return `<div class="item${e.role === "mention" ? " mention" : ""}"><span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}${main
+    ? `<a class="hl" href="${esc(main.url)}" target="_blank" rel="noopener"><b>${esc(e.headline)}</b></a>` : `<b>${esc(e.headline)}</b>`}
     <div class="why">${dmy(e.occurred_at)} ${esc(String(e.occurred_at).slice(11, 16))} · ${e.article_count} bài · cấp nguồn ${e.best_source_level} · ${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type)}${arts ? " · " + arts : ""}</div>
     ${e.what_happened ? `<div class="why">Diễn giải: ${esc(e.what_happened)} (${esc(e.direction || "?")})</div>` : ""}</div>`;
 }
@@ -1214,9 +1287,11 @@ async function loadFlow(ticker) {
   const card = (label, n) => {
     const got = span(n), m = Math.min(n, all.length);
     const v = got.reduce((s, r) => s + r.foreign_net, 0), money = got.reduce((s, r) => s + (r.foreign_net_value || 0), 0);
+    const pt = got.reduce((s, r) => s + (r.foreign_net_put_through || 0), 0);
     const buys = got.filter((r) => r.foreign_net > 0).length;
     return `<div class="stat"><span class="muted small">${label}</span><b class="${tone(v)}">${got.length ? sfmt(v) + " cp" : "–"}</b>
-      <span class="small"><span class="${tone(money)}">${sfmt(money / 1e9, 2)} tỷ đ</span> · ${buys}/${got.length} phiên mua ròng${got.length < m
+      <span class="small"><span class="${tone(money)}">${sfmt(money / 1e9, 2)} tỷ đ</span> · ${buys}/${got.length} phiên mua ròng${Math.abs(pt) >= 0.5
+        ? ` · <span title="Phần khối ngoại ròng qua giao dịch thỏa thuận (và lô lẻ), đã nằm trong con số trên">thỏa thuận ${sfmt(pt)} cp</span>` : ""}${got.length < m
         ? ` · <span class="stale" title="DNSE không có số liệu khối ngoại cho các phiên còn lại (thường là không có giao dịch khối ngoại)">${got.length}/${m} phiên có số liệu</span>` : ""}</span></div>`;
   };
   const ordered = [...rows].reverse();
@@ -1231,19 +1306,24 @@ async function loadFlow(ticker) {
     <div class="card"><div class="card-h"><h3>Khối ngoại mua ròng / bán ròng từng phiên (cổ phiếu)</h3><span class="muted small">${dm(ordered[0].date)} → ${dm(rows[0].date)}</span></div>
       <svg class="flowbars" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Biểu đồ khối ngoại ròng"><line x1="0" x2="100" y1="50" y2="50"/>${bars}</svg></div>
     <div class="card"><div class="card-h"><h3>Chi tiết từng phiên</h3></div>
-      <div class="table-wrap flat"><table class="flow-table"><thead><tr><th>Phiên</th><th class="num" title="Giá đóng cửa đã điều chỉnh theo quyền (chia/thưởng cổ phiếu), nên có thể lệch bước giá và khác bảng giá ngày đó">Giá*</th><th class="num">Tổng KL khớp</th>
-        <th class="num">Ngoại mua</th><th class="num">Ngoại bán</th><th class="num">Ngoại ròng</th><th class="num">Ròng (tỷ đ)</th>
-        <th class="num" title="Tổng khối lượng khớp − ngoại mua">Nội mua</th><th class="num" title="Tổng khối lượng khớp − ngoại bán">Nội bán</th></tr></thead>
-      <tbody>${all.slice(0, 20).map((r) => r.foreign_net == null
-        ? `<tr class="muted"><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}</td>
-          <td colspan="6" class="small">không có số liệu khối ngoại (DNSE)</td></tr>`
-        : `<tr><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}</td>
-        <td class="num">${fmt(r.foreign_buy)}</td><td class="num">${fmt(r.foreign_sell)}</td>
+      <div class="table-wrap flat"><table class="flow-table"><thead><tr><th>Phiên</th><th class="num" title="Giá đóng cửa đã điều chỉnh theo quyền (chia/thưởng cổ phiếu), nên có thể lệch bước giá và khác bảng giá ngày đó">Giá*</th><th class="num" title="Khối lượng khớp lệnh của phiên">KL khớp</th>
+        <th class="num" title="Khối ngoại mua qua khớp lệnh">Ngoại mua khớp</th><th class="num" title="Khối ngoại bán qua khớp lệnh">Ngoại bán khớp</th>
+        <th class="num" title="KL khớp − ngoại mua khớp">Nội mua</th><th class="num" title="KL khớp − ngoại bán khớp">Nội bán</th>
+        <th class="num" title="Khối ngoại mua − bán qua giao dịch thỏa thuận (và lô lẻ)">Thỏa thuận</th>
+        <th class="num" title="Tổng khối ngoại mua − bán: khớp lệnh + thỏa thuận, như số sàn công bố">Ngoại ròng</th><th class="num">Ròng (tỷ đ)</th></tr></thead>
+      <tbody>${all.slice(0, 20).map((r) => { const a = r.adjusted ? '<span title="Khối lượng quy về số cổ phiếu hiện nay (trước ngày giao dịch không hưởng quyền)">*</span>' : "";
+        return r.foreign_net == null
+        ? `<tr class="muted"><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}${a}</td>
+          <td colspan="7" class="small">không có số liệu khối ngoại (DNSE)</td></tr>`
+        : `<tr><td>${dmy(r.date)}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.volume)}${a}</td>
+        <td class="num">${fmt(r.foreign_buy_matched)}</td><td class="num">${fmt(r.foreign_sell_matched)}</td>
+        <td class="num">${fmt(r.domestic_buy)}</td><td class="num">${fmt(r.domestic_sell)}</td>
+        <td class="num">${ptCell(r.foreign_net_put_through)}</td>
         <td class="num"><b class="${tone(r.foreign_net)}">${sfmt(r.foreign_net)}</b></td>
-        <td class="num ${tone(r.foreign_net_value)}">${r.foreign_net_value == null ? "–" : sfmt(r.foreign_net_value / 1e9, 2)}</td>
-        <td class="num">${fmt(r.domestic_buy)}</td><td class="num">${fmt(r.domestic_sell)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub">${esc(data.note)} Khối nội ròng luôn bằng khối ngoại ròng đổi dấu. Khối nội để trống khi khối lượng ngoại
-        (gồm cả thỏa thuận) lớn hơn khối lượng khớp. * Giá đã điều chỉnh theo quyền.</p></div>`;
+        <td class="num ${tone(r.foreign_net_value)}">${r.foreign_net_value == null ? "–" : sfmt(r.foreign_net_value / 1e9, 2)}</td></tr>`; }).join("")}</tbody></table></div>
+      <p class="sub">${esc(data.note)} Mỗi dòng: KL khớp = ngoại mua khớp + nội mua = ngoại bán khớp + nội bán; ngoại ròng =
+        (ngoại mua khớp − ngoại bán khớp) + thỏa thuận. * Giá, và khối lượng các phiên trước ngày giao dịch không hưởng quyền,
+        đã quy về thang hiện nay (chia / thưởng cổ phiếu).</p></div>`;
 }
 
 // ---------------------------------------------------------------- detail: position check
@@ -1454,20 +1534,39 @@ function syncDetailStar() {
   const t = state.detailTicker, on = t && state.mine.has(t);
   $("#d-star").textContent = on ? "★" : "☆";
   $("#d-star").classList.toggle("on", !!on);
-  $("#d-star").title = on ? "Bỏ khỏi Của tôi" : "Thêm vào Của tôi";
+  $("#d-star").title = on ? "Bỏ khỏi Danh sách của tôi" : "Thêm vào Danh sách của tôi";
 }
 
-async function toggleMine(ticker, note) {
+// A short popup in the corner for what just happened (add / remove / an error); it goes by itself.
+function toast(html, kind = "ok", ms = 3500) {
+  const box = $("#toasts");
+  while (box.children.length >= 3) box.firstElementChild.remove();
+  const t = document.createElement("div");
+  t.className = `toast ${kind}`;
+  t.setAttribute("role", kind === "err" ? "alert" : "status");
+  t.innerHTML = html;
+  box.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("in"));
+  setTimeout(() => { t.classList.remove("in"); setTimeout(() => t.remove(), 300); }, ms);
+}
+
+async function toggleMine(ticker) {
   const on = state.mine.has(ticker);
+  let res;
   try {
-    await post("/api/mylist", { action: on ? "remove" : "add", ticker, note });
-    $("#mine-msg").innerHTML = on ? `Đã bỏ <b>${esc(ticker)}</b>.` : `Đã thêm <b>${esc(ticker)}</b> — được cập nhật từ lần chạy monitor / news tới.`;
+    res = await post("/api/mylist", { action: on ? "remove" : "add", ticker });
   } catch (err) {
-    $("#mine-msg").innerHTML = `<span class="warn">${esc(err.message)}</span>`;
+    toast(`Không ${on ? "bỏ" : "thêm"} được <b>${esc(ticker)}</b>: ${esc(err.message)}`, "err", 6000);
     return false;
   }
+  toast(on ? `★ Đã bỏ <b>${esc(ticker)}</b> khỏi Danh sách của tôi`
+    : `★ Đã thêm <b>${esc(ticker)}</b> vào Danh sách của tôi${res && res.refreshing ? " · đang lấy kỹ thuật, dòng tiền" : ""}`,
+  on ? "info" : "ok");
   await loadStocks();
   syncDetailStar();
+  syncStars();
+  // This machine fetches the new ticker's state, flow and news in the background (mylist-refresh).
+  if (!on && res && res.refreshing) [60000, 150000].forEach((ms) => setTimeout(() => loadStocks(), ms));
   return true;
 }
 
@@ -1492,13 +1591,13 @@ function renderAlerts() {
   $("#alerts-count").innerHTML = `<b>${rows.length}</b> sự kiện`;
   const tbody = $("#alerts-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty">${A.rows.length ? "Không có sự kiện phù hợp bộ lọc." : "Chưa có sự kiện. Chạy: python -m src.main monitor"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">${A.rows.length ? "Không có sự kiện phù hợp bộ lọc." : "Chưa có sự kiện. Chạy: python -m src.main monitor"}</td></tr>`;
     $("#alerts-more").hidden = true;
     return;
   }
   tbody.innerHTML = rows.slice(0, A.shown).map((a) => {
     const m = /^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$/.exec(a.what_changed || "");
-    return `<tr data-t="${esc(a.ticker)}"><td class="muted">${m ? dmy(m[1]) : ""}</td><td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
+    return `<tr data-t="${esc(a.ticker)}">${starCell(a.ticker)}<td class="muted">${m ? dmy(m[1]) : ""}</td><td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
       <td><span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span></td>
       <td class="wrap">${esc(vnText(m ? m[2] : a.what_changed))}${oldStopTag(a, a.current_stop)}<div class="muted small">${esc(vnText(a.why_it_matters || ""))}</div></td></tr>`;
   }).join("");
@@ -1523,14 +1622,14 @@ async function loadIntraday() {
       : `đã dừng lúc ${hm(s.ended_at)} · đã theo dõi ${s.watched_n} mã`} · <b>${rows.length}</b> cảnh báo${s.skipped_n
         ? ` · <span class="muted" title="${esc(Object.entries(s.skipped || {}).map(([t, r]) => `${t}: ${r}`).join("\n"))}">bỏ qua ${s.skipped_n} mã</span>` : ""}${s.error ? ` · <span class="warn">${esc(s.error)}</span>` : ""}`;
   const tbody = $("#intraday-table tbody");
-  tbody.innerHTML = rows.length ? rows.map((a) => `<tr data-t="${esc(a.ticker)}">
+  tbody.innerHTML = rows.length ? rows.map((a) => `<tr data-t="${esc(a.ticker)}">${starCell(a.ticker)}
       <td class="muted">${hm(a.traded_at)}</td>
       <td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
       <td><span class="badge b-${INTRADAY_TONE[a.alert_type] || ""}">${esc(INTRADAY_TEXT[a.alert_type] || a.alert_type)}</span></td>
       <td class="num">${fmt(a.price)}</td><td class="num">${fmt(a.level)}</td>
       <td class="num">${a.volume_pace == null ? "–" : fmt(a.volume_pace, 1) + "×"}</td>
       <td class="wrap">${esc(a.what_changed)}</td></tr>`).join("")
-    : `<tr><td colspan="7" class="empty">Chưa có cảnh báo trong phiên ${dmy(d.session_date)}.</td></tr>`;
+    : `<tr><td colspan="8" class="empty">Chưa có cảnh báo trong phiên ${dmy(d.session_date)}.</td></tr>`;
 }
 // Refresh while the page is open; the watcher rewrites its status every few seconds.
 setInterval(() => { if (!SITE && $("#tab-intraday").classList.contains("active") && !document.hidden) loadIntraday(); }, 30000);
@@ -1556,15 +1655,25 @@ async function loadIndustries() {
       <td class="num">${pct(i.above_ma50_pct, 0, false)}</td><td class="num">${pct(i.above_ma200_pct, 0, false)}</td><td>${tks(i.leaders)}</td></tr>`).join("");
 }
 
+// News: a card opens its article (CafeF first) in a new tab; the ticker chip opens the stock.
+// One search box: the ticker ("PNJ", "pn") or the company's name ("phu nhuan", accents optional).
 let newsRows = [];
-async function loadNews() { newsRows = await get("/api/news?days=30"); renderNews(); }
+async function loadNews() {
+  try { newsRows = await get("/api/news"); }
+  catch (err) { $("#news-list").innerHTML = `<p class="empty">${esc(err.message)}</p>`; return; }
+  renderNews();
+}
 function renderNews() {
-  const q = $("#news-search").value.trim().toUpperCase();
-  const rows = newsRows.filter((n) => !q || n.ticker.includes(q));
-  $("#news-list").innerHTML = rows.length ? rows.map((e) => `<div class="card news" data-t="${esc(e.ticker)}">
-      <div class="tk-inline">${logoTile(e.ticker, " sm")}<span class="tk">${esc(e.ticker)}</span> <span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}</div><b>${esc(e.headline)}</b>
-      <div class="sub">${dmy(e.occurred_at)} ${esc(String(e.occurred_at).slice(11, 16))} · ${e.article_count} bài · nguồn cấp ${e.best_source_level} · ${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type)}</div></div>`).join("")
-    : `<p class="empty">Chưa có tin. Chạy: python -m src.main news</p>`;
+  const q = fold($("#news-search").value.trim());
+  const rows = newsRows.filter((n) => !q || fold(n.ticker).startsWith(q) || fold(n.name || "").includes(q));
+  const oldest = rows.length ? rows[rows.length - 1].occurred_at : null;
+  $("#news-count").innerHTML = `<b>${rows.length}</b> tin${oldest ? ` · từ ${dmy(oldest)}` : ""}`;
+  const source = (s) => SOURCE_TEXT[s] || s || "";
+  $("#news-list").innerHTML = rows.length ? rows.map((e) => `<div class="card news"${e.url ? ` data-url="${esc(e.url)}"` : ""}>
+      <div class="tk-inline">${starBtn(e.ticker)}<span class="news-tk" data-t="${esc(e.ticker)}" title="Mở chi tiết ${esc(e.ticker)}">${logoTile(e.ticker, " sm")}<span class="tk">${esc(e.ticker)}</span></span> <span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}</div>
+      ${e.url ? `<a class="hl" href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.headline)}</a>` : `<b>${esc(e.headline)}</b>`}
+      <div class="sub">${dmy(e.occurred_at)} ${esc(String(e.occurred_at).slice(11, 16))} · ${e.article_count} bài · nguồn cấp ${e.best_source_level} · ${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type)}${e.url ? ` · đọc trên ${esc(source(e.url_source))} ↗` : ""}</div></div>`).join("")
+    : `<p class="empty">${newsRows.length ? "Không có tin phù hợp bộ lọc." : "Chưa có tin. Chạy: python -m src.main news"}</p>`;
 }
 
 // ---------------------------------------------------------------- wiring
@@ -1580,7 +1689,7 @@ function showTab(t) {
     state.group = t.dataset.group;
     state.grp = ""; state.sortKey = "";
     $("#mine-form").hidden = state.group !== "mine";
-    $("#mine-msg").textContent = "";
+    renderMinePending();
     renderTable();
   }
   if (t.dataset.tab === "alerts") loadAlerts();
@@ -1687,16 +1796,39 @@ async function init() {
     if (star) { e.stopPropagation(); toggleMine(star.dataset.star); return; }
     const row = e.target.closest("[data-t]");
     if (row && !e.target.closest("a") && !e.target.closest(".detail .dpane")) openDetail(row.dataset.t);
+    // A news card opens its article, except on the ticker chip (the stock) or a link of its own.
+    const card = e.target.closest(".news[data-url]");
+    if (card && !row && !e.target.closest("a")) window.open(card.dataset.url, "_blank", "noopener");
   });
   $("#d-star").addEventListener("click", () => { if (state.detailTicker) toggleMine(state.detailTicker); });
-  const addMine = async () => {
-    const t = $("#mine-ticker").value.trim().toUpperCase();
+  // "Danh sách của tôi": find a stock by code or company name (accents optional), add it in one click.
+  const addMine = async (pick) => {
+    const shown = !$("#mine-suggest").hidden && suggest.hits.length;
+    const t = (pick || (shown && suggest.at >= 0 ? suggest.hits[suggest.at].ticker : $("#mine-ticker").value.trim())).toUpperCase();
     if (!t) return;
-    if (state.mine.has(t)) { $("#mine-msg").innerHTML = `<b>${esc(t)}</b> đã có trong Của tôi.`; return; }
-    if (await toggleMine(t, $("#mine-note").value.trim())) { $("#mine-ticker").value = ""; $("#mine-note").value = ""; }
+    if (state.mine.has(t)) { toast(`<b>${esc(t)}</b> đã có trong Danh sách của tôi`, "info"); return; }
+    if (await toggleMine(t)) { $("#mine-ticker").value = ""; $("#mine-suggest").hidden = true; }
   };
-  $("#mine-add").addEventListener("click", addMine);
-  ["#mine-ticker", "#mine-note"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") addMine(); }));
+  $("#mine-add").addEventListener("click", () => addMine());
+  $("#mine-ticker").addEventListener("input", renderSuggest);
+  $("#mine-ticker").addEventListener("focus", renderSuggest);
+  $("#mine-ticker").addEventListener("blur", () => setTimeout(() => { $("#mine-suggest").hidden = true; }, 150));
+  $("#mine-ticker").addEventListener("keydown", (e) => {
+    const box = $("#mine-suggest");
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !box.hidden && suggest.hits.length) {
+      e.preventDefault();
+      suggest.at = (suggest.at + (e.key === "ArrowDown" ? 1 : -1) + suggest.hits.length) % suggest.hits.length;
+      $$(".sg", box).forEach((el, i) => el.classList.toggle("on", i === suggest.at));
+    } else if (e.key === "Enter") { e.preventDefault(); addMine(); }
+    else if (e.key === "Escape") box.hidden = true;
+  });
+  // mousedown, not click: the input would blur and hide the list first
+  $("#mine-suggest").addEventListener("mousedown", (e) => {
+    const it = e.target.closest("[data-add]");
+    if (!it) return;
+    e.preventDefault();
+    addMine(it.dataset.add);
+  });
   $("#news-search").addEventListener("input", renderNews);
 
   // chart controls

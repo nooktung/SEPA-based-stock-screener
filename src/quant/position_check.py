@@ -186,9 +186,12 @@ def check_position(*, cost: float, qty: float | None, frame: pd.DataFrame, trade
             tot = sum(nets)
             buys = sum(1 for x in nets if x > 0)
             gap = f"; {len(nets)}/{len(flows[:5])} phiên có số liệu khối ngoại" if len(nets) < len(flows[:5]) else ""
+            # The totals include put-through deals (block trades between named parties): say how much.
+            pt = sum(f.get("foreign_net_put_through") or 0 for f in flows[:5])
+            pt_text = f"; trong đó thỏa thuận {'+' if pt > 0 else '−'}{_vnd(abs(pt))} cp" if abs(pt) >= 0.5 else ""
             items.append(_item("good" if tot > 0 else "warn" if tot < 0 else "info",
                                f"Khối ngoại 5 phiên: ròng {'mua' if tot >= 0 else 'bán'} {_vnd(abs(tot))} cp "
-                               f"({buys}/{len(nets)} phiên mua ròng{gap})."))
+                               f"({buys}/{len(nets)} phiên mua ròng{gap}{pt_text})."))
     if items:
         sections.append({"title": "Diễn biến gần đây", "items": items})
 

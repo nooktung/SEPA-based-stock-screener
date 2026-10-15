@@ -31,14 +31,11 @@
       data-title="Theo dõi mở rộng" data-desc="Đang trong xu hướng tăng nhưng chưa đạt chuẩn SEPA. Chỉ để theo dõi, không phải ứng viên.">
       <span class="ico">◇</span>Theo dõi mở rộng<span class="n" id="n-ext"></span></button>
     <button class="tab" data-tab="screen" data-group="mine" role="tab"
-      data-title="Của tôi" data-desc="Mã bạn tự chọn, được cập nhật giá, sự kiện và tin tức hằng ngày dù có đạt chuẩn hay không.">
-      <span class="ico">★</span>Của tôi<span class="n" id="n-mine"></span></button>
+      data-title="Danh sách của tôi" data-desc="Mã bạn tự chọn để theo dõi: giá, kỹ thuật, dòng tiền, sự kiện và tin tức được cập nhật hằng ngày dù có đạt chuẩn hay không.">
+      <span class="ico">★</span>Danh sách của tôi<span class="n" id="n-mine"></span></button>
     <button class="tab" data-tab="screen" data-group="leaders" role="tab"
       data-title="Đầu ngành" data-desc="Ba mã giao dịch nhiều nhất mỗi ngành, để theo dõi diễn biến ngành. Không phải ứng viên SEPA.">
       <span class="ico">▲</span>Đầu ngành<span class="n" id="n-leaders"></span></button>
-    <button class="tab" data-tab="screen" data-group="all" role="tab"
-      data-title="Tất cả mã đang theo dõi" data-desc="Mọi mã hệ thống cập nhật hằng ngày: danh sách chính, mở rộng, đầu ngành, của tôi và watchlist.">
-      <span class="ico">≡</span>Tất cả theo dõi<span class="n" id="n-all"></span></button>
     <button class="tab" data-tab="screen" data-group="market" role="tab"
       data-title="Toàn thị trường" data-desc="Mọi mã HOSE, HNX, UPCoM có dữ liệu giá — lọc theo xu hướng, ngành, sàn, thanh khoản. Ảnh chụp để nghiên cứu, không phải danh sách ứng viên.">
       <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
@@ -53,7 +50,7 @@
       data-title="Cảnh báo trong phiên" data-desc="Giá khớp lệnh chạm pivot, stop, MA50 của phiên trước (DNSE, thời gian thực). Chưa phải breakout hay thủng stop: các sự kiện đó xét ở giá đóng cửa.">
       <span class="ico">◷</span>Trong phiên<span class="n" id="n-intraday"></span></button>
     <button class="tab" data-tab="news" role="tab"
-      data-title="Tin tức" data-desc="Tin 30 ngày của các mã đang theo dõi, đã gộp trùng.">
+      data-title="Tin tức" data-desc="Tin của các mã đang theo dõi (khoảng 5 tháng gần nhất), đã gộp trùng, mới nhất trước. Bấm vào tin để đọc trên CafeF.">
       <span class="ico">✉</span>Tin tức</button>
     <div class="nav-group">Kiến thức</div>
     <button class="tab" data-tab="learn" role="tab"
@@ -87,11 +84,14 @@
     <!-- every stock group: one table, one set of filters -->
     <section id="tab-screen" class="panel active">
       <div id="mine-form" class="mine-form" hidden>
-        <input id="mine-ticker" type="text" maxlength="3" placeholder="Thêm mã, VD: PHP" autocomplete="off" aria-label="Mã cổ phiếu">
-        <input id="mine-note" type="text" maxlength="120" placeholder="Ghi chú (tuỳ chọn)" aria-label="Ghi chú">
+        <div class="mine-find">
+          <input id="mine-ticker" type="search" placeholder="Tìm mã hoặc tên công ty để thêm, VD: PNJ, Phú Nhuận" autocomplete="off"
+            aria-label="Tìm mã hoặc tên công ty để thêm" aria-autocomplete="list" aria-controls="mine-suggest">
+          <div id="mine-suggest" class="mine-suggest" role="listbox" hidden></div>
+        </div>
         <button id="mine-add" class="btn primary" type="button">+ Thêm</button>
-        <span id="mine-msg" class="muted small"></span>
       </div>
+      <p id="mine-pending" class="mine-pending small" hidden></p>
       <div class="toolbar">
         <div class="search"><span aria-hidden="true">⌕</span>
           <input id="search" type="search" placeholder="Tìm mã hoặc tên công ty" aria-label="Tìm mã" autocomplete="off"></div>
@@ -137,7 +137,7 @@
         <span id="alerts-type"></span><span id="alerts-period"></span><span id="alerts-count" class="muted"></span>
       </div>
       <div class="table-wrap"><table id="alerts-table">
-        <thead><tr><th>Phiên</th><th>Mã</th><th>Sự kiện</th><th>Chi tiết</th></tr></thead>
+        <thead><tr><th class="star-col"></th><th>Phiên</th><th>Mã</th><th>Sự kiện</th><th>Chi tiết</th></tr></thead>
         <tbody></tbody>
       </table></div>
       <button id="alerts-more" class="linkbtn more-btn" type="button" hidden>Xem thêm</button>
@@ -147,7 +147,7 @@
     <section id="tab-intraday" class="panel">
       <div class="toolbar"><span id="intraday-status" class="muted"></span></div>
       <div class="table-wrap"><table id="intraday-table">
-        <thead><tr><th>Giờ</th><th>Mã</th><th>Cảnh báo</th><th class="num">Giá</th><th class="num">Mức</th><th class="num" title="Khối lượng tới lúc đó so với nhịp bình quân 50 phiên (giả định khối lượng chia đều trong ngày, chỉ ước tính)">KL / nhịp</th><th>Diễn giải</th></tr></thead>
+        <thead><tr><th class="star-col"></th><th>Giờ</th><th>Mã</th><th>Cảnh báo</th><th class="num">Giá</th><th class="num">Mức</th><th class="num" title="Khối lượng tới lúc đó so với nhịp bình quân 50 phiên (giả định khối lượng chia đều trong ngày, chỉ ước tính)">KL / nhịp</th><th>Diễn giải</th></tr></thead>
         <tbody></tbody>
       </table></div>
     </section>
@@ -155,7 +155,8 @@
     <!-- news -->
     <section id="tab-news" class="panel">
       <div class="toolbar">
-        <div class="search"><span aria-hidden="true">⌕</span><input id="news-search" type="search" placeholder="Lọc theo mã, VD: PNJ" aria-label="Lọc tin theo mã"></div>
+        <div class="search"><span aria-hidden="true">⌕</span><input id="news-search" type="search" placeholder="Tìm theo mã hoặc tên, VD: PNJ, Phú Nhuận" aria-label="Tìm tin theo mã hoặc tên công ty"></div>
+        <span id="news-count" class="muted"></span>
       </div>
       <div id="news-list" class="news-list"></div>
     </section>
@@ -287,5 +288,6 @@
 
 <script src="learn.js"></script>
 <script src="app.js"></script>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 </body>
 </html>

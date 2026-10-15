@@ -148,7 +148,7 @@ def test_mylist_add_list_remove_through_the_dashboard(db):
         rows = server.api_mylist({}, db)
         assert rows[0]["ticker"] == "AAA" and rows[0]["note"] == "theo dõi thử"
         assert rows[0]["tt_passed"] >= 0 and rows[0]["close"] == pytest.approx(40_000)
-        assert _post(port, {"action": "remove", "ticker": "AAA"}) == (200, {"ok": True, "removed": True})
+        assert _post(port, {"action": "remove", "ticker": "AAA"}) == (200, {"ok": True, "removed": True, "web": False})
         assert server.api_mylist({}, db) == []
     finally:
         httpd.shutdown()
@@ -189,11 +189,14 @@ def test_position_api_asks_before_checking_a_cost_far_from_the_price(db):
     assert r["situation"] == "gain_big" and r["levels"]
 
 
-def _flow(conn, ticker, day, buy, sell):
+def _flow(conn, ticker, day, buy, sell, matched=(None, None)):
+    """Day totals (every board); `matched` = the G1 board's own buy / sell (defaults to the totals)."""
+    bm, sm = (buy, sell) if matched == (None, None) else matched
     conn.execute("INSERT INTO flow_daily (scope, scope_key, trade_date, foreign_buy_value, foreign_sell_value, "
-                 "foreign_net_value, source_id, observed_at, foreign_buy_volume, foreign_sell_volume) "
-                 "VALUES ('TICKER', ?, ?, ?, ?, ?, 'dnse_openapi', 'x', ?, ?)",
-                 (ticker, day, buy * 40_000, sell * 40_000, (buy - sell) * 40_000, buy, sell))
+                 "foreign_net_value, source_id, observed_at, foreign_buy_volume, foreign_sell_volume, "
+                 "foreign_buy_volume_matched, foreign_sell_volume_matched, boards_split) "
+                 "VALUES ('TICKER', ?, ?, ?, ?, ?, 'dnse_openapi', 'x', ?, ?, ?, ?, 1)",
+                 (ticker, day, buy * 40_000, sell * 40_000, (buy - sell) * 40_000, buy, sell, bm, sm))
 
 
 def test_stocks_api_lists_every_monitored_name_with_its_source_and_flow(db):
@@ -360,12 +363,30 @@ def test_index_api_shows_matched_volume_and_breadth(db):
     assert live["session"]["decliners"] == 183 and live["session"]["ceilings"] == 12
 
 
-def test_domestic_side_is_blank_when_foreign_volume_exceeds_matched(db):
-    """VHM 09/10/2026 showed 0 / 0: foreign volume includes put-through deals (tester report B16)."""
+def test_domestic_side_takes_the_foreign_matched_board_not_the_totals_with_put_through(db):
+    """HDB 06/10/2026: foreign sold 76.6M in total, 2.3M of it matched, 13.8M matched in all; the
+    totals made the domestic side blank or wrong (2026-10-13)."""
     with connect(db) as conn:
-        _flow(conn, "AAA", "2026-09-25", 1_500, 400)          # matched volume of that session: 1000
-    row = server.api_flow({"ticker": "AAA"}, db)["rows"][0]
-    assert row["domestic_buy"] is None and row["domestic_sell"] == 600
+        _flow(conn, "AAA", "2026-09-25", 1_500, 400, matched=(300, 400))   # matched volume of that session: 1000
+        conn.execute("INSERT INTO flow_daily (scope, scope_key, trade_date, source_id, observed_at, "
+                     "foreign_buy_volume, foreign_sell_volume) VALUES ('TICKER','AAA','2026-09-24','dnse_openapi','x',1500,400)")
+    new, old = server.api_flow({"ticker": "AAA"}, db)["rows"][:2]
+    assert new["foreign_net"] == 1_100 and new["foreign_net_matched"] == -100 and new["foreign_net_put_through"] == 1_200
+    assert (new["domestic_buy"], new["domestic_sell"]) == (700, 600)
+    assert old["foreign_net"] == 1_100 and old["domestic_buy"] is None     # stored before the split: not guessed
+
+
+def test_share_counts_before_a_stock_dividend_are_put_on_todays_scale(db):
+    """DNSE rescales prices on an ex-date, not volumes: HDB's 1.3-for-1 (factor 0.769) on 09/10/2026."""
+    with connect(db) as conn:
+        conn.execute("INSERT INTO price_adjustments (ticker, through_session, factor, source_id, observed_at) "
+                     "VALUES ('AAA', '2026-09-24', 0.8, 'dnse_openapi', 'x')")
+        _flow(conn, "AAA", "2026-09-25", 300, 100)
+        _flow(conn, "AAA", "2026-09-24", 400, 0)
+    after, before = server.api_flow({"ticker": "AAA"}, db)["rows"][:2]
+    assert after["foreign_net"] == 200 and not after["adjusted"]
+    assert before["foreign_net"] == 500 and before["volume"] == 1_250 and before["adjusted"]     # / 0.8
+    assert before["foreign_net_value"] == 400 * 40_000                                            # VND: unchanged
 
 
 def test_an_older_run_shows_the_change_since_its_screening_day(db):
@@ -507,3 +528,22 @@ def test_the_version_changes_with_a_new_screen_run_so_an_open_tab_offers_a_reloa
                      "VALUES ('r2','2026-09-27','2026-09-26','{}','{}','{}')")
     after = server.app_version(db)
     assert before != after and after.endswith("-r2") and server.app_version(db) == after
+
+
+def test_a_news_row_carries_the_article_to_open_cafef_first(db):
+    """Clicking a news card opens the article on CafeF (user request 2026-10-13)."""
+    with connect(db) as conn:
+        now = server.datetime.now(server.VN_TZ).isoformat()
+        conn.execute("INSERT INTO news_events (event_id, event_type, headline, occurred_at, first_seen_at, article_count, "
+                     "primary_source_id, best_source_level, assertion_type) VALUES "
+                     "('n1','GOVERNANCE','AAA: Nghị quyết HĐQT', ?, ?, 2, 'vietstock', 3, 'INFERENCE')", (now, now))
+        conn.execute("INSERT INTO event_tickers (event_id, ticker, role) VALUES ('n1','AAA','subject')")
+        for aid, src, url, at in (("a1", "vietstock", "https://vietstock.vn/x.htm", "2026-10-12T09:00:00+07:00"),
+                                  ("a2", "cafef", "https://cafef.vn/du-lieu/AAA-1/x.chn", "2026-10-12T10:00:00+07:00")):
+            conn.execute("INSERT OR IGNORE INTO sources (source_id, kind, source_level, enabled) VALUES (?, 'news', 3, 1)", (src,))
+            conn.execute("INSERT INTO news_articles (article_id, event_id, source_id, source_level, url, title, "
+                         "published_at, collected_at) VALUES (?, 'n1', ?, 3, ?, 'AAA: Nghị quyết HĐQT', ?, 'x')",
+                         (aid, src, url, at))
+    row = next(r for r in server.api_news({"days": "30"}, db) if r["event_id"] == "n1")
+    assert row["url"] == "https://cafef.vn/du-lieu/AAA-1/x.chn" and row["url_source"] == "cafef"
+    assert row["name"] == "CTCP A"                                   # the search box matches the company's name too

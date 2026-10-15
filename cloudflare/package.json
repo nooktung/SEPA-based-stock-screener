@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Pages Functions of the read-only copy of the dashboard (scripts/deploy_site.ps1 deploys from here)."
+}

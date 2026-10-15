@@ -128,8 +128,14 @@ class FlowRecord:
     prop_net_value: float | None = None
     etf_net_value: float | None = None
     total_match_value: float | None = None
-    foreign_buy_volume: float | None = None     # shares
+    foreign_buy_volume: float | None = None     # shares, the day's total over every board
     foreign_sell_volume: float | None = None
+    # The matched board alone (DNSE G1): comparable with the session's matched volume.
+    foreign_buy_volume_matched: float | None = None
+    foreign_sell_volume_matched: float | None = None
+    foreign_buy_value_matched: float | None = None
+    foreign_sell_value_matched: float | None = None
+    boards_split: bool = False
 
 
 # ---------------------------------------------------------------------------

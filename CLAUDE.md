@@ -82,12 +82,47 @@ Static copy for a few viewers (2026-10-12, user decision, branch `web-tinh`):
 files plus one JSON per `/api/<route>?<query>` the page asks, produced by the same
 `api_*` functions (`static_path`, mirrored by app.js `staticPath`; `site.json` turns the
 page into the read-only copy). `scripts/deploy_site.ps1` uploads it to Cloudflare Pages
-(wrangler, keys CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID in .env), opened only by
-the emails listed in Cloudflare Access; the 15:30 job runs both after `start --update-only`.
+(wrangler, keys CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID in .env, project `sepa-vn`,
+https://sepa-vn.pages.dev); the 15:30 job runs both after `start --update-only`.
+Login (2026-10-13, user decision: an account and password of their own, not Cloudflare
+Access's email codes): cloudflare/functions/_middleware.js runs before every request but the
+logos (`_routes.json` from the export) and answers the form / 401 without a session; accounts
+are PBKDF2-SHA256 hashes in the Pages secret SITE_USERS (+ SESSION_SECRET for the HMAC-signed
+cookie, 7 days), written by `python -m src.main site-user add|remove|list` (src/web/site_users.py;
+the password is typed at a hidden prompt, or in the window scripts/site_user_gui.ps1 which pipes it
+to `--password-stdin` (PowerShell 5.1 prepends a BOM, stripped); never stored in clear; hashes only in
+data/site_users.json; in effect from the next deploy). Roles owner / viewer (labels only since every account edits its own list); 8 failures per IP
+lock the form 15 minutes (KV); no accounts -> nothing gets through (fail closed). Never type a
+user's real password for them: they run `site-user` themselves. Local check:
+`wrangler pages dev` (launch config site-cloudflare-local, test account in the git-ignored
+cloudflare/.dev.vars). Tests: cloudflare/test/login.test.mjs, tests/test_site_users.py.
 The database, the keys and the computing stay on this machine. The copy has no write,
 no position check, charts only for the monitored tickers; the export refuses (exit 2)
 unless the data is the latest closed session with its screen run, and stops on any
 value from .env in the output. `data/site` is never committed.
+"Danh sách của tôi" on the web (2026-10-13, user decision; one list per account since 2026-10-14):
+each account's list is one Workers KV value "mylist:<account>" written by the Pages Function
+cloudflare/functions/api/mylist.js for the logged-in account (`data.user` from the login
+middleware) -- an account never sees or edits another's; same-origin JSON only, tickers from the
+exported data/universe.json, at most `site.mylist_max_per_account` (40, via site.json) per list
+(Node test: tests/test_cloudflare_function.py). `mylist-sync` (daily job first;
+`scripts/mylist_poll.ps1` every 30 min, then export + deploy) mirrors `site.local_account`'s
+list (admin) into `user_watchlist` and the other accounts' (names from data/site_users.json) into
+`web_watchlist`; `monitored_tickers` and `/api/stocks` include both, so every ticker of every list
+is monitored and published (rows of other accounts' tickers belong to no group locally). The local
+`POST /api/mylist` reads the local account's list first and writes through it (put back on a KV
+error), only for the real database (`_web_list_enabled`); the local account's value never written
+is seeded from this machine's list (`cloudflare_kv.read_or_seed`) and the Function refuses writes
+to it (409) until then, so turning the web list on never empties the list here. The old single key
+"mylist" is unused. Cost (measured 2026-10-14): ~10 s per extra ticker in the daily job (monitor 1.5,
+flow 1.3, news 4.3, export 1.9 s), so the 15:30 task may run 3 hours (`register_task.ps1`, WakeToRun).
+A list change (mylist_poll.ps1) runs `mylist-refresh` on the new tickers only (`monitor --tickers`
+recomputes just those and leaves the session's brief alone; then flow, news, logos) and
+`export-site --update` (`export.update_site`): the latest run's tables, market, news and the new
+tickers' chart pages, staged and checked for .env values, then moved in, site.json last -- seconds
+instead of a full export; a copy of another run gets the full export. It then runs `mylist-refresh` in the
+background (backfill, monitor --no-fetch --keep-events, flow, news for the new ticker). Still
+the one write of the system, never anything order-like.
 
 `start` (2026-10-05, user decision) runs `src/pipeline.py` first: backfill ->
 index-session -> index-check -> industry -> fundamentals -> screen -> refprices -> monitor
@@ -99,8 +134,8 @@ not been screened, and opens the web only when every step has finished.
 file (`data/pipeline.lock`) stops two updates running at once.
 
 UI layout (rebuilt 2026-10-03 at the user's request): every stock group in the
-sidebar (Danh sách chính = A+B, Theo dõi mở rộng = C, Của tôi, Đầu ngành, Tất
-cả theo dõi) is the same table fed by `/api/stocks`, with three views
+sidebar (Danh sách chính = A+B, Theo dõi mở rộng = C, Của tôi, Đầu ngành; "Tất
+cả theo dõi" removed at the user's request 2026-10-13) is the same table fed by `/api/stocks`, with three views
 (Tổng quan / Kỹ thuật / Dòng tiền) and four or five filters. The header keeps
 only a compact VN-Index card. The chart draws only what "Lớp hiển thị" enables
 (default MA50/150/200, pivot/stop, volume, RSI). "Học" (`static/learn.js`)
@@ -121,8 +156,14 @@ the former 5-year window (marker `data/history_depth.json`).
 
 Foreign flow: `python -m src.main flow [--days N]` stores DNSE's per-session
 foreign buy / sell **share volumes** (`flow_daily.foreign_buy_volume`,
-`foreign_sell_volume`, migrated in `_migrate`). Domestic = matched volume
-minus the foreign side (user's definition, 2026-10-03); DNSE does not split
+`foreign_sell_volume`, migrated in `_migrate`). Those are the day totals over every
+board (matched G1 + put-through T1/T3 + odd lot G4, = VNDirect's figures); since
+2026-10-13 the G1 board's own buy / sell (`*_matched`, `boards_split = 1`; rows without
+it are read again) sit beside them. Domestic = matched volume minus the foreign MATCHED
+side (user's definition, 2026-10-03; the totals made it blank or wrong: HDB 06/10 sold
+76.6M with 13.8M matched). Net = the totals; "Thỏa thuận" = net minus the matched net.
+Volumes before an ex-date are divided by `price_adjustments.factor` (`server.share_scale`),
+values in VND are not. DNSE does not split
 domestic investors further, so never present it as individuals vs institutions.
 `scripts/daily.ps1` runs monitor, then flow, news and logos, then the whole
 market: `backfill` (every ticker, ~30-45 min) and `market`.
@@ -340,7 +381,11 @@ code when none is stored. Display only.
   (`/du-lieu/Ajax/Events_RelatedNews_New.aspx`) for the focus list and the
   CafeF/Vietstock RSS feeds, stores every article, fetches bodies only for
   articles about monitored tickers (JSON under `data/news/`), deduplicates
-  into `news_events` and scores deterministically. Requests are spaced 2.5 s.
+  into `news_events` and scores deterministically. Requests are spaced 2.5 s. The daily run
+  looks back 30 days; on 2026-10-13 a one-off `news --days 150 --no-rss` filled five months
+  (CafeF's ticker list goes back years; RSS cannot be backfilled; `max_pages` 20 is a cap
+  only). The "Tin tức" page shows `news.page_days` (150); a card opens its article (CafeF
+  first) and one search box matches the ticker or the company's name.
 - CafeF `/du-lieu/<TICKER>-<id>/` pages are reposted company disclosures; they
   carry the issuer's original PDF link and stay INFERENCE (level 3) until
   checked against it.
@@ -495,7 +540,7 @@ uppercase or the subscription silently returns nothing.
 
 ## Working conventions
 
-- Run `python -m pytest -q` after every change. 902 tests currently pass.
+- Run `python -m pytest -q` after every change. 929 tests currently pass.
 - `congthuc.md` (2026-10-06, for the user's review) states every formula and threshold the
   system uses, with its source tag. Update it in the same change whenever a formula or a
   threshold changes.

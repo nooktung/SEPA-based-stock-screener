@@ -223,6 +223,7 @@ news:
   # of disclosures stay INFERENCE until checked against the issuer's document.
   fact_max_source_level: 2
   lookback_days_default: 30
+  page_days: 150                    # the "Tin tức" page shows this many days (user decision 2026-10-13)
   brief_max_events: 7               # the context boundary: 7 events, not 500 articles
   # Near-duplicate clustering: same ticker, within N days, and either a 64-bit
   # simhash within this Hamming distance or title-token Jaccard >= dedup_similarity_threshold.
@@ -573,6 +574,11 @@ site:
   out_dir: data/site
   runs: 5                         # screen runs offered in "Danh sách lọc ngày" on the copy
   pages_project: sepa-vn          # Cloudflare Pages project the deploy script uploads to
+  local_account: admin            # whose web list is "Danh sách của tôi" on this machine's dashboard
+  mylist_max_per_account: 40      # tickers in each account's list (user decision 2026-10-14)
+  login:                          # the copy's own login (src/web/site_users.py, cloudflare/functions/_middleware.js)
+    min_password_length: 8
+    pbkdf2_iterations: 5000       # PBKDF2-SHA256; the free plan allows ~10 ms of CPU per request
 
 # `python -m src.main start`: update everything, then open the dashboard (src/pipeline.py).
 pipeline:

@@ -475,7 +475,8 @@ def _legs(contractions: Sequence[float], shown: int = 4) -> str:
 # ---------------------------------------------------------------------------
 
 def monitored_tickers(path: Path | None = None) -> tuple[list[str], dict[str, float], dict[str, str]]:
-    """watchlist.yaml, the latest screen run (with its RS and group), its industry leaders, then the user's picks."""
+    """watchlist.yaml, the latest screen run (with its RS and group), its industry leaders, then the user's
+    picks and the other web accounts' lists."""
     cfg = load_config()
     tickers = list(cfg.watchlist.active_tickers)
     rs: dict[str, float] = {}
@@ -501,8 +502,11 @@ def monitored_tickers(path: Path | None = None) -> tuple[list[str], dict[str, fl
             funnel = conn.execute("SELECT funnel_json FROM screen_runs WHERE run_id = ?", (row[0],)).fetchone()[0]
             for t, r in ((json.loads(funnel or "{}") or {}).get("rs_ratings") or {}).items():
                 rs.setdefault(t, float(r))
-        # The user's own picks ("Danh mục của tôi").
+        # The user's own picks ("Danh mục của tôi"), then the other web accounts' lists (2026-10-14).
         for (t,) in conn.execute("SELECT ticker FROM user_watchlist ORDER BY added_at"):
+            if t not in tickers:
+                tickers.append(t)
+        for (t,) in conn.execute("SELECT ticker FROM web_watchlist GROUP BY ticker ORDER BY MIN(added_at), ticker"):
             if t not in tickers:
                 tickers.append(t)
     return tickers, rs, group
@@ -524,12 +528,18 @@ def _frames(tickers: Sequence[str], path: Path | None) -> tuple[dict[str, pd.Dat
 
 
 def run_monitor(persist: bool = True, path: Path | None = None,
-                thresholds: Mapping[str, Any] | None = None, keep_events: bool = False) -> MonitorResult:
+                thresholds: Mapping[str, Any] | None = None, keep_events: bool = False,
+                only: Sequence[str] | None = None) -> MonitorResult:
     """`keep_events`: recompute the states but keep the session's stored events (a re-run
-    after a rule change: what happened on that session stays as it was recorded)."""
+    after a rule change: what happened on that session stays as it was recorded).
+    `only`: just these monitored tickers (a list just added to, `mylist-refresh`); every other
+    ticker's state and alerts stay as stored -- persisting is per ticker."""
     screen = screen_settings(thresholds)
     mon = monitor_settings(thresholds)
     tickers, screen_rs, group = monitored_tickers(path)
+    if only is not None:
+        wanted = {t.upper() for t in only}
+        tickers = [t for t in tickers if t in wanted]
     frames, exchanges = _frames(tickers, path)
     hold = int(screen["base"].get("hold_sessions", 0) or 0)
     stored = _latest_states(tickers, path)
