@@ -12,6 +12,31 @@ TH = load_config().thresholds
 CFG = TH["chart_levels"]["trendline"]
 
 
+@pytest.mark.parametrize("tf", ["D", "W", "M"])
+def test_projection_has_one_time_slot_per_projected_bar(tf):
+    from src.quant.channel import trend_overlays
+    f = _rising_waves()
+    if tf != "D":
+        f.index = pd.date_range("2010-01-01", periods=len(f), freq="W-MON" if tf == "W" else "MS")
+    result = trend_overlays(f, CFG, tf)
+    dates = result["projection_dates"]
+    assert len(dates) == CFG["project_sessions"]
+    assert dates == sorted(set(dates))
+    assert dates[0] > f.index[-1].date().isoformat()
+    for line in result["trendlines"].values():
+        if not line["broken_on"]:
+            assert line["end"][0] == dates[-1]
+
+
+def test_zone_counts_match_the_band_actually_drawn():
+    f = _rising_waves()
+    result = chart_levels(f, TH, "HOSE")
+    for z in result["zones"] + ([result["at_zone"]] if result["at_zone"] else []):
+        touched = (f.low <= z["zone_high"]) & (f.high >= z["zone_low"])
+        assert z["touch_count"] == touched.sum()
+        assert z["last_tested"] == (f.index[touched][-1].date().isoformat() if touched.any() else None)
+
+
 def _frame(close, spread=0.01):
     close = np.asarray(close, dtype="float64")
     idx = pd.bdate_range("2026-01-01", periods=len(close))

@@ -45,14 +45,13 @@ async function detectSite() {
 
 async function get(url) {
   if (SITE && url.startsWith("/api/")) {
+    const t = new URL(url, location.href).searchParams.get("ticker");
+    const missing = t ? `${t} chưa có dữ liệu chi tiết trên bản web. Thêm mã vào Danh sách của tôi và chờ bản cập nhật tiếp theo.` : "Bản web chưa có dữ liệu cho mục này. Hãy tải lại trang.";
+    if (t && Array.isArray(SITE.detail) && !SITE.detail.includes(t)) throw new Error(missing);
     const r = await fetch(staticPath(url), { cache: "no-cache" });
     if (r.status === 401) toLogin();
-    if (!r.ok) {
-      const t = new URL(url, location.href).searchParams.get("ticker");
-      throw new Error(t ? `Bản web chỉ có biểu đồ chi tiết của các mã đang theo dõi; ${t} chỉ xem được trên bản chạy trên máy.`
-        : "Bản web không có mục này.");
-    }
-    return r.json();
+    if (!r.ok || !(r.headers.get("Content-Type") || "").includes("application/json")) throw new Error(missing);
+    try { return await r.json(); } catch { throw new Error("Dữ liệu chi tiết không hợp lệ. Hãy tải lại trang sau khi bản web cập nhật."); }
   }
   const r = await fetch(url);
   noteVersion(r.headers.get("X-App-Version"));
@@ -971,7 +970,7 @@ function drawChart(d) {
   }
   const base = d.base || {};
   const markers = [];
-  const pivot = base.pivot ?? (d.state || {}).pivot, stop = base.stop ?? (d.state || {}).stop;
+  const pivot = d.base ? base.pivot : (d.state || {}).pivot, stop = d.base ? base.stop : (d.state || {}).stop;
   const lastBar = d.bars[d.bars.length - 1].trade_date;
   const fromBase = barOf(base.start_date) || d.bars[0].trade_date;
   // Price levels run from the base's start, not across the whole chart (tester M04 note). Only pivot and
@@ -1053,6 +1052,12 @@ function drawChart(d) {
     macd.addLineSeries({ color: OSC_COLORS.SIGNAL, lineWidth: 1, priceLineVisible: false }).setData(onBars(d.osc && d.osc.SIGNAL));
     charts.push(macd);
   }
+  // All panes need the same trading-bar grid. A single future endpoint compresses
+  // a 20-session ray into one slot and moves the drawn line away from its anchors.
+  const future = L.channel ? ((d.levels || {}).projection_dates || []) : [];
+  if (future.length) {
+    seedProjectionGrid(charts, d.bars, future);
+  }
   let syncing = false;
   charts.forEach((c) => c.timeScale().subscribeVisibleLogicalRangeChange((range) => {
     if (syncing || !range) return;
@@ -1104,6 +1109,11 @@ function drawChart(d) {
 
 // Filled shapes behind the candles (channel band, zones): lightweight-charts
 // has no filled drawing tools, so this is a series primitive painting on its canvas.
+function seedProjectionGrid(charts, bars, future) {
+  const grid = [...bars.map((b) => ({ time: b.trade_date })), ...future.map((time) => ({ time }))];
+  charts.forEach((c) => c.addLineSeries({ visible: false, priceLineVisible: false, lastValueVisible: false }).setData(grid));
+}
+
 class FillPrimitive {
   constructor(shapes) {
     this.shapes = shapes;

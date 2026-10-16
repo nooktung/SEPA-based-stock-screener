@@ -618,6 +618,7 @@ thế" làm tròn lên theo bước giá.
    mức bị phá: phiên đóng cửa vượt đỉnh 20 / 60 phiên trước → đỉnh đó là một mức; thủng đáy 20 / 60 phiên → đáy đó là một mức.
 2. **Gộp**: các mức cách tâm cụm ≤ **1,5%** gộp thành một vùng; vùng = tâm ± **0,75%**.
 3. **Số lần chạm** = số phiên mà biên độ (H…L) chạm vào vùng ± 1%.
+   Đây là số dùng để chấm độ mạnh. Trên biểu đồ, “giá đi qua vùng” đếm riêng các phiên có L ≤ cận trên và H ≥ cận dưới sau khi làm tròn bước giá; ngày gần nhất cũng theo đúng vùng đang vẽ. Việc chọn vùng gần nhất/vùng chứa giá dùng các cận đã làm tròn.
 4. **Độ mạnh** = 60 × min(chạm/8, 1) + 25 × 0,5^(số phiên từ lần chạm cuối / 120) + 15 × min(số loại nguồn/3, 1).
 5. Vùng trên giá = kháng cự, dưới giá = hỗ trợ. Biểu đồ chỉ vẽ vùng **gần giá nhất** mỗi bên.
 

@@ -47,6 +47,16 @@ def test_ticker_api_serves_bars_and_moving_averages(db):
     assert data["screen"]["grp"] == "A"
 
 
+def test_legacy_pivot_distance_uses_the_displayed_pivot(db):
+    with connect(db) as conn:
+        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) VALUES (?, ?, ?, ?)",
+                     ("AAA", "2026-09-25", json.dumps({"legacy_hold": True, "pivot": 39000, "stop": None}), "x"))
+    data = server.api_ticker({"ticker": "AAA"}, db)
+    assert data["base"]["pivot"] == 39000
+    assert data["base"]["stop"] is None
+    assert data["base"]["distance_to_pivot_pct"] == round((40000 / 39000 - 1) * 100, 2)
+
+
 def test_unknown_run_is_a_404_not_a_crash(db):
     with pytest.raises(KeyError):
         server.api_screen({"run_id": "nope"}, db)
@@ -330,7 +340,7 @@ def test_bars_api_serves_weekly_and_monthly_charts(db):
     w = server.api_bars({"ticker": "aaa", "tf": "W"}, db)
     assert len(w["bars"]) == 52 and sum(b["sessions"] for b in w["bars"]) == 260
     assert w["ma_periods"] == {"MA20": 4, "MA50": 10, "MA150": 30, "MA200": 40}
-    assert set(w["levels"]) == {"trendlines", "channel", "note"} and "nến tuần" in w["levels"]["note"]
+    assert set(w["levels"]) == {"trendlines", "channel", "note", "projection_dates"} and "nến tuần" in w["levels"]["note"]
     assert len(w["ma"]["MA200"]) == 52 - 39 and w["ma"]["MA200"][0]["time"] == w["bars"][39]["trade_date"]
     m = server.api_bars({"ticker": "AAA", "tf": "M"}, db)
     assert m["bars"][-1]["period_end"] == "2026-09-25" and m["bars"][-1]["close"] == 40_000

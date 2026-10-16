@@ -38,7 +38,7 @@ from src.database import connect
 
 STATIC = PROJECT_ROOT / "src" / "web" / "static"
 OUT_DIR = PROJECT_ROOT / "data" / "site"
-PAGE_FILES = ("index.html", "app.js", "learn.js", "style.css")
+PAGE_FILES = ("index.html", "app.js", "learn.js", "style.css", "404.html")
 # The queries app.js sends (loadFlow, loadAlerts): the copy must hold exactly these.
 FLOW_SESSIONS = "30"
 ALERTS_LIMIT = "1000"

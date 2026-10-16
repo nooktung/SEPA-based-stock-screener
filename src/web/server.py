@@ -304,6 +304,8 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
             if st.get("base_kind"):
                 base_overlay["kind"] = st["base_kind"]      # GMD: list "Nền", chart "VCP" (R3-04)
             base_overlay["legacy_hold"] = True
+            pivot = base_overlay.get("pivot")
+            base_overlay["distance_to_pivot_pct"] = round((bars[-1]["close"] / pivot - 1) * 100, 2) if pivot else None
     # Reference prices of the recent sessions: the header's and the legend's % follow the boards.
     refs = refprices.lookup([(ticker, b["trade_date"]) for b in bars[-60:]], path)
     closes = {b["trade_date"]: b["close"] for b in bars[-60:]}

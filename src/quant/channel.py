@@ -221,7 +221,9 @@ def trend_overlays(frame: pd.DataFrame, cfg: Mapping[str, Any], tf: str = "D",
         # the channel follows the line whose second anchor is the more recent
         line, geometry = max(recent, key=lambda r: (r[0].anchors[1][0], r[0].touches))
         channel = asdict(parallel_channel(line, geometry))
-    return {"trendlines": lines, "channel": channel}
+    return {"trendlines": lines, "channel": channel,
+            "projection_dates": future_sessions(frame.index[-1], int(cfg["project_sessions"]), tf)
+            if recent and any(r[0].broken_on is None for r in recent) else []}
 
 
 def _all_zones(frame: pd.DataFrame) -> tuple[list[Zone], float]:
@@ -236,7 +238,7 @@ def _all_zones(frame: pd.DataFrame) -> tuple[list[Zone], float]:
     return zones, price
 
 
-def _zone_dict(z: Zone, price: float, exchange: str | None) -> dict[str, Any]:
+def _zone_dict(z: Zone, price: float, exchange: str | None, frame: pd.DataFrame | None = None) -> dict[str, Any]:
     """A zone on the exchange's tick grid: centre to the nearest tick, the band widened to whole ticks."""
     d = z.as_dict()
     if exchange:
@@ -245,6 +247,11 @@ def _zone_dict(z: Zone, price: float, exchange: str | None) -> dict[str, Any]:
         d["zone_low"] = round_to_tick(z.zone_low, exchange, up=False)
         d["zone_high"] = round_to_tick(z.zone_high, exchange, up=True)
         d["distance_from_price"] = round((d["center"] - price) / price * 100.0, 2)
+    if frame is not None:
+        # The chart says "range crossed this band", not the scoring rule's wider tolerance.
+        touched = (frame["low"] <= d["zone_high"]) & (frame["high"] >= d["zone_low"])
+        d["touch_count"] = int(touched.sum())
+        d["last_tested"] = frame.index[touched][-1].date().isoformat() if touched.any() else None
     return d
 
 
@@ -252,13 +259,19 @@ def nearest_zones(frame: pd.DataFrame, min_distance_pct: float,
                   exchange: str | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """(nearest resistance and support at least `min_distance_pct` away, the zone the price is in)."""
     zones, price = _all_zones(frame)
+    # Select using the same tick-rounded boundaries the viewer sees.
+    for z in zones:
+        shown = _zone_dict(z, price, exchange)
+        z.center, z.zone_low, z.zone_high = shown["center"], shown["zone_low"], shown["zone_high"]
+        z.distance_from_price = (z.center - price) / price * 100.0
+        z.side = SIDE_RESISTANCE if z.center > price else SIDE_SUPPORT
     inside = min((z for z in zones if z.contains(price)), key=lambda z: abs(z.distance_from_price), default=None)
     out = []
     for side in (SIDE_RESISTANCE, SIDE_SUPPORT):
         far = [z for z in zones if z.side == side and abs(z.distance_from_price) >= min_distance_pct and z is not inside]
         if far:
-            out.append(_zone_dict(min(far, key=lambda z: abs(z.distance_from_price)), price, exchange))
-    return out, (_zone_dict(inside, price, exchange) if inside else None)
+            out.append(_zone_dict(min(far, key=lambda z: abs(z.distance_from_price)), price, exchange, frame))
+    return out, (_zone_dict(inside, price, exchange, frame) if inside else None)
 
 
 def chart_levels(frame: pd.DataFrame, thresholds: Mapping[str, Any], exchange: str | None = None) -> dict[str, Any]:

@@ -71,7 +71,7 @@ def test_the_copy_holds_the_api_answers_and_nothing_to_write(db, tmp_path):
     from src.web import server
     stocks = json.loads((out / "data/stocks/run_id-r1.json").read_text(encoding="utf-8"))
     assert stocks == json.loads(json.dumps(server._clean(server.api_stocks({"run_id": "r1"}, db)), default=str))
-    for name in ("index.html", "app.js", "data/runs.json", "data/ticker/ticker-AAA.json",
+    for name in ("index.html", "404.html", "app.js", "data/runs.json", "data/ticker/ticker-AAA.json",
                  "data/bars/tf-W_ticker-AAA.json", "data/flow/sessions-30_ticker-AAA.json", "data/news.json",
                  "data/universe.json"):
         assert (out / name).is_file(), name

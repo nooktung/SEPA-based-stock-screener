@@ -25,3 +25,8 @@ def test_nothing_of_the_site_without_a_login():
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
 def test_only_the_owner_writes_the_web_list():
     assert "mylist function: ok" in _node("mylist.test.mjs")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
+def test_chart_and_static_json_regressions():
+    assert "chart regressions: ok" in _node("chart.test.mjs")
