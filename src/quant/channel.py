@@ -249,7 +249,9 @@ def _zone_dict(z: Zone, price: float, exchange: str | None, frame: pd.DataFrame 
         d["distance_from_price"] = round((d["center"] - price) / price * 100.0, 2)
     if frame is not None:
         # The chart says "range crossed this band", not the scoring rule's wider tolerance.
-        touched = (frame["low"] <= d["zone_high"]) & (frame["high"] >= d["zone_low"])
+        # Match the six-decimal JSON prices; adjusted OHLC can differ from a tick
+        # by floating-point noise (8050.0000000001 is displayed as 8050).
+        touched = (frame["low"].round(6) <= d["zone_high"]) & (frame["high"].round(6) >= d["zone_low"])
         d["touch_count"] = int(touched.sum())
         d["last_tested"] = frame.index[touched][-1].date().isoformat() if touched.any() else None
     return d
