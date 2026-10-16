@@ -46,7 +46,7 @@ async function detectSite() {
 async function get(url) {
   if (SITE && url.startsWith("/api/")) {
     const t = new URL(url, location.href).searchParams.get("ticker");
-    const missing = t ? `${t} chưa có dữ liệu chi tiết trên bản web. Thêm mã vào Danh sách của tôi và chờ bản cập nhật tiếp theo.` : "Bản web chưa có dữ liệu cho mục này. Hãy tải lại trang.";
+    const missing = t ? `${t} chưa có dữ liệu chi tiết trong bản cập nhật này. Hãy tải lại trang hoặc thử lại sau.` : "Bản web chưa có dữ liệu cho mục này. Hãy tải lại trang.";
     if (t && Array.isArray(SITE.detail) && !SITE.detail.includes(t)) throw new Error(missing);
     const r = await fetch(staticPath(url), { cache: "no-cache" });
     if (r.status === 401) toLogin();

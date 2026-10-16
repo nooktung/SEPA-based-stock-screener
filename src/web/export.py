@@ -13,8 +13,8 @@ local dashboard would answer, written once after the daily job:
 Every JSON file is produced by the same `api_*` function the local server calls, so the
 copy shows the same numbers. Not published: the position check (it needs the viewer's
 cost), the one write route ("Của tôi"), the invariant report. Charts are exported for the
-tickers the dashboard monitors; any other ticker shows its row in "Toàn thị trường" only
-(~0.6 MB of chart data per ticker: the whole market would be ~800 MB a day).
+tickers the dashboard monitors and every ticker shown in "Toàn thị trường".
+The larger snapshot lets viewers open any market row without adding it to a watchlist.
 
 Nothing is written over the published copy unless the data is the latest closed session
 and the latest screen run is of that session; a value from .env found anywhere in the
@@ -152,8 +152,8 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
                          ("bars", {"index": "VNINDEX", "tf": "M"}, server.api_bars)):
         write(route, q, fn)
 
-    # Charts for the monitored tickers (the rows of the latest run's table).
-    _write_details(write, sorted({r["ticker"] for r in server.api_stocks({}, path)}), report)
+    # Every clickable market row must have the same detail routes as a monitored ticker.
+    _write_details(write, sorted(_detail_tickers(server.api_stocks({}, path), path)), report)
 
     # Logos: copied with their own extension; the page reads the name from site.json.
     logo_files: dict[str, str] = {}
@@ -215,6 +215,12 @@ def _api_writer(work: Path, path: Path | None, report: ExportReport) -> Callable
         write_json(work / static_path(route, query), payload)
         return True
     return write
+
+
+def _detail_tickers(rows: list[dict[str, Any]], path: Path | None) -> set[str]:
+    from src.web import server  # noqa: PLC0415
+
+    return {r["ticker"] for r in rows} | {r["ticker"] for r in server.api_market({}, path)["rows"]}
 
 
 def _write_details(write: Callable[..., bool], tickers: list[str], report: ExportReport) -> None:
@@ -281,7 +287,7 @@ def update_site(out_dir: Path | None = None, path: Path | None = None, now: date
     write("market", {}, server.api_market)
     write("news", {}, server.api_news)
     held = set(meta.get("detail") or [])
-    _write_details(write, sorted({r["ticker"] for r in rows} - held), report)
+    _write_details(write, sorted(_detail_tickers(rows, path) - held), report)
 
     logo_files = dict(meta.get("logos") or {})
     for t in report.detail:

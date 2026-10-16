@@ -97,7 +97,9 @@ user's real password for them: they run `site-user` themselves. Local check:
 `wrangler pages dev` (launch config site-cloudflare-local, test account in the git-ignored
 cloudflare/.dev.vars). Tests: cloudflare/test/login.test.mjs, tests/test_site_users.py.
 The database, the keys and the computing stay on this machine. The copy has no write,
-no position check, charts only for the monitored tickers; the export refuses (exit 2)
+no position check. Since 2026-10-16 (user request), charts cover every ticker in the
+whole-market snapshot as well as monitored tickers, in full and incremental exports;
+opening a chart never requires adding the ticker to a watchlist. The export refuses (exit 2)
 unless the data is the latest closed session with its screen run, and stops on any
 value from .env in the output. `data/site` is never committed.
 "Danh sách của tôi" on the web (2026-10-13, user decision; one list per account since 2026-10-14):

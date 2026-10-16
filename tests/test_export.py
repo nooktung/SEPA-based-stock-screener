@@ -141,6 +141,29 @@ def test_an_update_without_a_copy_of_this_run_is_the_full_export(db, tmp_path):
     assert json.loads((out / "site.json").read_text(encoding="utf-8"))["run_id"] == "r1"
 
 
+@pytest.mark.parametrize("incremental", [False, True])
+def test_market_ticker_gets_all_detail_routes_without_a_watchlist(db, tmp_path, monkeypatch, incremental):
+    from src.web import server
+
+    out = tmp_path / "site"
+    if incremental:
+        export.export_site(out_dir=out, **_kw(db, tmp_path))
+    _pick(db, "A32", "CTCP 32")
+    with connect(db) as conn:
+        conn.execute("DELETE FROM user_watchlist WHERE ticker = 'A32'")
+    monkeypatch.setattr(server, "api_market", lambda q, path: {"rows": [{"ticker": "A32"}]})
+    fn = export.update_site if incremental else export.export_site
+    fn(out_dir=out, **_kw(db, tmp_path))
+    meta = json.loads((out / "site.json").read_text(encoding="utf-8"))
+    assert meta["detail"] == ["A32", "AAA"]
+    for route, q in [("ticker", {"ticker": "A32"}), ("bars", {"ticker": "A32", "tf": "W"}),
+                     ("bars", {"ticker": "A32", "tf": "M"}), ("flow", {"ticker": "A32", "sessions": "30"})]:
+        payload = json.loads((out / export.static_path(route, q)).read_text(encoding="utf-8"))
+        assert payload is not None
+    with connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM user_watchlist WHERE ticker='A32'").fetchone()[0] == 0
+
+
 def test_an_update_carrying_a_value_from_env_changes_nothing(db, tmp_path):
     out = tmp_path / "site"
     env = tmp_path / ".env"
