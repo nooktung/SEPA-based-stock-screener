@@ -38,10 +38,9 @@ from src.database import connect
 
 STATIC = PROJECT_ROOT / "src" / "web" / "static"
 OUT_DIR = PROJECT_ROOT / "data" / "site"
-PAGE_FILES = ("index.html", "app.js", "learn.js", "style.css", "404.html")
-# The queries app.js sends (loadFlow, loadAlerts): the copy must hold exactly these.
+PAGE_FILES = ("index.html", "app.js", "learn.js", "news-dates.js", "style.css", "404.html")
+# The flow query app.js sends: the copy must hold exactly this.
 FLOW_SESSIONS = "30"
-ALERTS_LIMIT = "1000"
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -145,9 +144,8 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
         write("screen", q, server.api_screen)
         write("stocks", q, server.api_stocks)
         write("industries", q, server.api_industries)
-    for route, q, fn in (("market", {}, server.api_market), ("alerts", {"limit": ALERTS_LIMIT}, server.api_alerts),
+    for route, q, fn in (("market", {}, server.api_market),
                          ("news", {}, server.api_news), ("index", {}, server.api_index),
-                         ("intraday", {}, server.api_intraday),
                          ("bars", {"index": "VNINDEX", "tf": "W"}, server.api_bars),
                          ("bars", {"index": "VNINDEX", "tf": "M"}, server.api_bars)):
         write(route, q, fn)
@@ -214,6 +212,8 @@ def _api_writer(work: Path, path: Path | None, report: ExportReport) -> Callable
             return False
         write_json(work / static_path(route, query), payload)
         return True
+    write.export_folder = work
+    write.export_db = path
     return write
 
 
@@ -223,7 +223,35 @@ def _detail_tickers(rows: list[dict[str, Any]], path: Path | None) -> set[str]:
     return {r["ticker"] for r in rows} | {r["ticker"] for r in server.api_market({}, path)["rows"]}
 
 
+def _detail_job(args):
+    """One process writes one ticker, using the same public API functions."""
+    ticker, folder, path = args
+    report = ExportReport(Path(folder), "")
+    write = _api_writer(Path(folder), path, report)
+    _write_details_serial(write, [ticker], report)
+    return report.detail, report.skipped
+
+
 def _write_details(write: Callable[..., bool], tickers: list[str], report: ExportReport) -> None:
+    """Bounded parallel CPU work; no network calls or changed chart formulas."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    cfg = load_config().thresholds.raw.get("site", {})
+    workers = max(1, min(int(cfg.get("export_workers", 4)), os.cpu_count() or 1, 4))
+    folder = getattr(write, "export_folder", None)
+    if workers == 1 or len(tickers) < 16 or folder is None:
+        _write_details_serial(write, tickers, report)
+        return
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        jobs = ((t, folder, getattr(write, "export_db", None)) for t in tickers)
+        for n, (detail, skipped) in enumerate(pool.map(_detail_job, jobs, chunksize=1), 1):
+            report.detail.extend(detail)
+            report.skipped.update(skipped)
+            if n % 100 == 0 or n == len(tickers):
+                print(f"Export charts: {n}/{len(tickers)} ({workers} workers)", flush=True)
+
+
+def _write_details_serial(write: Callable[..., bool], tickers: list[str], report: ExportReport) -> None:
     """A ticker's chart page: its detail, weekly / monthly bars and foreign flow."""
     from src.web import server  # noqa: PLC0415
 
@@ -287,6 +315,16 @@ def update_site(out_dir: Path | None = None, path: Path | None = None, now: date
     write("market", {}, server.api_market)
     write("news", {}, server.api_news)
     held = set(meta.get("detail") or [])
+    # Refresh embedded news for existing chart pages without recalculating 1,472 charts.
+    for ticker in sorted(held):
+        relative = static_path("ticker", {"ticker": ticker})
+        original = out_dir / relative
+        if original.is_file():
+            payload = json.loads(original.read_text(encoding="utf-8"))
+            current_news = server._clean(server.ticker_news(ticker, path))
+            if payload.get("news") != current_news:
+                payload["news"] = current_news
+                write_json(work / relative, payload)
     _write_details(write, sorted(_detail_tickers(rows, path) - held), report)
 
     logo_files = dict(meta.get("logos") or {})

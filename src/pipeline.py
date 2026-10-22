@@ -25,7 +25,8 @@ would produce is already there, so a second `start` the same day opens fast:
                 `refprices_min_interval_hours` ago and the list did not change;
 * monitor    -- when the screen was not re-run and the monitored tickers
                 already have a state for that session;
-* news       -- when articles were collected less than `news_min_interval_hours` ago;
+* news       -- always refresh on Saturday/Sunday (Vietnam time); on weekdays skip
+                when collected less than `news_min_interval_hours` ago;
 * market     -- when the snapshot already has the latest stored prices;
 * flow, logos -- always: they only request what is missing.
 
@@ -197,9 +198,11 @@ def plan_steps(now: datetime, path: Path | None = None, index_dates: Sequence[da
     plan.steps.append(Step("flow", "Khối ngoại", ["flow", "--days", str(int(cfg["flow_days"]))], "~2 phút",
                            why="chỉ lấy phiên còn thiếu"))
     last = _parse_ts(news_last)
-    fresh_news = bool(last and now.astimezone(timezone.utc) - last < timedelta(hours=float(cfg["news_min_interval_hours"])))
+    weekend_news = now.astimezone(VN_TZ).weekday() >= 5
+    fresh_news = bool(not weekend_news and last and now.astimezone(timezone.utc) - last < timedelta(hours=float(cfg["news_min_interval_hours"])))
     plan.steps.append(Step("news", "Tin tức", ["news"], "~8 phút", run=not fresh_news,
-                           why=(f"đã thu lúc {last.astimezone(VN_TZ):%H:%M %d/%m}" if fresh_news else "chưa thu gần đây")))
+                           why=("cuối tuần: luôn thu tin mới tới lúc chạy start" if weekend_news else
+                                f"đã thu lúc {last.astimezone(VN_TZ):%H:%M %d/%m}" if fresh_news else "chưa thu gần đây")))
     plan.steps.append(Step("logos", "Logo mã mới", ["logos"], "vài giây", why="chỉ tải mã chưa có"))
     # Its RS comes from the latest screen run: rebuild after a new run too (it once showed the
     # previous run's RS because it was built at 16:56 and the screen ran at 17:16).
@@ -263,7 +266,8 @@ def run_steps(plan: Plan, runner: Callable[..., Any] = subprocess.run, out: Call
         out(f"\n[{k}/{len(todo)}] {s.label} ({s.estimate}) — {s.why}")
         started = clock()
         try:
-            code = runner([sys.executable, "-m", "src.main", *s.args], cwd=str(PROJECT_ROOT)).returncode
+            code = runner([sys.executable, "-m", "src.main", *s.args], cwd=str(PROJECT_ROOT),
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
         except OSError as exc:
             code, s.result = -1, f"lỗi: {exc}"
         s.seconds = clock() - started

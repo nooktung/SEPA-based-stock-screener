@@ -15,7 +15,7 @@ python -m src.main start          # cập nhật mọi thứ rồi mở web http
 
 | Bước | Thời gian | Bỏ qua khi |
 |---|---|---|
-| Tải giá toàn thị trường | ~30 phút | phiên mới nhất đã có giá (VD tác vụ 15:30 đã chạy) |
+| Tải giá toàn thị trường | ~30 phút | phiên mới nhất đã có giá (VD tác vụ 15:10 đã chạy) |
 | KL khớp lệnh & độ rộng VN-Index, lịch nghỉ lễ | vài giây | phiên mới nhất đã có và lịch đã đọc hôm nay |
 | Đối chiếu VN-Index với HOSE (báo cáo `data/audit/vnindex_check_<ngày>.json`) | vài giây | đã có báo cáo phiên đó |
 | Phân ngành, BCTC mã mới, **lọc lại toàn thị trường** | vài phút | đã lọc sau khi phiên mới nhất đóng cửa |
@@ -109,12 +109,12 @@ python -m pytest -q                        # chạy bộ kiểm thử
 4. Chạy `python -m src.main doctor` — dòng `source:crosscheck` phải báo **LIVE**.
 5. Chạy `python -m src.main ssi --days 5` rồi `python -m src.main crosscheck --days 5` và đọc báo cáo.
 
-Từ đó tác vụ 15:30 tự lấy dữ liệu SSI và đối chiếu mỗi ngày. DNSE vẫn là nguồn chính; chỉ đổi sang dùng SSI
+Từ đó tác vụ 15:10 tự lấy dữ liệu SSI và đối chiếu mỗi ngày. DNSE vẫn là nguồn chính; chỉ đổi sang dùng SSI
 cho phần cập nhật hằng ngày sau khi bạn xem báo cáo vài tuần và đồng ý. Chi tiết: `docs/SSI.md`.
 
 ## 7. Bản web cho người khác xem (chỉ đọc, cần đăng nhập)
 
-Máy bạn vẫn tính toán như cũ. Sau tác vụ 15:30, một bản **chỉ đọc** (HTML + số liệu đã tính, không có
+Máy bạn vẫn tính toán như cũ. Sau tác vụ 15:10, một bản **chỉ đọc** (HTML + số liệu đã tính, không có
 database, không có khóa) được đẩy lên Cloudflare Pages: **https://sepa-vn.pages.dev**. Muốn xem phải đăng nhập
 bằng tài khoản bạn tạo; không có tài khoản thì không thấy gì (chỉ logo công ty là ảnh công khai).
 
@@ -137,7 +137,7 @@ python -m src.main site-user remove ban1
 
 Mỗi lần thêm / xóa / đổi mật khẩu (chạy lại `add` với cùng tên), mọi người phải đăng nhập lại, và thay đổi có
 hiệu lực từ lần đẩy kế tiếp: `powershell -ExecutionPolicy Bypass -File scripts/deploy_site.ps1` (hoặc chờ tác vụ
-15:30). Đăng nhập giữ 7 ngày; sai 8 lần từ một địa chỉ thì khóa 15 phút. Mật khẩu nên dài (≥ 12 ký tự).
+15:10). Đăng nhập giữ 7 ngày; sai 8 lần từ một địa chỉ thì khóa 15 phút. Mật khẩu nên dài (≥ 12 ký tự).
 
 **Đẩy tay:** `python -m src.main export-site` (hoặc `export-site --update`: chỉ ghi phần đổi khi thêm mã, vài giây), rồi
 `deploy_site.ps1` (bản chính) hoặc `deploy_site.ps1 -Branch preview`
@@ -148,7 +148,7 @@ hiệu lực từ lần đẩy kế tiếp: `powershell -ExecutionPolicy Bypass 
 danh sách của người khác. Danh sách của `admin` chính là "Danh sách của tôi" trên dashboard máy này (thêm trên máy
 cũng ghi lên web). Máy đọc danh sách của mọi tài khoản và tính kỹ thuật, dòng tiền, tin cho mọi mã trong đó: mã thêm
 trên máy có dữ liệu ngay (1–2 phút); mã thêm trên web có dữ liệu sau lần đọc kế tiếp (≤ 30 phút nếu máy đang bật)
-hoặc sau tác vụ 15:30, trong lúc chờ trang ghi "Đang chờ dữ liệu".
+hoặc sau tác vụ 15:10, trong lúc chờ trang ghi "Đang chờ dữ liệu".
 
 Trên bản web không có "Kiểm tra vị thế", và biểu đồ chi tiết chỉ có cho các mã đang theo dõi.
 Trước khi chia sẻ, hãy đọc điều khoản DNSE OpenAPI (và các nguồn tin) về việc cho người khác xem dữ liệu.
@@ -158,10 +158,39 @@ Trước khi chia sẻ, hãy đọc điều khoản DNSE OpenAPI (và các ngu�
 - **Tự chạy hằng ngày:** tác vụ Windows **"SEPA - cap nhat hang ngay"** chạy `monitor`, `flow`, `news`, `logos`,
   rồi tải giá **toàn thị trường** (`backfill`, ~30–45 phút) và dựng bảng "Toàn thị trường" (`market`).
   Cả lượt mất khoảng 1 giờ (giới hạn của tác vụ: 3 giờ; mỗi mã thêm vào danh sách của các tài khoản tốn thêm ~10 giây)
-  lúc **15:30 thứ 2–6** (script `scripts\daily.ps1`). Log: `data\logs\daily_<ngày>.log`.
+  lúc **15:10 thứ 2–6** (script `scripts\daily.ps1`). Log: `data\logs\scheduled_daily_<ngày>.log`.
   - Máy phải bật và bạn đã đăng nhập Windows. Nếu lỡ giờ (máy tắt), tác vụ tự chạy bù khi máy bật lại.
   - Ngày lễ không có phiên: tác vụ vẫn chạy nhưng không có dữ liệu mới, không sao.
   - Chạy tay ngay: `powershell -ExecutionPolicy Bypass -File scripts\daily.ps1`
   - Xem / tắt: mở **Task Scheduler** → *Task Scheduler Library* → "SEPA - cap nhat hang ngay".
 - Lọc lại toàn thị trường **không** tự chạy — chỉ khi bạn gõ lệnh ở mục 2.
 - Tài liệu đầy đủ về quy tắc lọc: `C.md`.
+
+
+Cuối tuần (thứ Bảy/Chủ nhật theo giờ Việt Nam), `start` luôn thu tin tức mới dù vừa chạy trong 4 giờ qua. Phiên giá vẫn là phiên giao dịch đã đóng gần nhất. Tin được đọc từ các nguồn tại lúc thực thi bước `news`, độc lập với ngày phiên giá. `--no-update` chỉ mở dashboard nên không thu tin.
+
+
+### Tốc độ xuất web (20/10/2026)
+
+`site.export_workers` trong `config/thresholds.yaml` mặc định 4, giới hạn theo CPU và tối đa 4 tiến trình; đặt 1 để xuất tuần tự. Chỉ song song phần tính chart cục bộ, không tăng tốc độ gọi nguồn dữ liệu. Toàn bộ nến ngày/tuần/tháng và dòng tiền vẫn được xuất; điều kiện độ mới và quét khóa cấu hình vẫn chạy. Phép đo trên máy hiện tại: 1.472 mã, 7.430 file (~893 MB), toàn bộ xuất web 215,8 giây. Đây là thời gian xuất, không phải tổng thời gian cập nhật/tải dữ liệu.
+
+## Lịch tự động từ 20/10/2026
+
+- Mỗi 30 phút, 07:00–22:30 hằng ngày: đồng bộ danh sách, thu tin tức mới và `export-site --update` + deploy. Không chỉ chạy khi danh sách đổi. Tin theo thời điểm thu, độc lập phiên giá.
+- 15:10 thứ Hai–thứ Sáu: chạy thẳng `start --update-only --refresh-news`, giữ đối chiếu SSI nếu có khóa, sau đó xuất bản web. Mục tiêu trước 16:00; phụ thuộc nguồn dữ liệu và máy đang bật/kết nối mạng.
+- Hai tác vụ dùng `pythonw -m src.scheduled daily|news` để chạy ẩn, dùng khóa chung và tôn trọng khóa pipeline. Lượt tin nhường khi đang cập nhật. Các kiểm tra độ mới và bí mật trước xuất bản vẫn giữ nguyên.
+- Đăng ký lại bằng `scripts/register_task.ps1` và `scripts/register_mylist_task.ps1`. Log: `data/logs/scheduled_daily_<ngày>.log`, `data/logs/scheduled_news_<ngày>.log`.
+
+### Danh sách cá nhân: thêm mã có dữ liệu ngay (20/10/2026)
+
+Web ghép danh sách riêng với dữ liệu chung của Toàn thị trường: mã chưa thuộc bảng theo dõi vẫn hiện giá, ngày phiên và mở chart đã xuất bản. Giá mới hơn được dùng kèm ngày phân tích cũ nếu có; không tạo phân tích giả khi thiếu dữ liệu. Thêm/xóa dùng ngay danh sách trả về từ thao tác lưu thành công, không chờ đọc lại KV hoặc xuất bản lại. Ghi chú lấy theo tài khoản hiện tại.
+
+Máy chỉ tải giá và tính trạng thái cho mã mới nếu dữ liệu đó còn thiếu/cũ; khối ngoại và logo tiếp tục dùng cơ chế chỉ lấy phần thiếu. Phân tích bổ sung được công bố qua lượt đồng bộ tự động.
+
+### Tối ưu kiểm tra BCTC (21/10/2026)
+
+- Đã có đủ quý đang cần: dùng số liệu đã lưu cho đến quý tiếp theo; vẫn tính lại hạng tăng trưởng bằng dữ liệu trong máy.
+- Nguồn trả báo cáo cũ/chưa có quý mới: chỉ kiểm tra một lần trong ngày theo giờ Việt Nam, thử lại từ ngày hôm sau. Lỗi mạng hoặc lần đọc chưa hoàn tất không được coi là đã kiểm tra thành công.
+- Đủ bảy quý liền trước trong máy: chỉ đọc trang CafeF gần nhất và bổ sung số liệu, giữ toàn bộ lịch sử cũ. Lịch sử thiếu hoặc trang mới không đọc được sẽ tải thêm lịch sử như trước.
+- Khi cần đọc bản điều chỉnh ngay: `python -m src.main fundamentals --tickers HPG --refresh`. Tùy chọn này bỏ qua bộ nhớ đệm và đọc lại hai trang lịch sử.
+- Đo lượt chạy lại ngày 21/10: 202 mã, bỏ qua 200, tải bổ sung 1 mã, tổng 26,67 giây. Đây là phép đo lượt chạy lại trong ngày, không phải cam kết thời gian cho lượt đầu ngày hoặc toàn bộ quy trình cập nhật.

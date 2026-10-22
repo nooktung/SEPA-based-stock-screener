@@ -104,7 +104,7 @@ def test_steps_run_in_order_and_a_failure_does_not_stop_the_rest(db):
     codes = {"backfill": 3, "screen": 1}
     calls, lines = [], []
 
-    def runner(cmd, cwd=None):
+    def runner(cmd, cwd=None, **kwargs):
         calls.append(cmd[3])
         return SimpleNamespace(returncode=codes.get(cmd[3], 0))
     pl.run_steps(plan, runner=runner, out=lines.append, clock=iter(range(100)).__next__)
@@ -138,3 +138,20 @@ def test_the_market_table_is_rebuilt_after_a_newer_screen_run(db):
     plan = pl.plan_steps(datetime(2026, 10, 5, 9, 0, tzinfo=VN), db, index_dates=SESSIONS, cfg=CFG)
     step = next(s for s in plan.steps if s.key == "market")
     assert step.run and "lượt lọc mới" in step.why
+
+
+@pytest.mark.parametrize("now", [
+    datetime(2026, 10, 3, 10, tzinfo=VN),
+    datetime(2026, 10, 4, 10, tzinfo=VN),
+    datetime(2026, 10, 2, 18, tzinfo=timezone.utc),  # Saturday 01:00 in Vietnam
+])
+def test_weekend_start_always_refreshes_news_but_keeps_friday_session(db, now):
+    recent = (now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat()
+    with connect(db) as conn:
+        conn.execute("INSERT INTO news_articles (article_id,title,url,source_id,source_level,collected_at) "
+                     "VALUES ('weekend','t','u','dnse_openapi',3,?)", (recent,))
+    plan = pl.plan_steps(now, db, index_dates=SESSIONS, cfg=CFG)
+    assert plan.session == date(2026, 10, 2)
+    step = next(s for s in plan.steps if s.key == 'news')
+    assert step.run and step.args == ['news']
+    assert 'cuối tuần' in step.why

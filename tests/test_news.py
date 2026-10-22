@@ -314,3 +314,118 @@ def test_an_ambiguous_mention_without_stored_evidence_is_dropped(db):
     assert retag_ambiguous(db) == {"HCM": 1}
     with connect(db) as conn:
         assert [r[0] for r in conn.execute("SELECT event_id FROM event_tickers WHERE ticker = 'HCM'")] == ["m1"]
+
+
+def test_market_feed_hints_disclosures_without_watching_the_company():
+    seen = []
+    def fetch(url):
+        seen.append(url)
+        return LIST_FRAGMENT.replace("SSI", "OCB")
+    provider = CafefTickerNewsProvider("cafef", 3, fetcher=fetch)
+    rows = provider.fetch_market_articles(datetime(2026, 9, 1, tzinfo=VN))
+    assert rows[0].tickers_hint == ("OCB",)
+    assert "symbol=&" in seen[0]
+
+
+def test_off_watchlist_headlines_get_events_without_body_downloads(db, tmp_path):
+    downloaded = []
+    def body(article):
+        downloaded.append(article.title)
+        return fake_body(article)
+    report = process_articles([
+        art("GMD: Thay doi nhan su", "https://cafef.vn/du-lieu/GMD-1/a.chn", hint=("GMD",)),
+        art("HPG: Co tuc", "https://cafef.vn/du-lieu/HPG-2/b.chn", hint=("HPG",)),
+    ], {"GMD", "HPG"}, fetch_body=body, body_focus={"GMD"}, path=db, body_dir=tmp_path / "body", now=NOW)
+    assert report.events_created == 2 and len(downloaded) == 1
+    with connect(db) as conn:
+        assert {r[0] for r in conn.execute("SELECT ticker FROM event_tickers")} == {"GMD", "HPG"}
+
+
+def test_previously_stored_unlinked_article_is_repaired_once(db):
+    article = art("HPG: Co tuc", "https://cafef.vn/du-lieu/HPG-99/a.chn", hint=("HPG",))
+    process_articles([article], {"GMD"}, path=db, now=NOW)
+    report = process_articles([article], {"HPG", "GMD"}, path=db, now=NOW)
+    assert report.new_articles == 0 and report.events_created == 1
+    again = process_articles([article], {"HPG", "GMD"}, path=db, now=NOW)
+    assert again.events_created == again.events_updated == 0
+
+
+def test_market_cursor_advances_only_after_success_and_replays_overlap(db):
+    from src.collectors.market_news import collect_market_news
+    from src.collectors.base import ProviderUnavailable
+    class Provider:
+        source_id = "cafef"
+        calls = []
+        fail = False
+        def fetch_market_articles(self, since):
+            self.calls.append(since)
+            if self.fail: raise ProviderUnavailable("temporary outage")
+            return []
+    provider = Provider()
+    since = datetime.now(VN) - timedelta(days=30)
+    collect_market_news(provider, {"HPG"}, set(), since, path=db)
+    assert provider.calls[0] == since
+    with connect(db) as conn:
+        cursor = conn.execute("SELECT last_success_at FROM news_source_state").fetchone()[0]
+    collect_market_news(provider, {"HPG"}, set(), since, path=db)
+    assert provider.calls[1] == datetime.fromisoformat(cursor) - timedelta(days=2)
+    provider.fail = True
+    with connect(db) as conn:
+        before = tuple(conn.execute("SELECT * FROM news_source_state").fetchone())
+    with pytest.raises(ProviderUnavailable):
+        collect_market_news(provider, {"HPG"}, set(), since, path=db)
+    with connect(db) as conn:
+        assert tuple(conn.execute("SELECT * FROM news_source_state").fetchone()) == before
+
+
+def test_empty_market_feed_does_not_claim_success():
+    from src.collectors.base import ProviderDataMissing
+    provider = CafefTickerNewsProvider("cafef", 3, fetcher=lambda url: "<html>temporary error</html>")
+    with pytest.raises(ProviderDataMissing):
+        provider.fetch_market_articles(NOW - timedelta(days=30))
+
+
+def test_repair_stored_rss_for_non_watched_company_without_network(db):
+    from src.processors.news_pipeline import link_unassigned_articles
+    article = art("HPG cong bo ket qua", "https://cafef.vn/hpg-x.chn")
+    process_articles([article], {"SSI"}, path=db, now=NOW)
+    report = link_unassigned_articles(NOW - timedelta(days=30), path=db)
+    assert report.events_created == 1
+    assert link_unassigned_articles(NOW - timedelta(days=30), path=db).events_created == 0
+
+
+def test_market_feed_stops_on_repeated_page_and_records_actual_history_boundary():
+    fragment = "\n".join(LIST_FRAGMENT.split("<li>")[1:2])
+    fragment = "<li>" + fragment
+    # A full source page repeated by a pagination cap must never loop to 1,000 requests.
+    fragment = fragment * 30
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return fragment
+    provider = CafefTickerNewsProvider("cafef", 3, fetcher=fetch)
+    articles = provider.fetch_market_articles(NOW - timedelta(days=30))
+    assert len(calls) == 2
+    assert len(articles) == 30
+    assert provider.market_coverage_since == datetime(2026, 9, 25, 16, 31, tzinfo=VN)
+
+
+def test_one_article_keeps_source_links_for_every_ticker_and_after_migration(db):
+    from src.web.server import ticker_news, api_news
+    article = art("SSI va GMD cong bo ket qua", "https://cafef.vn/shared-news.chn", hint=("SSI", "GMD"))
+    process_articles([article], {"SSI", "GMD"}, path=db, now=NOW)
+    for ticker in ("SSI", "GMD"):
+        assert ticker_news(ticker, db)[0]["articles"][0]["url"] == article.url
+    # Rebuild the associations of historical records whose legacy pointer kept just one event.
+    with connect(db) as conn:
+        conn.execute("DELETE FROM news_event_articles")
+    init_db(db)
+    for ticker in ("SSI", "GMD"):
+        assert ticker_news(ticker, db)[0]["articles"][0]["url"] == article.url
+
+
+def test_bank_branch_abbreviation_does_not_tag_the_pgd_stock():
+    settings = news_settings()
+    ambiguous = set(settings["ambiguous_tickers"])
+    assert tag_tickers("OCB: thay doi dia diem PGD", {"OCB", "PGD"}, {}, ambiguous) == {"OCB"}
+    assert tag_tickers("PGD: ket qua kinh doanh", {"PGD"}, {}, ambiguous) == {"PGD"}

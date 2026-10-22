@@ -49,10 +49,14 @@ def wilder_average(series: pd.Series, period: int) -> pd.Series:
         return out
 
     average = float(clean.iloc[:period].mean())
-    out.loc[clean.index[period - 1]] = average
-    for index, value in clean.iloc[period:].items():
+    # Keep the identical recursive arithmetic; assign the result only once.
+    # Repeated .loc writes dominated runtime when exporting all chart histories.
+    smoothed = np.empty(len(clean) - period + 1, dtype="float64")
+    smoothed[0] = average
+    for offset, value in enumerate(clean.iloc[period:].to_numpy(), 1):
         average = (average * (period - 1) + float(value)) / period
-        out.loc[index] = average
+        smoothed[offset] = average
+    out.loc[clean.index[period - 1:]] = smoothed
     return out
 
 

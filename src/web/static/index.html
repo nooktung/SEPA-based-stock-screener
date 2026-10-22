@@ -41,20 +41,14 @@
       <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
     <div class="nav-group">Thị trường</div>
     <button class="tab" data-tab="industries" role="tab"
-      data-title="Ngành và sóng ngành" data-desc="Sức mạnh các sóng ngành bạn tự định nghĩa và các ngành theo phân loại Vietstock.">
-      <span class="ico">◎</span>Ngành &amp; sóng</button>
-    <button class="tab" data-tab="alerts" role="tab"
-      data-title="Sự kiện" data-desc="Breakout, thủng stop, mất tiêu chí… của các mã đang theo dõi, mới nhất trước.">
-      <span class="ico">⚑</span>Sự kiện</button>
-    <button class="tab" data-tab="intraday" role="tab"
-      data-title="Cảnh báo trong phiên" data-desc="Giá khớp lệnh chạm pivot, stop, MA50 của phiên trước (DNSE, thời gian thực). Chưa phải breakout hay thủng stop: các sự kiện đó xét ở giá đóng cửa.">
-      <span class="ico">◷</span>Trong phiên<span class="n" id="n-intraday"></span></button>
+      data-title="Khám phá ngành" data-desc="Sức mạnh các sóng ngành bạn tự định nghĩa và các ngành theo phân loại Vietstock.">
+      <span class="ico">◎</span>Khám phá ngành</button>
     <button class="tab" data-tab="news" role="tab"
-      data-title="Tin tức" data-desc="Tin của các mã đang theo dõi (khoảng 5 tháng gần nhất), đã gộp trùng, mới nhất trước. Bấm vào tin để đọc trên CafeF.">
+      data-title="Tin tức" data-desc="Tin doanh nghiệp trên toàn thị trường, mới nhất trước. Tìm theo mã hoặc chọn ngày để đọc tin đã được cập nhật.">
       <span class="ico">✉</span>Tin tức</button>
     <div class="nav-group">Kiến thức</div>
     <button class="tab" data-tab="learn" role="tab"
-      data-title="Học mẫu hình" data-desc="Mẫu nến và mô hình giá thường gặp: cách nhận biết, ý nghĩa và cần xác nhận gì. Không mẫu hình nào chắc chắn đúng.">
+      data-title="Kiến thức biểu đồ" data-desc="Đọc nến, nhận diện cấu trúc giá và thực hành đánh giá bối cảnh qua hình minh họa.">
       <span class="ico">✎</span>Học</button>
   </nav>
   <p class="side-foot">Không có chức năng đặt lệnh. Kết quả lọc là ứng viên nghiên cứu, không phải khuyến nghị.</p>
@@ -111,72 +105,44 @@
 
     <!-- industries and themes -->
     <section id="tab-industries" class="panel">
-      <h2 class="section-title">Sóng ngành</h2>
-      <div class="table-wrap"><table id="themes-table">
-        <thead><tr><th class="num" title="Trung bình điểm RS của các mã đủ thanh khoản, xếp hạng so với mọi ngành">RS nhóm</th>
-          <th>Sóng</th><th class="num" title="Số mã đủ thanh khoản / số mã khai báo">Số mã</th>
-          <th class="num" title="Lợi nhuận trung vị 21 phiên">1 tháng</th><th class="num" title="Lợi nhuận trung vị 63 phiên">3 tháng</th>
-          <th class="num">Trên MA50</th><th>Trong danh sách chính</th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-      <p class="note">Sóng "đang mạnh" khi RS nhóm ≥ 80; mã thuộc sóng đang mạnh và đang uptrend được xếp đầu nhóm theo dõi mở rộng — không được nâng lên danh sách chính nếu chưa đạt chuẩn SEPA.</p>
-      <h2 class="section-title">Ngành (Vietstock)</h2>
-      <div class="table-wrap"><table id="industries-table">
-        <thead><tr><th class="num">RS ngành</th><th>Nhóm ngành</th><th class="num">Số mã</th>
-          <th class="num" title="% mã trong ngành đóng cửa trên MA50">Trên MA50</th><th class="num">Trên MA200</th>
-          <th>Trong danh sách chính</th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-      <p class="note">RS ngành = trung bình điểm RS thô của các mã đủ thanh khoản, xếp hạng giữa các ngành. Chỉ tham khảo — không tính vào điểm.</p>
-    </section>
-
-    <!-- events -->
-    <section id="tab-alerts" class="panel">
-      <div class="toolbar">
-        <div class="search"><span aria-hidden="true">⌕</span><input id="alerts-search" type="search" placeholder="Lọc theo mã, VD: HDB" aria-label="Lọc sự kiện theo mã"></div>
-        <span id="alerts-type"></span><span id="alerts-period"></span><span id="alerts-count" class="muted"></span>
-      </div>
-      <div class="table-wrap"><table id="alerts-table">
-        <thead><tr><th class="star-col"></th><th>Phiên</th><th>Mã</th><th>Sự kiện</th><th>Chi tiết</th></tr></thead>
-        <tbody></tbody>
-      </table></div>
-      <button id="alerts-more" class="linkbtn more-btn" type="button" hidden>Xem thêm</button>
-    </section>
-
-    <!-- intraday alerts -->
-    <section id="tab-intraday" class="panel">
-      <div class="toolbar"><span id="intraday-status" class="muted"></span></div>
-      <div class="table-wrap"><table id="intraday-table">
-        <thead><tr><th class="star-col"></th><th>Giờ</th><th>Mã</th><th>Cảnh báo</th><th class="num">Giá</th><th class="num">Mức</th><th class="num" title="Khối lượng tới lúc đó so với nhịp bình quân 50 phiên (giả định khối lượng chia đều trong ngày, chỉ ước tính)">KL / nhịp</th><th>Diễn giải</th></tr></thead>
-        <tbody></tbody>
-      </table></div>
+      <div class="sector-intro"><p class="muted">Quan sát dòng tiền theo ngành. Rê chuột xem bảng mã. Bấm tiêu đề ngành để thu gọn / mở rộng; bấm mã để mở biểu đồ.</p><span id="sector-date" class="muted"></span></div>
+      <div class="toolbar sector-tools"><input id="sector-search" type="search" placeholder="Tìm ngành hoặc nhóm…" aria-label="Tìm ngành"><select id="sector-kind" aria-label="Loại nhóm"><option value="industry">Ngành</option><option value="theme">Nhóm theo dõi</option></select><select id="sector-status" aria-label="Trạng thái ngành"><option value="">Mọi trạng thái</option><option value="leading">Đang dẫn dắt</option><option value="improving">Đang cải thiện</option><option value="weakening">Đang suy yếu</option><option value="mixed">Chưa đồng thuận</option><option value="insufficient">Ít dữ liệu</option></select><select id="sector-sort" aria-label="Sắp xếp ngành"><option value="relative_change">Cải thiện mạnh nhất</option><option value="relative">Mạnh hơn VN-Index</option><option value="breadth">Độ lan tỏa cao nhất</option></select><button id="sector-pinned" class="btn" type="button">☆ Đã ghim</button></div>
+      <section class="sector-map-card" aria-label="Bản đồ nhiệt ngành">
+        <div class="sector-map-toolbar"><div class="sector-map-heading"><h2>Bản đồ ngành</h2><span id="sector-map-count" class="muted"></span></div><div class="sector-map-controls">
+          <select id="sector-map-exchange" aria-label="Sàn trên bản đồ"><option value="">Tất cả sàn</option><option value="HOSE">HOSE</option><option value="HNX">HNX</option><option value="UPCOM">UPCOM</option></select>
+          <select id="sector-map-weight" aria-label="Diện tích ô trên bản đồ"><option value="value">Diện tích: GTGD 20 phiên</option><option value="equal">Diện tích: đều theo mã</option></select>
+          <select id="sector-map-mode" aria-label="Nội dung bản đồ"><option value="stocks">Hiện từng cổ phiếu</option><option value="groups">Chỉ hiện ngành</option></select>
+          <button id="sector-map-expand" class="btn" type="button" aria-pressed="false" aria-label="Mở rộng bản đồ nhiệt">⛶ Mở rộng</button>
+          <button id="sector-map-zoom" class="btn" type="button">Phóng to ngành đang chọn</button>
+        </div></div>
+        <div class="sector-map-legend"><span>Màu: biến động giá trong phiên</span><span><i style="background:#009f66"></i> Tăng</span><span><i style="background:#c93d36"></i> Giảm</span><span><i style="background:#f1ae55"></i> Đứng giá</span><span><i style="background:#6747bf"></i> Trần</span><span><i style="background:#00a8cf"></i> Sàn</span><span><i style="background:#465164"></i> Thiếu / cũ</span></div>
+        <div id="sector-map" class="sector-map" aria-label="Các ngành và cổ phiếu"></div>
+        <details class="sector-map-help"><summary>Cách đọc bản đồ</summary><p id="sector-map-note" class="sector-map-note"></p></details>
+      </section>
+      <div class="sector-section-heading"><h2>Theo dõi ngành</h2><span class="muted">Bấm thẻ ngành để phóng to các mã trên bản đồ</span></div>
+      <div id="sector-list" class="sector-cards"></div>
+      <details class="sector-method"><summary>Cách đọc và cách tính</summary><p id="sector-method"></p><p>Đang dẫn dắt: vượt VN-Index trong 21 phiên, ít nhất 50% mã trên MA50 và sức mạnh tương đối không giảm so với 5 phiên trước. Đang cải thiện: sức mạnh tương đối và độ lan tỏa cùng tăng. Đang suy yếu: cả hai cùng giảm. Cần ít nhất 3 mã hợp lệ; các nhóm ít dữ liệu không được xếp trạng thái.</p><p>Thanh khoản = trung vị tỷ lệ giá trị giao dịch bình quân 5 phiên gần nhất / 20 phiên trước đó. Các nhãn mô tả dữ liệu, chưa có xác suất dự báo được kiểm định. Nhóm theo dõi có thể chồng lấn và bao gồm nhiều hoạt động kinh doanh.</p></details>
     </section>
 
     <!-- news -->
     <section id="tab-news" class="panel">
       <div class="toolbar">
         <div class="search"><span aria-hidden="true">⌕</span><input id="news-search" type="search" placeholder="Tìm theo mã hoặc tên, VD: PNJ, Phú Nhuận" aria-label="Tìm tin theo mã hoặc tên công ty"></div>
-        <span id="news-count" class="muted"></span>
+        <div id="news-date-filter"></div><span id="news-count" class="muted" aria-live="polite"></span>
       </div>
       <div id="news-list" class="news-list"></div>
     </section>
 
     <!-- learning -->
     <section id="tab-learn" class="panel">
-      <div class="learn-h"><h2>Kiến thức SEPA cốt lõi</h2><span class="muted small">xu hướng, giai đoạn, điểm mua, cắt lỗ, quản trị vốn</span></div>
-      <div id="learn-sepa" class="learn-sepa"></div>
-      <div class="learn-grid">
-        <div class="learn-col">
-          <div class="learn-h"><h2>Mẫu hình nến</h2><span class="muted small">đọc 1–3 phiên gần nhất</span></div>
-          <div id="learn-candles"></div>
-        </div>
-        <div class="learn-col">
-          <div class="learn-h"><h2>Mô hình giá</h2><span class="muted small">đọc hình dạng nhiều tuần</span></div>
-          <div id="learn-charts"></div>
+      <p class="learn-intro">Chọn mẫu ở cột trái để xem minh họa, nhận biết và cách xác nhận ở bên phải.</p>
+      <div id="learn-nav" class="learn-nav" role="tablist" aria-label="Chủ đề kiến thức"></div>
+      <div id="learn-content" role="tabpanel" aria-labelledby="learn-tab-candles">
+        <div id="learn-library">
+          <div class="learn-workspace"><aside class="learn-browser" aria-label="Danh sách mẫu"><label class="learn-picker-label" for="learn-picker">Chọn mẫu để xem</label><select id="learn-picker" aria-label="Chọn bài kiến thức"></select><div id="learn-catalog" class="learn-catalog"></div></aside><article id="learn-lesson" class="learn-lesson" aria-live="polite"></article></div>
         </div>
       </div>
-      <p class="note">Hình vẽ minh họa, không theo tỉ lệ thật. Số liệu "Bulkowski" lấy từ thống kê thị trường Mỹ, chưa kiểm định trên cổ phiếu Việt Nam.
-        Nến chỉ có ý nghĩa khi đặt trong bối cảnh: xu hướng trước đó, vị trí so với hỗ trợ / kháng cự, khối lượng và phiên xác nhận sau.</p>
+      <details class="learn-sources"><summary>Nguồn đọc thêm & cách dùng hình minh họa</summary><p>Hình được vẽ để giải thích cấu trúc, không phải dữ liệu thị trường hay kết quả dự báo. Không hiển thị tỷ lệ thắng từ thị trường khác như xác suất áp dụng cho cổ phiếu Việt Nam.</p><a href="https://www.tradingview.com/support/solutions/43000745269-introduction-to-candlestick-charts-and-patterns/" target="_blank" rel="noopener">TradingView · Cấu tạo nến</a><a href="https://chartschool.stockcharts.com/table-of-contents/chart-analysis/candlestick-charts/candlesticks-and-support" target="_blank" rel="noopener">StockCharts · Nến và hỗ trợ</a><a href="https://www.fidelity.com/bin-public/060_www_fidelity_com/documents/learning-center/Idenitfying-Chart-Patterns.pdf" target="_blank" rel="noopener">Fidelity · Cấu trúc và giới hạn của mô hình</a></details>
     </section>
   </main>
 </div>
@@ -202,7 +168,7 @@
     <button class="dtab" data-pane="sepa">Phân tích SEPA</button>
     <button class="dtab" data-pane="flow">Dòng tiền</button>
     <button class="dtab" data-pane="fund">Cơ bản &amp; ngành</button>
-    <button class="dtab" data-pane="news">Tin tức &amp; sự kiện</button>
+    <button class="dtab" data-pane="news">Tin tức</button>
     <button class="dtab" data-pane="position">Kiểm tra vị thế</button>
   </nav>
 
@@ -261,10 +227,7 @@
   </div>
 
   <div class="dpane" data-pane="news">
-    <div class="grid2">
-      <div class="card"><div class="card-h"><h3>Sự kiện</h3></div><div id="d-alerts"></div></div>
-      <div class="card"><div class="card-h"><h3>Tin tức</h3></div><div id="d-news"></div></div>
-    </div>
+    <section id="d-news" class="stock-news" aria-label="Tin tức cổ phiếu"><div id="stock-news-date-filter"></div><div id="stock-news-results"></div></section>
   </div>
 
   <div class="dpane" data-pane="position">
@@ -286,6 +249,7 @@
 </aside>
 <div id="scrim" class="scrim"></div>
 
+<script src="news-dates.js"></script>
 <script src="learn.js"></script>
 <script src="app.js"></script>
 <div id="toasts" class="toasts" aria-live="polite"></div>

@@ -138,7 +138,22 @@ const GROUPS = {
   market: () => true,
 };
 // "Toàn thị trường" reads the whole-market snapshot (/api/market); every other group the monitored rows.
-const groupRows = () => (state.group === "market" ? state.market || [] : state.rows.filter(GROUPS[state.group]));
+function mineRows() {
+  const monitored = new Map(state.rows.map((r) => [r.ticker, r]));
+  const market = new Map((state.market || []).map((r) => [r.ticker, r]));
+  return [...state.mine].map((ticker) => {
+    const existing = monitored.get(ticker), available = market.get(ticker);
+    let row = existing ? { ...existing } : { tech: {}, setup: {}, not_assessable: ["TT1", "TT2", "TT3", "TT4", "TT5", "TT6", "TT7", "TT8"], ...available, ticker };
+    if (existing && available && available.trade_date > (existing.trade_date || "")) {
+      row.state_date = existing.state_date || existing.trade_date;
+      for (const key of ["trade_date", "close", "change_pct", "change_basis", "reference", "reference_method", "reference_averaged"]) row[key] = available[key];
+    }
+    row.mine = true;
+    if (SITE) row.note = state.mineNotes?.get(ticker) || null;
+    return row;
+  });
+}
+const groupRows = () => (state.group === "market" ? state.market || [] : state.group === "mine" ? mineRows() : state.rows.filter(GROUPS[state.group]));
 const MARKET_PAGE = 150;      // rows drawn at a time: ~1,500 tickers stay smooth
 
 // ---------------------------------------------------------------- VN-Index card
@@ -335,6 +350,7 @@ const dotsOf = (r) => {
       `<i class="${na.includes(k) ? "dot-na" : miss.includes(k) ? "dot-off" : "dot-on"}"></i>`).join("") + "</span>";
 };
 const srcTag = (r) => (r.grp ? `<span class="g g-${esc(r.grp)}" title="${esc(GROUP_TEXT[r.grp])}">${esc(r.grp)}</span>` : "")
+  + (state.group === "mine" && !r.flagged && !Object.keys(r.tech || {}).length ? '<span class="tag">Chưa có phân tích chi tiết</span>' : "")
   + (r.leader_of && state.group !== "leaders" ? `<span class="tag" title="Đầu ngành ${esc(r.leader_of)}">đầu ngành</span>` : "")
   + (r.flagged ? `<span class="tag tag-flag" title="${esc(r.flag_note || "Chuỗi giá bị gắn cờ (vd chưa điều chỉnh quyền)")}. Không tính chỉ báo cho mã này.">dữ liệu cần kiểm tra</span>` : "");
 const tickerCell = (r) => `<div class="tkw">${logoTile(r.ticker)}<div class="tkc"><div class="tk-line"><span class="tk">${esc(r.ticker)}</span>${srcTag(r)}${themeBadges(r)}</div>
@@ -549,8 +565,9 @@ function renderTable(keepPage = false) {
 }
 
 async function loadMarket(force = false) {
-  if (state.marketLoading || (state.market && !force)) return;
-  state.marketLoading = true;
+  if (state.marketPromise) return state.marketPromise;
+  if (state.market && !force) return;
+  state.marketPromise = (async () => {
   try {
     const data = await get("/api/market");
     state.market = data.rows;
@@ -563,9 +580,11 @@ async function loadMarket(force = false) {
     state.market = [];
     state.marketNote = err.message;
   } finally {
-    state.marketLoading = false;
+    state.marketPromise = null;
   }
-  if (state.group === "market") renderTable();
+  if (state.group === "market" || state.group === "mine") { renderMinePending(); renderTable(); }
+  })();
+  return state.marketPromise;
 }
 
 function setCounts() {
@@ -582,6 +601,7 @@ async function loadStocks() {
   state.lastSession = state.rows.reduce((m, r) => (r.trade_date && r.trade_date > m ? r.trade_date : m), "");
   state.mine = new Set(state.rows.filter((r) => r.mine).map((r) => r.ticker));
   if (SITE) await loadLiveList();
+  if ([...state.mine].some((t) => !state.rows.some((r) => r.ticker === t))) await loadMarket();
   setCounts();
   renderMinePending();
   renderTable(true);
@@ -595,7 +615,7 @@ async function loadLiveList() {
     if (r.status === 401) toLogin();
     if (!r.ok) return;
     const d = await r.json();
-    state.mine = new Set((d.items || []).map((i) => i.ticker));
+    acceptMineList(d.items || []);
     state.canEdit = !!d.can_edit;
     document.body.classList.toggle("can-edit", state.canEdit);
     if (d.user && !$("#site-user")) {
@@ -603,6 +623,11 @@ async function loadLiveList() {
         ` · <span id="site-user">${esc(d.user)}</span> · <a href="/logout" class="site-logout">Đăng xuất</a>`);
     }
   } catch (e) { if (/đăng nhập/.test(e.message)) throw e; /* no function: read-only */ }
+}
+
+function acceptMineList(items) {
+  state.mine = new Set(items.map((i) => i.ticker));
+  state.mineNotes = new Map(items.map((i) => [i.ticker, i.note]));
 }
 
 // Suggestions for the add box: the code first (exact, then its start), then the company name; the most
@@ -629,13 +654,13 @@ async function renderSuggest() {
 // Tickers of the list still waiting for their data: on the web, not yet in the published rows; on this
 // machine, added but not yet given a state (technicals) by mylist-refresh.
 function renderMinePending() {
-  const rowOf = new Map(state.rows.map((r) => [r.ticker, r]));
-  const pending = [...state.mine].filter((t) => !rowOf.has(t) || !Object.keys(rowOf.get(t).tech || {}).length);
+  const rows = mineRows();
+  const missing = rows.filter((r) => r.close == null).map((r) => r.ticker);
+  const pending = rows.filter((r) => !r.flagged && (!Object.keys(r.tech || {}).length || r.state_date)).map((r) => r.ticker);
   const el = $("#mine-pending");
-  el.hidden = state.group !== "mine" || !pending.length;
-  el.innerHTML = pending.length ? `Đang chờ dữ liệu: <b>${pending.map(esc).join(", ")}</b> — ${SITE
-    ? "kỹ thuật, dòng tiền và biểu đồ có sau khi máy nhà cập nhật (khoảng 30 phút nếu máy đang bật, hoặc sau 15:30)."
-    : "hệ thống đang lấy kỹ thuật, dòng tiền và tin (1–2 phút), bảng tự làm mới."}` : "";
+  el.hidden = state.group !== "mine" || !(pending.length || missing.length);
+  el.innerHTML = (missing.length ? `Chưa có giá trong bản hiện tại: <b>${missing.map(esc).join(", ")}</b>. ` : "")
+    + (pending.length ? `Chờ bổ sung phân tích: <b>${pending.map(esc).join(", ")}</b>. Giá và biểu đồ đã có vẫn xem được; phần còn thiếu được bổ sung ở lượt cập nhật tiếp theo.` : "");
 }
 
 async function loadRun(runId) {
@@ -796,26 +821,24 @@ function vnText(t) {
     .replace(BASE_CODES, (_, n, k) => (k === "BASE" ? `${n}ền` : n === "N" ? BASE_TEXT[k] : lowerFirst(BASE_TEXT[k])))
     .replace(/\b(FLAT_BASE|CUP_HANDLE|NEAR_HIGH|SHARP_PULLBACK|TOO_DEEP)\b/g, (k) => lowerFirst(BASE_TEXT[k]));
 }
-// A stop breach recorded against an earlier base, whose stop is not the one shown today.
-const oldStopTag = (a, stopNow) => (a.alert_type === "STOP_BREACHED" && (a.stale_stop ?? (() => {
-  const m = /stop tham chiếu ([\d.,]+)/.exec(a.what_changed || "");
-  return m && Number(m[1].replace(/[.,]/g, "")) !== Math.round(stopNow || 0);
-})()) ? ' <span class="badge muted-badge" title="Mức stop của sự kiện này là của nền trước đó, khác stop đang hiển thị">stop của nền trước</span>' : "");
-function alertText(w) {
-  const m = /^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$/.exec(w || "");
-  return m ? `${dmy(m[1])} · ${vnText(m[2])}` : vnText(w);
+function newsItem(e) {
+  const seen = new Set();
+  const arts = (e.articles || []).filter((a) => {
+    const source = SOURCE_TEXT[a.source_id] || a.source_id;
+    return !seen.has(source) && seen.add(source);
+  }).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(SOURCE_TEXT[a.source_id] || a.source_id)} ↗</a>`).join("");
+  const main = (e.articles || []).find((a) => String(a.source_id).startsWith("cafef")) || (e.articles || [])[0];
+  return `<article class="stock-news-card${e.role === "mention" ? " mention" : ""}">
+    <h4 class="stock-news-title">${main ? `<a href="${esc(main.url)}" target="_blank" rel="noopener">${esc(e.headline)}</a>` : esc(e.headline)}</h4>
+    ${e.what_happened ? `<p class="stock-news-description">${esc(e.what_happened)}</p>` : ""}
+    <div class="stock-news-meta"><time${e.occurred_at ? ` datetime="${esc(e.occurred_at)}"` : ""}>${dmy(e.occurred_at)}${e.occurred_at ? ` · ${esc(String(e.occurred_at).slice(11, 16))}` : ""}</time><span class="stock-news-sources">${arts || "Chưa rõ nguồn"}</span><span>${esc(newsType(e.event_type) || "Khác")}</span>${mentionTag(e)}${Number(e.article_count) > 1 ? `<span>${Number(e.article_count)} bài liên quan</span>` : ""}
+    <details class="stock-news-provenance"><summary>Chi tiết nguồn</summary><p>${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type || "Chưa đối chiếu văn bản gốc")}${e.best_source_level != null ? ` · Cấp nguồn ${esc(e.best_source_level)}` : ""}${e.direction ? ` · ${esc(e.direction)}` : ""}</p></details></div>
+  </article>`;
 }
 
-function newsItem(e) {
-  // one link per source: several articles from the same site read "cafef · cafef"
-  const seen = new Set();
-  const arts = (e.articles || []).filter((a) => !seen.has(a.source_id) && seen.add(a.source_id))
-    .map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(SOURCE_TEXT[a.source_id] || a.source_id)}</a>`).join(" · ");
-  const main = (e.articles || []).find((a) => String(a.source_id).startsWith("cafef")) || (e.articles || [])[0];
-  return `<div class="item${e.role === "mention" ? " mention" : ""}"><span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}${main
-    ? `<a class="hl" href="${esc(main.url)}" target="_blank" rel="noopener"><b>${esc(e.headline)}</b></a>` : `<b>${esc(e.headline)}</b>`}
-    <div class="why">${dmy(e.occurred_at)} ${esc(String(e.occurred_at).slice(11, 16))} · ${e.article_count} bài · cấp nguồn ${e.best_source_level} · ${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type)}${arts ? " · " + arts : ""}</div>
-    ${e.what_happened ? `<div class="why">Diễn giải: ${esc(e.what_happened)} (${esc(e.direction || "?")})</div>` : ""}</div>`;
+function stockNewsHtml(ticker, news, filtered = false) {
+  return `<div class="stock-news-heading"><div><h3>Tin tức <span>${esc(ticker)}</span></h3><p>${news.length ? `Mới nhất ${dmy(news[0].occurred_at)}` : "Thông tin và công bố liên quan đến doanh nghiệp"}</p></div><span class="stock-news-count">${news.length} tin</span></div>`
+    + (news.length ? `<div class="stock-news-grid">${news.map(newsItem).join("")}</div>` : filtered ? '<div class="stock-news-empty"><strong>Không có tin trong ngày đã chọn</strong><p>Thử chọn ngày khác hoặc bấm Bỏ lọc để xem tất cả tin đang có.</p></div>' : '<div class="stock-news-empty"><strong>Chưa có tin cho mã này</strong><p>Tin mới sẽ xuất hiện sau lượt cập nhật tiếp theo.</p></div>');
 }
 
 // ---------------------------------------------------------------- chart
@@ -1434,6 +1457,8 @@ function detailHeader(ticker, d) {
   if (setup.status) badges.push(stBadge(setup.status));
   if (row.ticker) badges.push(liqBadge(liqOf(row)));
   badges.push(themeBadges(row));
+  const analysisDate = (d.state || {}).trade_date, priceDate = (d.bars || []).at(-1)?.trade_date;
+  if (analysisDate && priceDate && analysisDate < priceDate) badges.push(`<span class="stale">Phân tích phiên ${dmy(analysisDate)} · chờ bổ sung</span>`);
   $("#d-badges").innerHTML = badges.join("");
   const bars = d.bars || [];
   const last = bars[bars.length - 1], prev = bars[bars.length - 2];
@@ -1478,13 +1503,10 @@ async function openDetail(ticker) {
   $("#d-tech").innerHTML = techHtml((d.state || {}).tech);
   $("#d-questions").innerHTML = questionsHtml((d.state && d.state.setup && d.state.setup.status) ? d.state.setup : ((sc && sc.base_json) || {}).setup,
     (d.state || {}).base_kind || (d.base || {}).kind);
-  $("#d-alerts").innerHTML = d.alerts.length ? d.alerts.map((a) => `<div class="item">
-      <span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span>${esc(alertText(a.what_changed))}${oldStopTag(a, (d.state || {}).stop)}
-      <div class="why">${esc(vnText(a.why_it_matters || ""))}</div></div>`).join("") : `<p class="muted">Chưa có sự kiện.</p>`;
   const bj = (sc && sc.base_json) || {};
   $("#d-fund").innerHTML = fundHtml(d.fundamentals || bj.fundamentals, bj.demoted);
   $("#d-industry").innerHTML = industryHtml(d.industry, bj.industry && bj.industry.name ? bj.industry : null);
-  $("#d-news").innerHTML = d.news.length ? d.news.map(newsItem).join("") : `<p class="muted">Chưa có tin. Chạy: python -m src.main news</p>`;
+  renderStockNews();
   setupPosition(ticker);
 }
 
@@ -1572,7 +1594,16 @@ async function toggleMine(ticker) {
   toast(on ? `★ Đã bỏ <b>${esc(ticker)}</b> khỏi Danh sách của tôi`
     : `★ Đã thêm <b>${esc(ticker)}</b> vào Danh sách của tôi${res && res.refreshing ? " · đang lấy kỹ thuật, dòng tiền" : ""}`,
   on ? "info" : "ok");
-  await loadStocks();
+  if (SITE && Array.isArray(res.items)) {
+    // Use the successful write response; a KV read immediately afterwards may still be cached.
+    acceptMineList(res.items);
+    await loadMarket();
+    setCounts();
+    renderMinePending();
+    renderTable(true);
+  } else {
+    await loadStocks();
+  }
   syncDetailStar();
   syncStars();
   // This machine fetches the new ticker's state, flow and news in the background (mylist-refresh).
@@ -1581,93 +1612,163 @@ async function toggleMine(ticker) {
 }
 
 // ---------------------------------------------------------------- other tabs
-// Events: filtered by ticker, type and period, 50 rows at a time (tester B26: 200 rows, no filter).
-const ALERT_PAGE = 50;
-state.alerts = { rows: [], q: "", type: "", period: "20", shown: ALERT_PAGE };
-const alertDay = (a) => ((/^\[(\d{4}-\d{2}-\d{2})\]/.exec(a.what_changed || "") || [])[1] || "");
-async function loadAlerts() {
-  state.alerts.rows = await get("/api/alerts?limit=1000");
-  state.alerts.shown = ALERT_PAGE;
-  renderAlerts();
+const SECTOR_LABEL = {leading:'Đang dẫn dắt',improving:'Đang cải thiện',weakening:'Đang suy yếu',mixed:'Chưa đồng thuận',insufficient:'Ít dữ liệu'};
+const sectorState = {data:null,selected:null,pins:new Set(store.get('sepa.sectors',[])),pinned:false,request:0,mapRows:[],zoom:false,collapsed:new Set()};
+function sectorSpark(g) {
+ const vs=g.history.map(x=>x.relative), ok=vs.filter(x=>x!=null);if(ok.length<2)return '–';
+ const lo=Math.min(...ok),hi=Math.max(...ok), points=vs.map((v,i)=>v==null?null:`${i/(vs.length-1)*110},${30-(v-lo)/(hi-lo||1)*26}`).filter(Boolean).join(' ');
+ return `<svg class="sector-spark" viewBox="0 0 110 34" aria-label="Sức mạnh tương đối 21 phiên"><polyline points="${points}"/></svg>`;
 }
-function renderAlerts() {
-  const A = state.alerts;
-  const days = [...new Set(A.rows.map(alertDay))].sort().reverse();
-  const since = A.period === "all" ? "" : days[Number(A.period) - 1] || days[days.length - 1] || "";
-  const q = A.q.trim().toUpperCase();
-  const rows = A.rows.filter((a) => (!q || a.ticker.includes(q)) && (!A.type || a.alert_type === A.type) && alertDay(a) >= since);
-  $("#alerts-type").innerHTML = ddButton("", "Sự kiện", A.type ? EVENT_TEXT[A.type] || A.type : "Tất cả", !!A.type);
-  $("#alerts-period").innerHTML = ddButton("", "Thời gian", { 5: "5 phiên", 20: "20 phiên", 60: "60 phiên", all: "Tất cả" }[A.period], A.period !== "20");
-  $("#alerts-count").innerHTML = `<b>${rows.length}</b> sự kiện`;
-  const tbody = $("#alerts-table tbody");
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty">${A.rows.length ? "Không có sự kiện phù hợp bộ lọc." : "Chưa có sự kiện. Chạy: python -m src.main monitor"}</td></tr>`;
-    $("#alerts-more").hidden = true;
-    return;
-  }
-  tbody.innerHTML = rows.slice(0, A.shown).map((a) => {
-    const m = /^\[(\d{4}-\d{2}-\d{2})\]\s*(.*)$/.exec(a.what_changed || "");
-    return `<tr data-t="${esc(a.ticker)}">${starCell(a.ticker)}<td class="muted">${m ? dmy(m[1]) : ""}</td><td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
-      <td><span class="badge b-${esc(a.alert_type)}">${esc(EVENT_TEXT[a.alert_type] || a.alert_type)}</span></td>
-      <td class="wrap">${esc(vnText(m ? m[2] : a.what_changed))}${oldStopTag(a, a.current_stop)}<div class="muted small">${esc(vnText(a.why_it_matters || ""))}</div></td></tr>`;
-  }).join("");
-  $("#alerts-more").hidden = rows.length <= A.shown;
-  $("#alerts-more").textContent = `Xem thêm (${Math.min(ALERT_PAGE, rows.length - A.shown)} / còn ${rows.length - A.shown})`;
-}
-
-// ---------------------------------------------------------------- intraday alerts (python -m src.main watch)
-const INTRADAY_TEXT = { PIVOT_CROSS: "Chạm / vượt pivot", STOP_TOUCH: "Xuống tới stop", MA50_LOST: "Dưới MA50", BREAKOUT_UNDO: "Breakout quay lại dưới pivot" };
-const INTRADAY_TONE = { PIVOT_CROSS: "BREAKOUT_WEAK", STOP_TOUCH: "STOP_BREACHED", MA50_LOST: "MA50_BREAK_HEAVY_VOLUME", BREAKOUT_UNDO: "BREAKOUT_FAILED" };
-async function loadIntraday() {
-  let d;
-  try { d = await get("/api/intraday"); } catch (err) { $("#intraday-status").textContent = err.message; return; }
-  const s = d.status, rows = d.alerts || [];
-  const hm = (iso) => (iso ? String(iso).slice(11, 19) : "–");
-  $("#n-intraday").textContent = rows.length && d.session_date === new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10) ? rows.length : "";
-  $("#intraday-status").innerHTML = !s
-    ? `Phiên ${dmy(d.session_date)}: chưa chạy theo dõi. Trong giờ giao dịch chạy: <code>python -m src.main watch</code>`
-    : `Phiên ${dmy(d.session_date)} · ${s.running ? (s.stale
-        ? `<span class="stale" title="Không nhận được dữ liệu mới; cảnh báo có thể bị thiếu">mất kết nối? cập nhật lần cuối ${hm(s.written_at)}</span>`
-        : `<b class="pos">đang theo dõi</b> ${s.watched_n} mã · lệnh khớp gần nhất ${hm(s.last_message_at)}`)
-      : `đã dừng lúc ${hm(s.ended_at)} · đã theo dõi ${s.watched_n} mã`} · <b>${rows.length}</b> cảnh báo${s.skipped_n
-        ? ` · <span class="muted" title="${esc(Object.entries(s.skipped || {}).map(([t, r]) => `${t}: ${r}`).join("\n"))}">bỏ qua ${s.skipped_n} mã</span>` : ""}${s.error ? ` · <span class="warn">${esc(s.error)}</span>` : ""}`;
-  const tbody = $("#intraday-table tbody");
-  tbody.innerHTML = rows.length ? rows.map((a) => `<tr data-t="${esc(a.ticker)}">${starCell(a.ticker)}
-      <td class="muted">${hm(a.traded_at)}</td>
-      <td><span class="tk-inline">${logoTile(a.ticker, " sm")}<span class="tk">${esc(a.ticker)}</span></span></td>
-      <td><span class="badge b-${INTRADAY_TONE[a.alert_type] || ""}">${esc(INTRADAY_TEXT[a.alert_type] || a.alert_type)}</span></td>
-      <td class="num">${fmt(a.price)}</td><td class="num">${fmt(a.level)}</td>
-      <td class="num">${a.volume_pace == null ? "–" : fmt(a.volume_pace, 1) + "×"}</td>
-      <td class="wrap">${esc(a.what_changed)}</td></tr>`).join("")
-    : `<tr><td colspan="8" class="empty">Chưa có cảnh báo trong phiên ${dmy(d.session_date)}.</td></tr>`;
-}
-// Refresh while the page is open; the watcher rewrites its status every few seconds.
-setInterval(() => { if (!SITE && $("#tab-intraday").classList.contains("active") && !document.hidden) loadIntraday(); }, 30000);
-
 async function loadIndustries() {
-  const runId = state.runId;
-  const data = await get(`/api/industries${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`);
-  const themes = data.themes || [];
-  const tks = (list) => (list || []).map((x) => `<span class="tk link" data-t="${esc(x)}">${esc(x)}</span>`).join(" ") || "–";
-  $("#themes-table tbody").innerHTML = themes.length ? themes.map((t) => `<tr>
-      <td class="num"><b class="${t.hot ? "lead" : ""}">${t.rs_percentile == null ? "–" : fmt(t.rs_percentile)}</b></td>
-      <td><span class="theme${t.hot ? " hot" : ""}">${esc(t.name)}</span>${t.hot ? ' <span class="muted">đang mạnh</span>' : ""}</td>
-      <td class="num">${t.count} / ${t.configured}</td>
-      <td class="num ${tone(t.return_1m)}">${pct(t.return_1m)}</td><td class="num ${tone(t.return_3m)}">${pct(t.return_3m)}</td>
-      <td class="num">${pct(t.above_ma50_pct, 0, false)}</td><td>${tks(t.leaders)}</td></tr>`).join("")
-    : `<tr><td colspan="7" class="empty">Chưa có sóng ngành nào trong lượt lọc này.</td></tr>`;
-  const rows = data.industries || [];
-  const tbody = $("#industries-table tbody");
-  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="6" class="empty">Chưa có phân ngành trong lượt lọc này. Chạy: python -m src.main industry, rồi screen.</td></tr>`; return; }
-  tbody.innerHTML = rows.map((i) => `<tr>
-      <td class="num"><b class="${i.leading ? "lead" : ""}">${i.rs_percentile == null ? "–" : fmt(i.rs_percentile)}</b></td>
-      <td>${esc(i.name)}</td><td class="num">${i.count}</td>
-      <td class="num">${pct(i.above_ma50_pct, 0, false)}</td><td class="num">${pct(i.above_ma200_pct, 0, false)}</td><td>${tks(i.leaders)}</td></tr>`).join("");
+ const request=++sectorState.request;
+ $('#sector-list').innerHTML='<p class="muted">Đang đọc dữ liệu ngành…</p>';
+ sectorState.data=null;sectorState.mapRows=[];$('#sector-map').innerHTML='<p class="empty">Đang đọc dữ liệu ngành…</p>';$('#sector-map-count').textContent='';$('#sector-date').textContent='';$('#sector-map-tip').hidden=true;
+ try {const data=await get(`/api/industries${state.runId?`?run_id=${encodeURIComponent(state.runId)}`:''}`);if(request!==sectorState.request)return;
+ sectorState.data=data.explorer||{groups:[]};$('#sector-date').textContent=`Phiên ${dmy(sectorState.data.as_of)}`;
+ $('#sector-method').textContent=sectorState.data.method||'Chưa có dữ liệu ngành.';renderSectors();
+ }catch(e){if(request===sectorState.request){$('#sector-list').textContent=e.message;$('#sector-map').textContent=e.message;}}
 }
+function sectorReason(g) {
+ const m=g.metrics;
+ if(g.status==='insufficient')return `Có ${m.count} mã hợp lệ; cần ít nhất 3 mã và lịch sử so sánh.`;
+ return `So VN-Index ${sfmt(m.relative,1)} điểm % · độ lan tỏa ${pct(m.breadth,0,false)}${g.breadth_change!=null?` (${sfmt(g.breadth_change,1)} điểm %/5 phiên)`:''}.`;
+}
+function renderSectors() {
+ const all=(sectorState.data||{}).groups||[], kind=$('#sector-kind').value;
+ const groups=all.filter(g=>g.kind===kind), q=fold($('#sector-search').value), status=$('#sector-status').value;
+ const sort=$('#sector-sort').value;
+ const value=g=>sort==='relative_change'?g.relative_change:g.metrics[sort];
+ const rows=groups.filter(g=>(!q||fold(g.name).includes(q))&&(!status||g.status===status)&&(!sectorState.pinned||sectorState.pins.has(g.id))).sort((a,b)=>Number(a.status==='insufficient')-Number(b.status==='insufficient')||(value(b)??-Infinity)-(value(a)??-Infinity)||a.name.localeCompare(b.name));
+ if(!rows.some(g=>g.id===sectorState.selected))sectorState.selected=rows[0]?.id;
+ $('#sector-pinned').classList.toggle('on',sectorState.pinned);
+ $('#sector-list').innerHTML=rows.length?rows.map(g=>`<article class="sector-row ${g.id===sectorState.selected?'selected':''}"><button class="sector-pin" data-sector-pin="${esc(g.id)}" aria-label="${sectorState.pins.has(g.id)?'Bỏ ghim':'Ghim'} ${esc(g.name)}">${sectorState.pins.has(g.id)?'★':'☆'}</button><button class="sector-open" data-sector="${esc(g.id)}"><span class="sector-row-head"><b>${esc(g.name)}</b><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span></span><span class="sector-row-summary">${esc(sectorReason(g))}</span><span class="sector-row-stats"><span>1 tuần <b class="${tone(g.metrics.returns['5'])}">${pct(g.metrics.returns['5'])}</b></span><span>1 tháng <b class="${tone(g.metrics.returns['21'])}">${pct(g.metrics.returns['21'])}</b></span><span>3 tháng <b class="${tone(g.metrics.returns['63'])}">${pct(g.metrics.returns['63'])}</b></span>${sectorSpark(g)}</span></button></article>`).join(''):'<p class="empty">Không có ngành phù hợp. Thử đổi bộ lọc.</p>';
+ sectorState.mapRows=rows;renderSectorMap();
+}
+// Balanced weighted partition: every positive weight owns a disjoint rectangle.
+function sectorMapRects(items,x,y,w,h) {
+  const rows=items.filter(r=>Number.isFinite(r.weight)&&r.weight>0).slice().sort((a,b)=>b.weight-a.weight);
+  const out=[];
+  function split(rs,left,top,width,height) {
+    if(!rs.length || width<=0 || height<=0)return;
+    if(rs.length===1){out.push({...rs[0],x:left,y:top,w:width,h:height});return;}
+    const total=rs.reduce((n,r)=>n+r.weight,0);
+    let sum=rs[0].weight, cut=1;
+    while(cut<rs.length-1 && Math.abs(sum+rs[cut].weight-total/2)<Math.abs(sum-total/2))sum+=rs[cut++].weight;
+    const f=sum/total;
+    if(width>=height){split(rs.slice(0,cut),left,top,width*f,height);split(rs.slice(cut),left+width*f,top,width*(1-f),height);}
+    else{split(rs.slice(0,cut),left,top,width,height*f);split(rs.slice(cut),left,top+height*f,width,height*(1-f));}
+  }
+  split(rows,x,y,w,h);return out;
+}
+function sectorMapCurrent(r) {
+  return r.date===sectorState.data.as_of && !r.flagged && Number.isFinite(r.change);
+}
+function sectorMapColor(change,limit=null) {
+  return change==null?'#465164':limit==='ceiling'?'#6747bf':limit==='floor'?'#00a8cf':change<0?'#c93d36':change===0?'#f1ae55':'#009f66';
+}
+function sectorMapChange(members) {
+  const valid=members.filter(sectorMapCurrent), total=valid.reduce((n,r)=>n+Math.max(0,r.value||0),0);
+  return total ? valid.reduce((n,r)=>n+r.change*Math.max(0,r.value||0),0)/total : null;
+}
+function renderSectorMap() {
+  const map=$('#sector-map'), width=map.clientWidth;if(!width)return;
+  const exchange=$('#sector-map-exchange').value, equal=$('#sector-map-weight').value==='equal';
+  const groups=sectorState.mapRows.filter(g=>!sectorState.zoom||g.id===sectorState.selected).map(g=>{
+    const members=g.members.filter(r=>!exchange||r.exchange===exchange);
+    const stocks=members.map(r=>({r,weight:equal?1:Math.max(0,r.value||0)})).filter(r=>Number.isFinite(r.weight)&&r.weight>0);
+    return {g,members,stocks,weight:stocks.reduce((n,r)=>n+r.weight,0)};
+  });
+  const count=groups.reduce((n,g)=>n+g.stocks.length,0), unique=new Set(groups.flatMap(g=>g.stocks.map(x=>x.r.ticker))).size;
+  $('#sector-map-count').textContent=`${groups.filter(g=>g.weight>0).length} nhóm · ${unique} mã`;
+  $('#sector-map-zoom').textContent=sectorState.zoom?'← Toàn bộ các ngành':'Phóng to ngành đang chọn';
+  $('#sector-map-zoom').disabled=!sectorState.selected;
+  const missing=groups.reduce((n,g)=>n+g.members.length-g.stocks.length,0);
+  $('#sector-map-note').textContent=`${equal?'Mỗi mã có diện tích bằng nhau.':'Diện tích theo giá trị giao dịch bình quân 20 phiên, không phải vốn hóa.'} Tím / xanh lam chỉ dùng khi có giá trần / sàn của phiên để đối chiếu. Biến động theo tham chiếu khi có dữ liệu, nếu thiếu thì so đóng cửa trước. Màu ngành: trung bình biến động các mã có giá hợp lệ, gia quyền theo GTGD 20 phiên. Ô xám: thiếu giá phiên đang xem hoặc cần kiểm tra.${missing?' '+missing+' mã thiếu GTGD không có ô; chọn diện tích đều để xem.':''}${count!==unique?' Các nhóm chồng lấn, một mã có thể xuất hiện nhiều lần.':''} Rê chuột hoặc dùng phím Tab để xem số liệu.`;
+  $('#sector-map-tip').hidden=true;
+  const height=map.clientHeight, mode=$('#sector-map-mode').value;
+  const rectStyle=r=>`left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;`;
+  const html=sectorMapRects(groups,0,0,width,height).map(box=>{
+    const {g,members,stocks}=box, change=sectorMapChange(members), tiny=box.w<70||box.h<40;
+    if(mode==='groups'||sectorState.collapsed.has(g.id))return `<button type="button" data-map-key="${esc(g.id)}" class="sector-map-group-summary ${g.id===sectorState.selected?'selected':''}" data-map-collapse="${esc(g.id)}" data-map-group="${esc(g.id)}" style="${rectStyle(box)}background:${sectorMapColor(change)}" aria-label="Mở các mã ngành ${esc(g.name)}, ${pct(change)}"><b style="font-size:${Math.max(11,Math.min(38,box.w/11,box.h/4))}px">${tiny?'':esc(g.name)}</b>${tiny?'':`<span>${pct(change)}</span>`}</button>`;
+    const header=tiny?0:Math.min(26,box.h*.23), padding=0;
+    const tiles=sectorMapRects(stocks,padding,header+padding,Math.max(0,box.w-2*padding),Math.max(0,box.h-header-2*padding));
+    return `<div data-map-key="${esc(g.id)}" class="sector-map-group ${g.id===sectorState.selected?'selected':''}" style="${rectStyle(box)}" role="group" aria-label="${esc(g.name)}">
+      ${header?`<button type="button" data-map-key="heading" class="sector-map-group-name" data-map-collapse="${esc(g.id)}" data-map-group="${esc(g.id)}" style="height:${header}px" title="${esc(g.name)} · bấm để thu gọn ngành"><b><i aria-hidden="true">⌄</i> ${esc(g.name)}</b><span>${pct(change,2)}</span></button>`:''}
+      ${tiles.map(t=>{const r=t.r, valid=sectorMapCurrent(r), label=t.w>=30&&t.h>=22, sub=t.w>=46&&t.h>=44;
+        return `<button type="button" data-map-key="${esc(r.ticker)}" class="sector-map-stock" data-t="${esc(r.ticker)}" data-map-stock="${esc(r.ticker)}" data-map-parent="${esc(g.id)}" style="${rectStyle(t)}background:${sectorMapColor(valid?r.change:null,valid?r.limit:null)};font-size:${Math.max(10,Math.min(40,t.w/4,t.h/3))}px" aria-label="Mở biểu đồ ${esc(r.ticker)}, ${valid?pct(r.change,2):'Giá cũ hoặc thiếu dữ liệu'}">${label?`<b>${esc(r.ticker)}</b>`:''}${sub?`<span>${valid?pct(r.change,2):'Giá cũ / thiếu'}</span>`:''}</button>`;
+      }).join('')}</div>`;
+  }).join('')||'<p class="empty">Không có dữ liệu phù hợp bộ lọc. Thử chọn tất cả sàn hoặc diện tích đều theo mã.</p>';
+  commitSectorMap(map,html);
+}
+// Reuse keyed cells so selection, keyboard focus and resize stay continuous.
+function commitSectorMap(map,html) {
+  const template=document.createElement('template');template.innerHTML=html;
+  function sync(parent,next) {
+    const old=new Map([...parent.children].map(e=>[e.dataset.mapKey,e]));
+    for(const fresh of [...next.children]) {
+      const key=fresh.dataset.mapKey, existing=key?old.get(key):null;
+      if(!existing||existing.tagName!==fresh.tagName){parent.appendChild(fresh);continue;}
+      old.delete(key);
+      for(const a of [...existing.attributes])if(!fresh.hasAttribute(a.name))existing.removeAttribute(a.name);
+      for(const a of [...fresh.attributes])if(existing.getAttribute(a.name)!==a.value)existing.setAttribute(a.name,a.value);
+      if(fresh.classList.contains('sector-map-group'))sync(existing,fresh);
+      else if(existing.innerHTML!==fresh.innerHTML)existing.innerHTML=fresh.innerHTML;
+    }
+    for(const element of old.values())element.remove();
+  }
+  sync(map,template.content);
+}
+function showSectorMapTip(target) {
+  const id=target.dataset.mapGroup||target.dataset.mapParent, g=sectorState.mapRows.find(g=>g.id===id);if(!g)return;
+  const tip=$('#sector-map-tip'), exchange=$('#sector-map-exchange').value;
+  const members=g.members.filter(r=>!exchange||r.exchange===exchange), r=members.find(r=>r.ticker===target.dataset.mapStock);
+  const sorted=members.slice().sort((a,b)=>(b.value||0)-(a.value||0)).slice(0,10);
+  tip.innerHTML=`<div class="map-tip-heading"><b>${esc(g.name)}</b><span>${members.length} mã</span></div>${r?`<div class="map-tip-stock"><b>${esc(r.ticker)}</b> · ${esc(r.name)}</div>`:''}<table><thead><tr><th>Mã</th><th>Giá</th><th>% đổi</th><th>GTGD 20P</th></tr></thead><tbody>${(r?[r,...sorted.filter(x=>x.ticker!==r.ticker).slice(0,4)]:sorted).map(x=>`<tr class="${r&&x.ticker===r.ticker?'map-tip-active':''}"><td>${esc(x.ticker)}</td><td>${fmt(x.close)}</td><td class="${tone(sectorMapCurrent(x)?x.change:null)}">${sectorMapCurrent(x)?pct(x.change,2):'–'}</td><td>${x.value==null?'–':fmt(x.value/1e9,1)}</td></tr>`).join('')}</tbody></table><p>GTGD bình quân 20 phiên · tỷ đồng/ngày. ${r?'Bấm mã để mở biểu đồ.':'Bấm tiêu đề ngành để thu gọn / mở các mã.'}</p>`;
+  tip.hidden=false;
+  const rect=target.getBoundingClientRect(), w=tip.offsetWidth,h=tip.offsetHeight;
+  const left=rect.right+w+16<window.innerWidth?rect.right+12:rect.left-w-12;
+  tip.style.left=`${Math.max(8,Math.min(window.innerWidth-w-8,left))}px`;
+  tip.style.top=`${Math.max(8,Math.min(window.innerHeight-h-8,rect.top))}px`;
+}
+function wireSectors() {
+ const tip=document.createElement('div');tip.id='sector-map-tip';tip.className='sector-map-tip';tip.setAttribute('role','tooltip');tip.hidden=true;document.body.appendChild(tip);
+ const map=$('#sector-map');
+ ['sector-map-exchange','sector-map-weight','sector-map-mode'].forEach(id=>$('#'+id).addEventListener('change',renderSectorMap));
+ $('#sector-map-zoom').addEventListener('click',()=>{sectorState.zoom=!sectorState.zoom;renderSectorMap();});
+ const setExpanded=open=>{const card=$('.sector-map-card');card.classList.toggle('is-expanded',open);$('#sector-map-expand').textContent=open?'↙ Thu gọn':'⛶ Mở rộng';$('#sector-map-expand').setAttribute('aria-pressed',String(open));$('#sector-map-expand').setAttribute('aria-label',open?'Thu gọn bản đồ nhiệt':'Mở rộng bản đồ nhiệt');};
+ $('#sector-map-expand').addEventListener('click',()=>setExpanded(!$('.sector-map-card').classList.contains('is-expanded')));
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.sector-map-card').classList.contains('is-expanded')){setExpanded(false);$('#sector-map-expand').focus();}});
+ let tipTimer;
+ const hideTip=()=>{clearTimeout(tipTimer);tip.hidden=true;};
+ map.addEventListener('pointerover',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(!t||t.contains(e.relatedTarget))return;clearTimeout(tipTimer);tipTimer=setTimeout(()=>{if(t.isConnected)showSectorMapTip(t);},110);});
+ map.addEventListener('pointerout',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(t&&!t.contains(e.relatedTarget))hideTip();});
+ map.addEventListener('focusin',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(t){clearTimeout(tipTimer);showSectorMapTip(t);}});
+ ['pointerleave','focusout','click'].forEach(event=>map.addEventListener(event,hideTip));
+ map.addEventListener('click',e=>{if(e.target.closest('[data-t],[data-sector]'))setExpanded(false);});
+ document.addEventListener('scroll',hideTip,true);
+ let resizeFrame;
+ new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>{if(sectorState.data)renderSectorMap();});}).observe(map);
+
+ ['sector-search','sector-kind','sector-status','sector-sort'].forEach(id=>$('#'+id).addEventListener(id==='sector-search'?'input':'change',renderSectors));
+ $('#sector-pinned').addEventListener('click',()=>{sectorState.pinned=!sectorState.pinned;renderSectors();});
+ $('#tab-industries').addEventListener('click',e=>{
+ const pin=e.target.closest('[data-sector-pin]'),open=e.target.closest('[data-sector]'),collapse=e.target.closest('[data-map-collapse]');
+ if(collapse){const id=collapse.dataset.mapCollapse;sectorState.collapsed.has(id)?sectorState.collapsed.delete(id):sectorState.collapsed.add(id);if($('#sector-map-mode').value==='groups'){$('#sector-map-mode').value='stocks';sectorState.collapsed=new Set(sectorState.mapRows.map(g=>g.id).filter(x=>x!==id));}renderSectorMap();return;}
+ if(pin){const id=pin.dataset.sectorPin;sectorState.pins.has(id)?sectorState.pins.delete(id):sectorState.pins.add(id);store.set('sepa.sectors',[...sectorState.pins]);renderSectors();}
+ else if(open){sectorState.selected=open.dataset.sector;sectorState.zoom=true;renderSectors();$('.sector-map-card').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth',block:'start'});}
+ });
+}
+wireSectors();
 
 // News: a card opens its article (CafeF first) in a new tab; the ticker chip opens the stock.
 // One search box: the ticker ("PNJ", "pn") or the company's name ("phu nhuan", accents optional).
 let newsRows = [];
+let newsDateFilter = null, stockNewsDateFilter = null;
+function renderStockNews() {
+  if (!state.detail || !state.detailTicker) return;
+  const rows = (state.detail.news || []).filter(n => !stockNewsDateFilter || stockNewsDateFilter.matches(n.occurred_at));
+  $("#stock-news-results").innerHTML = stockNewsHtml(state.detailTicker, rows, !!stockNewsDateFilter?.value.start);
+}
 async function loadNews() {
   try { newsRows = await get("/api/news"); }
   catch (err) { $("#news-list").innerHTML = `<p class="empty">${esc(err.message)}</p>`; return; }
@@ -1675,7 +1776,8 @@ async function loadNews() {
 }
 function renderNews() {
   const q = fold($("#news-search").value.trim());
-  const rows = newsRows.filter((n) => !q || fold(n.ticker).startsWith(q) || fold(n.name || "").includes(q));
+  const rows = newsRows.filter((n) => (!q || fold(n.ticker).startsWith(q) || fold(n.name || "").includes(q))
+    && (!newsDateFilter || newsDateFilter.matches(n.occurred_at)));
   const oldest = rows.length ? rows[rows.length - 1].occurred_at : null;
   $("#news-count").innerHTML = `<b>${rows.length}</b> tin${oldest ? ` · từ ${dmy(oldest)}` : ""}`;
   const source = (s) => SOURCE_TEXT[s] || s || "";
@@ -1702,8 +1804,6 @@ function showTab(t) {
     renderMinePending();
     renderTable();
   }
-  if (t.dataset.tab === "alerts") loadAlerts();
-  if (t.dataset.tab === "intraday") loadIntraday();
   if (t.dataset.tab === "industries") loadIndustries();
   if (t.dataset.tab === "news") loadNews();
   if (t.dataset.tab === "learn" && window.renderLearn) window.renderLearn();
@@ -1739,23 +1839,6 @@ async function init() {
   syncView();
   $("#page-desc").textContent = $(".tab.active").dataset.desc;
 
-  $("#alerts-search").addEventListener("input", (e) => { state.alerts.q = e.target.value; state.alerts.shown = ALERT_PAGE; renderAlerts(); });
-  $("#alerts-more").addEventListener("click", () => { state.alerts.shown += ALERT_PAGE; renderAlerts(); });
-  $("#alerts-type").addEventListener("click", (e) => {
-    const b = e.target.closest(".dd");
-    if (!b) return;
-    const types = [...new Set(state.alerts.rows.map((a) => a.alert_type))];
-    openDropdown(b, { items: [{ value: "", text: "Tất cả" }, ...types.map((v) => ({ value: v, text: EVENT_TEXT[v] || v,
-      count: state.alerts.rows.filter((a) => a.alert_type === v).length }))], value: state.alerts.type,
-    onPick: (v) => { state.alerts.type = v; state.alerts.shown = ALERT_PAGE; renderAlerts(); } });
-  });
-  $("#alerts-period").addEventListener("click", (e) => {
-    const b = e.target.closest(".dd");
-    if (!b) return;
-    openDropdown(b, { items: [["5", "5 phiên gần nhất"], ["20", "20 phiên gần nhất"], ["60", "60 phiên gần nhất"], ["all", "Tất cả"]]
-      .map(([value, text]) => ({ value, text })), value: state.alerts.period, searchable: false,
-    onPick: (v) => { state.alerts.period = v; state.alerts.shown = ALERT_PAGE; renderAlerts(); } });
-  });
   $$(".view-seg button").forEach((b) => b.addEventListener("click", () => {
     state.view = b.dataset.view; store.set("sepa.view.v2", state.view);
     if (!COLS[state.view].some((c) => c.k === state.sortKey)) state.sortKey = "";
@@ -1840,6 +1923,8 @@ async function init() {
     addMine(it.dataset.add);
   });
   $("#news-search").addEventListener("input", renderNews);
+  newsDateFilter = NewsDates.create($("#news-date-filter"), renderNews);
+  stockNewsDateFilter = NewsDates.create($("#stock-news-date-filter"), renderStockNews);
 
   // chart controls
   $$(".chart-tabs button").forEach((c) => c.addEventListener("click", () => {

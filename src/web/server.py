@@ -273,6 +273,20 @@ def api_index(q: dict[str, str], path: Path | None = None) -> Any:
     }
 
 
+def ticker_news(ticker: str, path: Path | None = None) -> list[dict[str, Any]]:
+    # News about the ticker first, then articles that only mention it (tester report B06).
+    news = _rows("SELECT e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, e.best_source_level, "
+                 "e.assertion_type, e.what_happened, e.why_it_matters, e.direction, e.time_horizon, t.role "
+                 "FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id WHERE t.ticker = ? "
+                 "ORDER BY t.role = 'mention', e.occurred_at DESC LIMIT 40", (ticker,), path)
+    for e in news:
+        e["articles"] = _rows("SELECT title, url, source_id, source_level, published_at FROM news_articles "
+                              "WHERE event_id = ? OR article_id IN "
+                              "(SELECT article_id FROM news_event_articles WHERE event_id = ?) ORDER BY published_at",
+                              (e["event_id"], e["event_id"]), path)
+    return news
+
+
 def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
     ticker = (q.get("ticker") or "").upper()
     if not ticker:
@@ -311,13 +325,7 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
     closes = {b["trade_date"]: b["close"] for b in bars[-60:]}
     member = _rows("SELECT m.* FROM screen_members m JOIN screen_runs r ON r.run_id = m.run_id "
                    "WHERE m.ticker = ? ORDER BY r.created_at DESC LIMIT 1", (ticker,), path)
-    alerts = _fill_thresholds(_rows("SELECT alert_type, what_changed, why_it_matters, created_at FROM alerts "
-                                    "WHERE ticker = ? ORDER BY what_changed DESC LIMIT 40", (ticker,), path))
-    # News about the ticker first, then articles that only mention it (tester report B06).
-    news = _rows("SELECT e.event_id, e.event_type, e.headline, e.occurred_at, e.article_count, e.best_source_level, "
-                 "e.assertion_type, e.what_happened, e.why_it_matters, e.direction, e.time_horizon, t.role "
-                 "FROM news_events e JOIN event_tickers t ON t.event_id = e.event_id WHERE t.ticker = ? "
-                 "ORDER BY t.role = 'mention', e.occurred_at DESC LIMIT 40", (ticker,), path)
+    news = ticker_news(ticker, path)
     fundamentals = None
     try:
         from src.quant.fundamentals import grade_ticker, load_quarters  # noqa: PLC0415
@@ -330,9 +338,6 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
     except Exception:  # noqa: BLE001 - the chart must still load without the fundamentals tables
         log.exception("fundamentals for %s", ticker)
     industry = _rows("SELECT * FROM ticker_industry WHERE ticker = ?", (ticker,), path)
-    for e in news:
-        e["articles"] = _rows("SELECT title, url, source_id, source_level, published_at FROM news_articles "
-                              "WHERE event_id = ? ORDER BY published_at", (e["event_id"],), path)
     return {
         "info": info[0] if info else {"ticker": ticker},
         "bars": bars,
@@ -342,7 +347,6 @@ def api_ticker(q: dict[str, str], path: Path | None = None) -> Any:
         "levels": levels,
         "state": _json_cols(state[0], "state_json")["state_json"] if state else None,
         "screen": _json_cols(member[0], "criteria_json", "base_json") if member else None,
-        "alerts": alerts,
         "news": news,
         "tf": "D",
         "ma_periods": _daily_periods(),
@@ -370,7 +374,8 @@ def api_industries(q: dict[str, str], path: Path | None = None) -> Any:
     if not rows:
         return {"run_id": None, "industries": []}
     r = _json_cols(rows[0], "funnel_json")
-    return {"run_id": r["run_id"], "as_of_date": r["as_of_date"],
+    from src.web.industry_explorer import explore
+    return {"explorer": explore(r["as_of_date"], path), "run_id": r["run_id"], "as_of_date": r["as_of_date"],
             "industries": (r["funnel_json"] or {}).get("industries", []) if isinstance(r["funnel_json"], dict) else [],
             "themes": (r["funnel_json"] or {}).get("themes", []) if isinstance(r["funnel_json"], dict) else [],
             "level": screen_settings().get("industry", {}).get("level")}
@@ -890,47 +895,6 @@ def _spawn_refresh(ticker: str) -> bool:
     return True
 
 
-STOP_IN_TEXT = re.compile(r"stop tham chiếu ([\d.,]+)")
-
-
-def _fill_thresholds(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Event texts stored before 2026-10-12 read "Giá cao hơn đáy 52 tuần ≥ X%" (tester R3-07)."""
-    from src.quant.screener import criteria_labels  # noqa: PLC0415
-
-    tt6 = criteria_labels(screen_settings())["TT6"]
-    for r in rows:
-        for k in ("what_changed", "why_it_matters"):
-            if r.get(k) and "≥ X%" in r[k]:
-                r[k] = r[k].replace("Giá cao hơn đáy 52 tuần ≥ X%", tt6)
-    return rows
-
-
-def api_alerts(q: dict[str, str], path: Path | None = None) -> Any:
-    """Recent events. A stop breach whose stop is not the ticker's stop shown today (or the
-    ticker has none: no forming base since 2026-10-11) is `stale_stop`: the stop of an
-    earlier base, labelled so on the page."""
-    limit = min(int(q.get("limit", 200)), 1000)
-    rows = _fill_thresholds(_rows("SELECT a.ticker, a.alert_type, a.what_changed, a.why_it_matters, a.created_at, "
-                                  "t.exchange FROM alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
-                                  "ORDER BY a.what_changed DESC LIMIT ?", (limit,), path))
-    tickers = sorted({r["ticker"] for r in rows if r["alert_type"] == "STOP_BREACHED"})
-    stops: dict[str, Any] = {}
-    if tickers:
-        marks = ",".join("?" * len(tickers))
-        for r in _rows(f"SELECT s.ticker, s.state_json FROM monitor_state s JOIN (SELECT ticker, MAX(trade_date) d "
-                       f"FROM monitor_state WHERE ticker IN ({marks}) GROUP BY ticker) x "
-                       f"ON x.ticker = s.ticker AND x.d = s.trade_date", tuple(tickers), path):
-            stops[r["ticker"]] = (json.loads(r["state_json"] or "{}") or {}).get("stop")
-    for r in rows:
-        if r["alert_type"] != "STOP_BREACHED":
-            continue
-        r["current_stop"] = stops.get(r["ticker"])
-        m = STOP_IN_TEXT.search(r["what_changed"] or "")
-        was = int(re.sub(r"[.,]", "", m.group(1))) if m else None
-        r["stale_stop"] = was is not None and (r["current_stop"] is None or was != round(r["current_stop"]))
-    return rows
-
-
 def api_checks(q: dict[str, str], path: Path | None = None) -> Any:
     """The latest invariant report (python -m src.main check), summarised for the page. Read-only."""
     from src.web.checks import latest_report, summary  # noqa: PLC0415
@@ -938,34 +902,9 @@ def api_checks(q: dict[str, str], path: Path | None = None) -> Any:
     return summary(latest_report())
 
 
-def api_intraday(q: dict[str, str], path: Path | None = None) -> Any:
-    """The session's intraday alerts (python -m src.main watch) and the watcher's status. Read-only.
-    Without a date: today, or the latest session that has alerts."""
-    from src.collectors.intraday_watch import intraday_settings, read_status  # noqa: PLC0415
-
-    day = q.get("date") or datetime.now(VN_TZ).date().isoformat()
-    sql = ("SELECT a.*, t.name FROM intraday_alerts a LEFT JOIN tickers t ON t.ticker = a.ticker "
-           "WHERE a.session_date = ? ORDER BY a.traded_at DESC")
-    rows = _rows(sql, (day,), path)
-    if not rows and not q.get("date"):
-        last = _rows("SELECT MAX(session_date) AS d FROM intraday_alerts", path=path)
-        if last and last[0]["d"]:
-            day = last[0]["d"]
-            rows = _rows(sql, (day,), path)
-    status = read_status(date.fromisoformat(day))
-    if status:
-        written = status.get("written_at")
-        age = (datetime.now(VN_TZ) - datetime.fromisoformat(written)).total_seconds() if written else None
-        status["running"] = not status.get("ended_at")
-        status["stale"] = bool(status["running"] and (age is None or age > float(intraday_settings()["status_stale_seconds"])))
-        status["skipped_n"] = len(status.get("skipped") or {})
-        status["watched_n"] = len(status.get("watched") or [])
-        status.pop("last", None)                        # last prices: not needed by the page
-    return {"session_date": day, "alerts": rows, "status": status}
-
-
 # The article a news card opens: CafeF's first (the user reads news there), else the earliest.
-_NEWS_ARTICLE = ("FROM news_articles a WHERE a.event_id = e.event_id "
+_NEWS_ARTICLE = ("FROM news_articles a WHERE (a.event_id = e.event_id OR a.article_id IN "
+                 "(SELECT article_id FROM news_event_articles WHERE event_id = e.event_id)) "
                  "ORDER BY a.source_id NOT LIKE 'cafef%', a.published_at LIMIT 1")
 NEWS_ROWS_CAP = 10000  # a ticker-event row each (~900 a month, 2026-10-12): every row in the window reaches the search
 
@@ -996,9 +935,7 @@ ROUTES: dict[str, Callable[..., Any]] = {
     "/api/market": api_market,
     "/api/index": api_index,
     "/api/bars": api_bars,
-    "/api/alerts": api_alerts,
     "/api/checks": api_checks,
-    "/api/intraday": api_intraday,
     "/api/news": api_news,
 }
 

@@ -113,9 +113,11 @@ def _kw(db, tmp_path, env=None):
 def test_an_update_writes_only_what_a_new_ticker_changes(db, tmp_path):
     out = tmp_path / "site"
     export.export_site(out_dir=out, **_kw(db, tmp_path))
+    assert not (out / "data" / "alerts").exists()
+    assert not (out / "data" / "intraday.json").exists()
     before = json.loads((out / "site.json").read_text(encoding="utf-8"))
-    alerts = out / export.static_path("alerts", {"limit": export.ALERTS_LIMIT})
-    alerts_time = alerts.stat().st_mtime_ns
+    index = out / export.static_path("index")
+    index_time = index.stat().st_mtime_ns
     _pick(db, "BBB", "CTCP B")
     rep = export.update_site(out_dir=out, **_kw(db, tmp_path))
     assert rep.mode == "update" and rep.detail == ["BBB"]
@@ -126,7 +128,7 @@ def test_an_update_writes_only_what_a_new_ticker_changes(db, tmp_path):
         assert (out / name).is_file(), name
     for name in ("data/stocks.json", "data/stocks/run_id-r1.json"):
         assert "BBB" in [r["ticker"] for r in json.loads((out / name).read_text(encoding="utf-8"))], name
-    assert alerts.stat().st_mtime_ns == alerts_time                       # untouched: not part of an update
+    assert index.stat().st_mtime_ns == index_time                       # untouched: not part of an update
     assert not (tmp_path / "site.upd").exists()
     assert export.update_site(out_dir=out, **_kw(db, tmp_path)).detail == []   # nothing new the second time
 
@@ -184,3 +186,43 @@ def test_the_monitor_can_be_limited_to_the_tickers_just_added(db):
     res = run_monitor(persist=False, path=db, keep_events=True, only=["bbb"])
     assert res.tickers == ["BBB"] and set(res.states) <= {"BBB"}
     assert "AAA" in run_monitor(persist=False, path=db, keep_events=True).tickers
+
+
+def test_parallel_chart_worker_matches_serial_api_answers(db, tmp_path):
+    from concurrent.futures import ProcessPoolExecutor
+    from src.web import server
+    folder = tmp_path / "workers"
+    folder.mkdir()
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        detail, skipped = pool.submit(export._detail_job, ("AAA", folder, db)).result(timeout=60)
+    assert detail == ["AAA"] and not skipped
+    for route, query, fn in [
+        ("ticker", {"ticker": "AAA"}, server.api_ticker),
+        ("bars", {"ticker": "AAA", "tf": "W"}, server.api_bars),
+        ("bars", {"ticker": "AAA", "tf": "M"}, server.api_bars),
+        ("flow", {"ticker": "AAA", "sessions": export.FLOW_SESSIONS}, server.api_flow),
+    ]:
+        actual = json.loads((folder / export.static_path(route, query)).read_text(encoding="utf-8"))
+        expected = json.loads(json.dumps(server._clean(fn(query, db)), default=str))
+        assert actual == expected
+
+
+def test_incremental_export_refreshes_existing_ticker_news_without_rebuilding_charts(db, tmp_path, monkeypatch):
+    from src.web import server
+    out = tmp_path / "site"
+    export.export_site(out_dir=out, **_kw(db, tmp_path))
+    detail = out / export.static_path("ticker", {"ticker": "AAA"})
+    old = json.loads(detail.read_text(encoding="utf-8"))
+    weekly = out / export.static_path("bars", {"ticker": "AAA", "tf": "W"})
+    timestamp = weekly.stat().st_mtime_ns
+    news = [{"event_id": "fresh", "headline": "AAA: Tin moi", "articles": []}]
+    monkeypatch.setattr(server, "ticker_news", lambda ticker, path: news)
+    original_api = server.api_ticker
+    def check_new_only(q, path):
+        assert q["ticker"] != "AAA", "must not recalculate existing chart"
+        return original_api(q, path)
+    monkeypatch.setattr(server, "api_ticker", check_new_only)
+    export.update_site(out_dir=out, **_kw(db, tmp_path))
+    actual = json.loads(detail.read_text(encoding="utf-8"))
+    assert actual == {**old, "news": news}
+    assert weekly.stat().st_mtime_ns == timestamp

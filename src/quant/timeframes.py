@@ -37,23 +37,23 @@ def resample(bars: Sequence[Mapping[str, Any]], tf: str, today: date | None = No
     df = pd.DataFrame(bars)
     stamps = pd.to_datetime(df["trade_date"])
     df["period"] = stamps.dt.to_period("W-FRI" if tf == "W" else "M")
-    def first(s: pd.Series) -> float | None:
-        s = s.dropna()
-        return float(s.iloc[0]) if len(s) else None
-
-    def last_(s: pd.Series) -> float | None:
-        s = s.dropna()
-        return float(s.iloc[-1]) if len(s) else None
-
+    # Built-in grouped reductions preserve first/last non-null prices and avoid
+    # constructing hundreds of Series objects for each chart.
+    grouped = df.groupby("period", sort=True)
+    values = grouped.agg(trade_date=("trade_date", "first"),
+                         period_end=("trade_date", "last"),
+                         open=("open", "first"), high=("high", "max"),
+                         low=("low", "min"), close=("close", "last"),
+                         volume=("volume", "sum"), sessions=("trade_date", "size"))
     out = []
-    for period, g in df.groupby("period", sort=True):
-        hi, lo = g["high"].max(), g["low"].min()
-        out.append({
-            "trade_date": str(g["trade_date"].iloc[0]), "period_end": str(g["trade_date"].iloc[-1]),
-            "open": first(g["open"]), "high": None if hi != hi else float(hi), "low": None if lo != lo else float(lo),
-            "close": last_(g["close"]), "volume": float(g["volume"].fillna(0).sum()),
-            "sessions": int(len(g)), "partial": False, "_period": period,
-        })
+    for period, row in zip(values.index, values.to_dict("records")):
+        for key in ("open", "high", "low", "close"):
+            value = row[key]
+            row[key] = None if pd.isna(value) else float(value)
+        row["trade_date"], row["period_end"] = str(row["trade_date"]), str(row["period_end"])
+        row["volume"], row["sessions"] = float(row["volume"]), int(row["sessions"])
+        row["partial"], row["_period"] = False, period
+        out.append(row)
     if out:
         last = out[-1]
         last_session = date.fromisoformat(last["period_end"])

@@ -503,32 +503,6 @@ tiền.
 
 ---
 
-## 13a. Cảnh báo trong phiên
-
-`python -m src.main watch` chạy trong giờ giao dịch (09:00–14:50), đọc **lệnh khớp** của các mã đang theo dõi qua
-websocket DNSE (chỉ kênh dữ liệu thị trường) và so với các mức của **phiên trước**. Chỉ hiển thị, không phải lệnh mua bán.
-
-| Cảnh báo | Khi nào (mỗi mã, mỗi loại tối đa 1 lần/ngày) |
-|---|---|
-| Chạm / vượt pivot | nền đang hình thành, giá đóng cửa hôm trước < pivot, giá khớp ≥ pivot. **Chưa phải breakout**: breakout xét giá đóng cửa và khối lượng cả phiên |
-| Xuống tới stop | stop còn hiệu lực (không phải đã thủng / dự kiến), giá đóng cửa hôm trước > stop, giá khớp ≤ stop |
-| Dưới MA50 | giá đóng cửa hôm trước > MA50 (50 phiên), giá khớp < MA50 |
-| Breakout quay lại dưới pivot | trạng thái "Vừa breakout", giá khớp < pivot |
-
-```
-Nhịp khối lượng = KL khớp tới lúc đó / (KL TB 50 phiên × phần thời gian khớp lệnh liên tục đã qua)
-  thời gian khớp liên tục: HOSE 09:15–11:30, 13:00–14:30; HNX 09:00–11:30, 13:00–14:30; UPCoM 09:00–11:30, 13:00–15:00
-  chưa tính khi < 10% ngày đã qua; ≥ 1,4 (= ngưỡng breakout của monitor, `monitor.breakout_volume_ratio`) ghi "khối lượng đang cao"
-  giả định khối lượng chia đều trong ngày — thực tế dồn vào đầu phiên và ATC: chỉ ước tính [TRIỂN KHAI]
-```
-Đơn vị DNSE websocket: giá theo nghìn đồng (như REST); **khối lượng theo đơn vị 10 cổ phiếu** (đo trực tiếp 12/10/2026 trên
-12 mã HOSE/HNX/UPCoM: giá trị khớp / giá / khối lượng = 10) — cả hai hệ số nằm trong `config/sources.yaml`.
-Không theo dõi một mã khi: chưa có trạng thái phiên trước; trạng thái cũ hơn giá; HOSE/HNX có giá tham chiếu hôm nay khác
-giá đóng cửa đã lưu > 0,1% (có thể có quyền, các mức chưa cùng thang). Mất kết nối thì không có gì được bù: trang "Trong
-phiên" ghi "mất kết nối?" khi tệp trạng thái quá 120 giây không cập nhật. Ngưỡng: `intraday` trong thresholds.yaml.
-
----
-
 ## 14. Chỉ báo kỹ thuật kiểu TradingView
 
 View "Kỹ thuật". Chỉ để xem, không phải quy tắc SEPA, chưa kiểm định trên dữ liệu VN.

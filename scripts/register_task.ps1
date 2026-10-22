@@ -1,20 +1,11 @@
-# Create (or replace) the Windows scheduled task that runs scripts\daily.ps1 at 15:30, Monday to Friday.
-# Run once on each machine, from the project folder:
-#   powershell -ExecutionPolicy Bypass -File scripts\register_task.ps1
-# A run missed while the computer was off starts as soon as it is back (StartWhenAvailable); a
-# computer asleep is woken for it (WakeToRun; Windows allows it on mains power by default).
-# Up to 3 hours: ~1 hour today, more with every ticker of the web accounts' lists (~10 s each).
-# Remove it with:  Unregister-ScheduledTask -TaskName "SEPA - cap nhat hang ngay"
-
-$name = "SEPA - cap nhat hang ngay"
+# Register the daily start + export + deploy workflow at 15:10, Monday-Friday.
+$ErrorActionPreference = 'Stop'
+$name = 'SEPA - cap nhat hang ngay'
 $root = Split-Path -Parent $PSScriptRoot
-$script = Join-Path $root "scripts\daily.ps1"
-
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`"" `
-    -WorkingDirectory $root
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday -At "15:30"
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 3)
-
+$pythonw = Join-Path $root '.venv\Scripts\pythonw.exe'
+if (-not (Test-Path $pythonw)) { $pythonw = (Get-Command pythonw -ErrorAction Stop).Source }
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument '-m src.scheduled daily' -WorkingDirectory $root
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At '15:10'
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3)
 Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Write-Host "Scheduled task '$name' runs $script at 15:30 Mon-Fri."
+Write-Host "Scheduled '$name': 15:10 Mon-Fri, windowless."

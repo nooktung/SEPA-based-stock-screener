@@ -455,30 +455,6 @@ CREATE TRIGGER IF NOT EXISTS screen_members_append_only
 BEFORE UPDATE ON screen_members
 BEGIN SELECT RAISE(ABORT, 'screen_members is append-only'); END;
 
--- Intraday alerts (Phase 11, src/collectors/intraday_watch.py): a matched trade of a monitored
--- ticker reaching its pivot / stop / MA50 during the session. One per ticker, type and day.
--- Append-only; display only (never an order, never a buy / sell instruction).
-CREATE TABLE IF NOT EXISTS intraday_alerts (
-    alert_id      TEXT PRIMARY KEY,          -- session_date:ticker:alert_type
-    session_date  TEXT NOT NULL,
-    ticker        TEXT NOT NULL,
-    alert_type    TEXT NOT NULL CHECK (alert_type IN ('PIVOT_CROSS','STOP_TOUCH','MA50_LOST','BREAKOUT_UNDO')),
-    price         REAL NOT NULL,             -- VND
-    level         REAL NOT NULL,             -- the pivot / stop / MA50 it reached
-    traded_at     TEXT NOT NULL,             -- the trade's time (Vietnam)
-    volume        REAL,                      -- the session's matched volume so far
-    volume_pace   REAL,                      -- volume / (50-session average x share of the day elapsed)
-    what_changed  TEXT NOT NULL,
-    source_id     TEXT NOT NULL,
-    source_level  INTEGER NOT NULL,
-    observed_at   TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_intraday_alerts_day ON intraday_alerts(session_date);
-
-CREATE TRIGGER IF NOT EXISTS intraday_alerts_append_only
-BEFORE UPDATE ON intraday_alerts
-BEGIN SELECT RAISE(ABORT, 'intraday_alerts is append-only'); END;
-
 -- Daily computed state of each monitored ticker. Recomputable from bars at any
 -- time; stored so a report can show how a name has evolved.
 CREATE TABLE IF NOT EXISTS monitor_state (
@@ -644,3 +620,23 @@ CREATE TABLE IF NOT EXISTS web_watchlist (
     note        TEXT,
     PRIMARY KEY (account, ticker)
 );
+
+-- Successful market-wide news coverage; only advanced after ingestion completes.
+CREATE TABLE IF NOT EXISTS news_source_state (
+    source_id TEXT PRIMARY KEY,
+    last_success_at TEXT NOT NULL,
+    covered_since TEXT NOT NULL
+);
+
+-- An article may support events for multiple tickers; the legacy event_id alone loses links.
+CREATE TABLE IF NOT EXISTS news_event_articles (
+    event_id TEXT NOT NULL REFERENCES news_events(event_id),
+    article_id TEXT NOT NULL REFERENCES news_articles(article_id),
+    PRIMARY KEY(event_id, article_id)
+);
+CREATE INDEX IF NOT EXISTS idx_articles_title_date ON news_articles(title,published_at);
+INSERT OR IGNORE INTO news_event_articles(event_id,article_id)
+    SELECT event_id,article_id FROM news_articles WHERE event_id IS NOT NULL;
+INSERT OR IGNORE INTO news_event_articles(event_id,article_id)
+    SELECT e.event_id,a.article_id FROM news_events e JOIN news_articles a
+    ON a.title=e.headline AND a.published_at=e.occurred_at;

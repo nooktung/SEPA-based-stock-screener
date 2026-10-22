@@ -34,7 +34,6 @@ execution path, and do not "temporarily" bypass it for testing.
 | 8 | Analyst layer | **Claude Code in-session, no API** — see below |
 | 9 | Decision / scoring engine | Not started |
 | 10 | 08:00 pre-market report | Not started |
-| 11 | Intraday alerts | `watch` (2026-10-12): pivot / stop / MA50 crossings from the DNSE websocket, page "Trong phiên" |
 | 12 | End-of-day evaluation | Not started |
 | 13 | Backtesting, self-evaluation | Engine + SEPA rule backtest (`src/backtest/sepa.py`, report in `data/backtest/`) |
 
@@ -353,12 +352,6 @@ code when none is stored. Display only.
   RS line (`src/quant/rs_line.py`, `rs_line` thresholds): close / VN-Index, 100 at the first point,
   dots where the line makes a 52-week high before the price; chart layer "Đường RS" (default off)
   and a summary under the criteria. Display only, not the RS Rating.
-  Intraday alerts (`python -m src.main watch`, `src/quant/intraday.py`, `src/collectors/intraday_watch.py`,
-  append-only `intraday_alerts`, `GET /api/intraday`, page "Trong phiên"): matched trades from the
-  DNSE websocket (read-only channels) against the last close's pivot / stop / MA50; one alert per
-  ticker, type and day; never called a breakout. DNSE websocket volumes are in units of 10 shares
-  (`ws_volume_scale` in sources.yaml, measured live on 12 tickers) -- prices in thousands as REST.
-  A HOSE / HNX ticker whose reference today differs from the stored close is not watched.
   Banks / brokers (`vndirect_finfo` source, user decision): CafeF-rejected tickers are read from
   `api-finfo.vndirect.com.vn` (model 102 bank, 90 securities) by item code, names checked first;
   graded on TOI / total operating revenue with the same thresholds; first saved run dropped STB
@@ -564,3 +557,7 @@ uppercase or the subscription silently returns nothing.
 Never state a prediction as certainty. Use "current evidence favours",
 "base case", "risk scenario", "invalidation level". If output ever claims a
 stock will definitely rise, that is a bug worth filing.
+
+Dashboard cleanup (2026-10-17): removed the Events and Intraday pages, their APIs/exports,
+ticker event cards and the intraday watcher CLI/config/schema. Daily monitor events remain
+internal inputs to setup/position calculations; historical database rows are retained.

@@ -1,50 +1,19 @@
 "use strict";
-// "Học": candlestick patterns and chart patterns, each drawn as an SVG from a
-// small data table. Drawings are schematic (not to scale). Bulkowski figures are
-// the same US-market statistics src/quant/candles.py quotes; untested in Vietnam.
-
+// Educational diagrams are schematic. Text lives in HTML outside the SVG viewport.
 (function () {
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-  // ---------------------------------------------------------------- drawing
-  // Candles: [open, high, low, close] in any price units; the drawing scales itself.
-  // `ctx` candles (the trend before) are drawn faded, `pat` candles are the pattern.
-  function candleSvg({ ctx = [], pat = [], lines = [] }) {
-    const all = [...ctx, ...pat];
-    const W = Math.max(150, all.length * 26 + 24), H = 124, pad = 10;
-    const lo = Math.min(...all.map((c) => c[2])), hi = Math.max(...all.map((c) => c[1]));
-    const y = (v) => pad + (hi - v) / ((hi - lo) || 1) * (H - 2 * pad);
-    const x0 = (W - all.length * 26) / 2 + 13;
-    const parts = all.map((c, i) => {
-      const [o, h, l, cl] = c, x = x0 + i * 26;
-      const up = cl > o, flat = Math.abs(cl - o) < (hi - lo) * 0.012;
-      const cls = `${flat ? "cf" : up ? "cu" : "cd"}${i < ctx.length ? " ctx" : ""}`;
-      const top = y(Math.max(o, cl)), bot = y(Math.min(o, cl));
-      return `<g class="${cls}"><line x1="${x}" x2="${x}" y1="${y(h)}" y2="${y(l)}"/>`
-        + `<rect x="${x - 7}" y="${flat ? top - 1 : top}" width="14" height="${flat ? 2 : Math.max(2, bot - top)}" rx="1.5"/></g>`;
-    });
-    const ann = lines.map((ln) => `<g class="ann"><line x1="${x0 - 13}" x2="${W - 6}" y1="${y(ln.v)}" y2="${y(ln.v)}"/>`
-      + `<text x="${W - 8}" y="${y(ln.v) - 4}" text-anchor="end">${esc(ln.label)}</text></g>`).join("");
-    return `<svg class="lsvg" viewBox="0 0 ${W} ${H}" role="img" aria-hidden="true">${ann}${parts.join("")}</svg>`;
-  }
-
-  // Chart patterns: points [x, y] on a 0..100 grid (y = 100 is the top), with
-  // guide lines, labels and an optional volume strip underneath.
-  function chartSvg({ pts, lines = [], labels = [], vol = null }) {
-    const W = 300, H = vol ? 168 : 140, top = 12, ph = 112, l = 8, w = W - 16;
-    const X = (x) => l + x / 100 * w, Y = (v) => top + (100 - v) / 100 * ph;
-    const path = pts.map(([x, v], i) => `${i ? "L" : "M"}${X(x).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
-    const gl = lines.map((g) => `<g class="ann ${esc(g.cls || "")}"><line x1="${X(g.from[0])}" y1="${Y(g.from[1])}" x2="${X(g.to[0])}" y2="${Y(g.to[1])}"/>`
-      + (g.label ? `<text x="${X(g.to[0]) - 2}" y="${Y(g.to[1]) - 4}" text-anchor="end">${esc(g.label)}</text>` : "") + "</g>").join("");
-    const lb = labels.map((t) => `<text class="lbl" x="${X(t.at[0])}" y="${Y(t.at[1]) + (t.below ? 13 : -6)}" text-anchor="middle">${esc(t.text)}</text>`).join("");
-    const vb = vol ? vol.map((v, i) => {
-      const bw = w / vol.length;
-      return `<rect class="vb${v > 0.75 ? " hi" : ""}" x="${l + i * bw + 1}" y="${H - 4 - v * 22}" width="${Math.max(1, bw - 2)}" height="${v * 22}"/>`;
-    }).join("") : "";
-    return `<svg class="lsvg wide" viewBox="0 0 ${W} ${H}" role="img" aria-hidden="true">${gl}<path class="price" d="${path}"/>${lb}${vb}</svg>`;
-  }
-
-  // ---------------------------------------------------------------- candles
+ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const $=id=>document.getElementById(id);
+ function candleSvg({ctx=[],pat=[],lines=[]},compact=false) {
+  const all=[...ctx,...pat],W=Math.max(160,all.length*44+56),H=220,pad=28;
+  const lo=Math.min(...all.map(c=>c[2])),hi=Math.max(...all.map(c=>c[1]));
+  const y=v=>pad+(hi-v)/(hi-lo||1)*(H-2*pad),step=Math.min(48,(W-50)/all.length),start=(W-step*(all.length-1))/2;
+  return `<svg class="lsvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Minh họa thân và bóng nến"><path class="learn-baseline" d="M20 195H${W-20}"/>${lines.map(g=>`<line class="learn-guide" x1="20" x2="${W-20}" y1="${y(g.v)}" y2="${y(g.v)}"/>`).join('')}${all.map(([o,h,l,c],i)=>{const x=start+i*step,flat=Math.abs(c-o)<(hi-lo)*.012;return `<g class="${flat?'cf':c>o?'cu':'cd'}${i<ctx.length?' ctx':''}"><line x1="${x}" x2="${x}" y1="${y(h)}" y2="${y(l)}"/><rect x="${x-10}" y="${y(Math.max(o,c))}" width="20" height="${Math.max(2,Math.abs(y(o)-y(c)))}" rx="2"/></g>`;}).join('')}</svg>`;
+ }
+ function chartSvg({pts,lines=[],labels=[],vol=null}) {
+  const W=480,H=260,X=x=>28+x/100*424,Y=v=>24+(100-v)/100*176;
+  const path=pts.map(([x,y],i)=>`${i?'L':'M'}${X(x)},${Y(y)}`).join(' ');
+  return `<svg class="lsvg wide" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sơ đồ cấu trúc giá và các đường xác nhận"><path class="learn-baseline" d="M28 205H452"/>${lines.map(g=>`<line class="learn-guide ${esc(g.cls||'')}" x1="${X(g.from[0])}" y1="${Y(g.from[1])}" x2="${X(g.to[0])}" y2="${Y(g.to[1])}"/>`).join('')}<path class="price" d="${path}"/>${vol?vol.map((v,i)=>`<rect class="vb${v>.75?' hi':''}" x="${28+i*424/vol.length}" y="${252-v*30}" width="${Math.max(1,424/vol.length-3)}" height="${v*30}"/>`).join(''):''}</svg>`;
+ }
   const DOWN = [[92, 94, 84, 86], [87, 88, 77, 79], [80, 81, 70, 72]];
   const UP = [[18, 26, 16, 24], [24, 33, 23, 31], [31, 40, 30, 38]];
 
@@ -62,86 +31,86 @@
       how: "Giá mở cửa và đóng cửa gần như bằng nhau (thân chỉ là một vạch), bóng hai đầu.",
       means: "Lưỡng lự hoàn toàn. Đáng chú ý khi xuất hiện sau một xu hướng dài hoặc ngay tại kháng cự / hỗ trợ.",
       confirm: "Cần phiên sau xác nhận hướng. Ở Việt Nam, phiên kịch trần / kịch sàn (giá đứng yên) không tính là doji." },
-    { name: "Doji chuồn chuồn", en: "Dragonfly doji", kind: "Lưỡng lự", detect: true, stat: "đảo chiều 50% / hạng 98",
+    { name: "Doji chuồn chuồn", en: "Dragonfly doji", kind: "Lưỡng lự", detect: true,
       svg: { ctx: DOWN, pat: [[66, 66.4, 44, 66]] },
       how: "Doji có bóng dưới rất dài, gần như không có bóng trên: giá bị đạp sâu rồi kéo về đúng giá mở cửa.",
       means: "Bên mua đã đẩy lùi được đợt bán trong phiên. Sau xu hướng giảm có thể là tín hiệu tạo đáy sớm.",
       confirm: "Thống kê cho thấy chỉ khoảng một nửa trường hợp đảo chiều — không dùng riêng." },
-    { name: "Doji bia mộ", en: "Gravestone doji", kind: "Lưỡng lự", detect: true, stat: "đảo chiều giảm 51% / hạng 77",
+    { name: "Doji bia mộ", en: "Gravestone doji", kind: "Lưỡng lự", detect: true,
       svg: { ctx: UP, pat: [[42, 64, 41.6, 42]] },
       how: "Doji có bóng trên rất dài, gần như không có bóng dưới: giá được kéo cao rồi bị bán về giá mở cửa.",
       means: "Bên mua thất bại ở vùng giá cao. Sau xu hướng tăng là cảnh báo lực mua cạn.",
       confirm: "Chờ phiên sau đóng cửa thấp hơn." },
-    { name: "Búa", en: "Hammer", kind: "Đảo chiều tăng", detect: true, stat: "đảo chiều tăng 60% / hạng 65",
+    { name: "Búa", en: "Hammer", kind: "Đảo chiều tăng", detect: true,
       svg: { ctx: DOWN, pat: [[64, 70, 48, 69]] },
       how: "Xuất hiện sau xu hướng giảm. Thân nhỏ nằm ở phần trên, bóng dưới dài ít nhất gấp đôi thân, bóng trên rất ngắn.",
       means: "Giá bị bán sâu trong phiên nhưng bên mua kéo lên gần đỉnh — dấu hiệu bên bán đuối sức.",
       confirm: "Phiên sau tăng và đóng cửa trên thân búa; khối lượng lớn làm tín hiệu đáng tin hơn." },
-    { name: "Người treo cổ", en: "Hanging man", kind: "Cảnh báo giảm", detect: true, stat: "thực tế tiếp diễn tăng 59% / hạng 87",
+    { name: "Người treo cổ", en: "Hanging man", kind: "Cảnh báo giảm", detect: true,
       svg: { ctx: UP, pat: [[40, 41.5, 26, 39]] },
       how: "Cùng hình dạng với búa nhưng xuất hiện sau xu hướng tăng, ở vùng giá cao.",
       means: "Trong phiên đã có lực bán mạnh — một lời cảnh báo. Nhưng thống kê cho thấy giá thường vẫn đi tiếp lên.",
       confirm: "Chỉ coi trọng khi phiên sau giảm rõ và đóng cửa dưới thân nến." },
-    { name: "Búa ngược", en: "Inverted hammer", kind: "Đảo chiều tăng (yếu)", detect: true, stat: "thực tế tiếp diễn giảm 65% / hạng 6",
+    { name: "Búa ngược", en: "Inverted hammer", kind: "Đảo chiều tăng (yếu)", detect: true,
       svg: { ctx: DOWN, pat: [[66, 84, 65.5, 69]] },
       how: "Sau xu hướng giảm. Thân nhỏ ở phần dưới, bóng trên dài, gần như không có bóng dưới.",
       means: "Bên mua thử kéo giá lên nhưng chưa giữ được. Thống kê cho thấy giá thường vẫn tiếp tục giảm.",
       confirm: "Cần phiên sau tăng mạnh vượt bóng trên mới đáng chú ý." },
-    { name: "Sao băng", en: "Shooting star", kind: "Đảo chiều giảm", detect: true, stat: "đảo chiều giảm 59% / hạng 55",
+    { name: "Sao băng", en: "Shooting star", kind: "Đảo chiều giảm", detect: true,
       svg: { ctx: UP, pat: [[41, 60, 38.5, 39]] },
       how: "Sau xu hướng tăng. Thân nhỏ ở phần dưới, bóng trên dài ít nhất gấp đôi thân.",
       means: "Giá được đẩy lên cao rồi bị bán mạnh về gần giá mở cửa — bên mua hụt hơi ở vùng cao.",
       confirm: "Phiên sau giảm, đóng cửa dưới thân sao băng." },
 
     { group: "Cụm nến đảo chiều tăng (sau xu hướng giảm)" },
-    { name: "Nhấn chìm tăng", en: "Bullish engulfing", kind: "Đảo chiều tăng", detect: true, stat: "đảo chiều 63% / hạng 84",
+    { name: "Nhấn chìm tăng", en: "Bullish engulfing", kind: "Đảo chiều tăng", detect: true,
       svg: { ctx: DOWN.slice(1), pat: [[70, 71, 64, 65], [63, 77, 62, 75]] },
       how: "Nến đỏ nhỏ, rồi nến xanh có thân bao trùm hoàn toàn thân nến đỏ trước đó.",
       means: "Bên mua lật ngược thế trận chỉ trong một phiên.",
       confirm: "Mạnh hơn khi khối lượng phiên xanh lớn và xuất hiện tại hỗ trợ." },
-    { name: "Harami tăng", en: "Bullish harami", kind: "Đảo chiều tăng (yếu)", detect: true, stat: "đảo chiều 53% / hạng 38",
+    { name: "Harami tăng", en: "Bullish harami", kind: "Đảo chiều tăng (yếu)", detect: true,
       svg: { ctx: DOWN.slice(1), pat: [[74, 75, 58, 59], [62, 67, 61, 66]] },
       how: "Nến đỏ dài, rồi nến xanh nhỏ nằm gọn trong thân nến đỏ (như bà bầu — 'harami' tiếng Nhật).",
       means: "Lực bán chững lại. Tín hiệu yếu, gần như ngang xác suất.",
       confirm: "Cần phiên sau tăng vượt đỉnh nến đỏ." },
-    { name: "Đường xuyên", en: "Piercing line", kind: "Đảo chiều tăng", detect: true, stat: "đảo chiều 64% / hạng 13",
+    { name: "Đường xuyên", en: "Piercing line", kind: "Đảo chiều tăng", detect: true,
       svg: { ctx: DOWN.slice(1), pat: [[74, 75, 60, 61], [58, 71, 57, 70]], lines: [{ v: 67.5, label: "giữa thân" }] },
       how: "Nến đỏ dài, rồi nến xanh mở cửa thấp hơn nhưng đóng cửa vượt quá nửa thân nến đỏ.",
       means: "Bên mua lấy lại hơn một nửa phần mất của phiên trước.",
       confirm: "Đóng cửa càng sâu vào thân nến đỏ càng tốt; phiên sau giữ được giá." },
-    { name: "Sao mai", en: "Morning star", kind: "Đảo chiều tăng", detect: true, stat: "đảo chiều 78% / hạng 12",
+    { name: "Sao mai", en: "Morning star", kind: "Đảo chiều tăng", detect: true,
       svg: { ctx: DOWN.slice(1), pat: [[74, 75, 60, 61], [57, 60, 54, 58], [61, 74, 60, 72]] },
       how: "Ba nến: nến đỏ dài → nến thân nhỏ thấp hơn (ngôi sao) → nến xanh dài đóng cửa vượt nửa thân nến đỏ đầu tiên.",
-      means: "Giảm → lưỡng lự → bên mua thắng. Một trong những mẫu đảo chiều tăng đáng tin nhất.",
+      means: "Giảm → lưỡng lự → bên mua thắng. Cần nhìn đủ ba phiên và vị trí hình thành.",
       confirm: "Khối lượng tăng ở nến thứ ba." },
-    { name: "Ba chàng lính trắng", en: "Three white soldiers", kind: "Đảo chiều tăng", detect: true, stat: "đảo chiều 82% / hạng 32 — xu hướng sau thường ngắn",
+    { name: "Ba chàng lính trắng", en: "Three white soldiers", kind: "Đảo chiều tăng", detect: true,
       svg: { ctx: DOWN.slice(1), pat: [[71, 79, 70, 78], [76, 85, 75, 84], [82, 92, 81, 91]] },
       how: "Ba nến xanh dài liên tiếp, mỗi nến mở cửa trong thân nến trước và đóng cửa cao hơn.",
       means: "Bên mua kiểm soát liên tục nhiều phiên.",
       confirm: "Nếu đã tăng quá xa, mẫu này dễ dẫn tới nhịp nghỉ ngắn." },
 
     { group: "Cụm nến đảo chiều giảm (sau xu hướng tăng)" },
-    { name: "Nhấn chìm giảm", en: "Bearish engulfing", kind: "Đảo chiều giảm", detect: true, stat: "đảo chiều 79% / hạng 91 — xu hướng sau ngắn",
+    { name: "Nhấn chìm giảm", en: "Bearish engulfing", kind: "Đảo chiều giảm", detect: true,
       svg: { ctx: UP.slice(1), pat: [[38, 44, 37, 43], [45, 46, 32, 34]] },
       how: "Nến xanh nhỏ, rồi nến đỏ có thân bao trùm hoàn toàn thân nến xanh trước.",
       means: "Bên bán lật ngược thế trận trong một phiên ở vùng giá cao.",
       confirm: "Đáng chú ý hơn khi khối lượng lớn và ngay tại kháng cự." },
-    { name: "Harami giảm", en: "Bearish harami", kind: "Cảnh báo giảm (yếu)", detect: true, stat: "thực tế tiếp diễn tăng 53% / hạng 72",
+    { name: "Harami giảm", en: "Bearish harami", kind: "Cảnh báo giảm (yếu)", detect: true,
       svg: { ctx: UP.slice(1), pat: [[30, 47, 29, 46], [42, 43, 37, 38]] },
       how: "Nến xanh dài, rồi nến đỏ nhỏ nằm gọn trong thân nến xanh.",
       means: "Lực mua chững lại, nhưng thống kê cho thấy giá thường vẫn tăng tiếp.",
       confirm: "Chỉ coi trọng khi phiên sau giảm thủng đáy nến xanh." },
-    { name: "Mây đen che phủ", en: "Dark cloud cover", kind: "Đảo chiều giảm", detect: true, stat: "đảo chiều 60% / hạng 22",
+    { name: "Mây đen che phủ", en: "Dark cloud cover", kind: "Đảo chiều giảm", detect: true,
       svg: { ctx: UP.slice(1), pat: [[32, 47, 31, 46], [49, 50, 36, 37]], lines: [{ v: 39, label: "giữa thân" }] },
       how: "Nến xanh dài, rồi nến đỏ mở cửa cao hơn đỉnh nhưng đóng cửa dưới nửa thân nến xanh.",
       means: "Bên bán xóa hơn một nửa thành quả của phiên trước.",
       confirm: "Phiên sau tiếp tục giảm." },
-    { name: "Sao hôm", en: "Evening star", kind: "Đảo chiều giảm", detect: true, stat: "đảo chiều 72% / hạng 4",
+    { name: "Sao hôm", en: "Evening star", kind: "Đảo chiều giảm", detect: true,
       svg: { ctx: UP.slice(1), pat: [[30, 45, 29, 44], [47, 50, 45, 46], [44, 45, 31, 33]] },
       how: "Ba nến: nến xanh dài → nến thân nhỏ cao hơn (ngôi sao) → nến đỏ dài đóng cửa dưới nửa thân nến xanh đầu tiên.",
-      means: "Tăng → lưỡng lự → bên bán thắng. Mẫu đảo chiều giảm có thứ hạng cao.",
+      means: "Tăng → lưỡng lự → bên bán thắng. Cần kiểm tra vị trí và phiên xác nhận.",
       confirm: "Khối lượng lớn ở nến thứ ba." },
-    { name: "Ba con quạ đen", en: "Three black crows", kind: "Đảo chiều giảm", detect: true, stat: "đảo chiều 78% / hạng 3",
+    { name: "Ba con quạ đen", en: "Three black crows", kind: "Đảo chiều giảm", detect: true,
       svg: { ctx: UP.slice(1), pat: [[40, 41, 32, 33], [35, 36, 26, 27], [29, 30, 20, 21]] },
       how: "Ba nến đỏ dài liên tiếp, mỗi nến mở cửa trong thân nến trước và đóng cửa thấp hơn.",
       means: "Bên bán kiểm soát liên tục nhiều phiên — thường là dấu hiệu xu hướng đã đổi.",
@@ -182,7 +151,7 @@
         labels: [{ at: [12, 40], text: "Cột cờ +100%" }, { at: [42, 79], text: "Cờ ≤ 20–25%", below: true }],
         vol: [.3, .5, .7, .9, 1, .8, .4, .35, .3, .25, .2, .2, .9, .7] },
       how: "Giá tăng ≥ 100% trong ≤ 8 tuần trên khối lượng lớn (cột cờ), rồi đi ngang chặt 3–6 tuần, điều chỉnh không quá 20–25% (lá cờ).",
-      means: "Hiếm gặp và mạnh nhất, thường có chất xúc tác lớn (kết quả kinh doanh, sản phẩm mới).",
+      means: "Một cấu trúc hiếm gặp, thường có chất xúc tác lớn (kết quả kinh doanh, sản phẩm mới).",
       confirm: "Lá cờ phải chặt, khối lượng cạn; cờ sâu hơn 25% hoặc kéo dài thì mất giá trị [SÁCH Minervini; TRANG GỐC IBD]. Đừng nhầm với 'cây thông' bên dưới — cây thông không có nhịp nghỉ chặt." },
     { name: "Tam giác tăng", en: "Ascending triangle", kind: "Tiếp diễn tăng",
       svg: { pts: [[0, 40], [10, 85], [20, 56], [30, 85], [40, 65], [50, 85], [58, 74], [66, 85], [72, 80], [80, 96], [86, 100]],
@@ -213,8 +182,8 @@
         labels: [{ at: [22, 55], text: "tăng dựng đứng" }, { at: [52, 98], text: "đỉnh nhọn" }, { at: [83, 52], text: "đạp ngược về chân" }],
         vol: [.1, .1, .1, .1, .12, .3, .6, .8, .9, 1, .95, .9, .8, .7, .6, .5, .3, .2, .15] },
       how: "Giá tăng gần như thẳng đứng trong vài tuần, nhiều phiên kịch trần liên tiếp, khối lượng gấp nhiều lần bình thường, không có nhịp nghỉ chặt nào. Sau đỉnh nhọn, giá giảm nhanh không kém và thường quay về đúng vùng giá bắt đầu đợt tăng.",
-      means: "Đợt tăng dựa vào dòng tiền ngắn hạn hoặc tin đồn, không có nền giá đỡ phía dưới. Khi lực mua dừng, không có vùng hỗ trợ nào trên đường xuống ngoài chân sóng.",
-      confirm: "Ví dụ HID 09/2026: từ ~3.350 đ (04/09) lên đỉnh 6.040 đ (18/09) — +80% trong 10 phiên, 6 phiên tăng trần, khối lượng gấp hơn 10 lần — rồi giảm còn 4.020 đ (01/10), mất ~3/4 đoạn tăng. SEPA không mua cổ phiếu đã chạy dựng đứng không có nền; ở Việt Nam còn có rủi ro kẹt T+2 khi giảm sàn liên tiếp." },
+      means: "Giá đi quá xa khỏi vùng tích lũy gần nhất, nên một nhịp đảo chiều có thể rất mạnh. Hình dạng này không cho biết nguyên nhân tăng giá; cần kiểm tra thanh khoản và các vùng hỗ trợ thực tế.",
+      confirm: "Đối chiếu lịch sử giá, khối lượng và vùng tích lũy trước đó. Không nhầm một đợt tăng dựng đứng với nền giá chặt có điểm xác nhận rõ; mức dừng dự kiến có thể khó thực hiện nếu thanh khoản yếu." },
   ];
 
   // ---------------------------------------------------------------- SEPA basics (tester report 3, R3-13)
@@ -246,7 +215,7 @@
         labels: [{ at: [80, 44], text: "bán khi đóng cửa dưới stop", below: true }] },
       how: "Đặt mức cắt lỗ trước khi mua: dưới đáy nhịp co hẹp cuối, và không xa hơn 7–8% dưới giá mua. Web tính stop sao cho rủi ro từ pivot ≤ 8%.",
       means: "Lỗ 8% cần lãi 8,7% để hòa; lỗ 30% cần lãi 43%. Cắt lỗ nhỏ giữ được vốn cho lần thử sau.",
-      confirm: "Không bình quân giá xuống, không dời stop xuống. Ở Việt Nam, mua phiên T sớm nhất chiều T+2 mới bán được [SÁCH Minervini]." },
+      confirm: "Không bình quân giá xuống, không dời stop xuống. Cần tính tới thanh khoản, thời gian chứng khoán về tài khoản và khả năng thực hiện mức dừng lỗ [SÁCH Minervini]." },
     { name: "Quản trị vốn: mua bao nhiêu", en: "Position sizing", kind: "Quản trị vốn",
       svg: { pts: [[0, 50], [100, 50]],
         labels: [{ at: [50, 80], text: "khối lượng = rủi ro chấp nhận / (giá mua − stop)" }, { at: [50, 40], text: "rủi ro mỗi lệnh ≈ 1–2% tài khoản", below: true }] },
@@ -257,36 +226,71 @@
       svg: { pts: [[0, 80], [12, 70], [24, 58], [34, 46], [42, 38], [48, 42], [54, 48], [60, 56], [68, 64], [76, 72], [86, 80], [96, 88]],
         labels: [{ at: [42, 38], text: "đáy", below: true }, { at: [60, 56], text: "FTD" }, { at: [16, 70], text: "ngày phân phối" }] },
       how: "Theo dõi VN-Index: số ngày phân phối (giảm ≥ 0,2% với khối lượng lớn hơn phiên trước) và ngày follow-through (FTD) xác nhận nhịp hồi.",
-      means: "Khoảng 3/4 cổ phiếu đi theo thị trường chung. Backtest của web cho thấy breakout khi thị trường chịu áp lực có kết quả âm.",
+      means: "Diễn biến thị trường chung giúp đánh giá bối cảnh của cổ phiếu; không suy ra kết quả một lệnh chỉ từ trạng thái VN-Index.",
       confirm: "Thị trường điều chỉnh: SEPA không mở vị thế mới; chịu áp lực: giảm số lượng và quy mô [TRANG GỐC IBD; SÁCH Minervini]." },
   ];
 
-  function card(item, draw) {
-    const kindCls = /giảm|Rủi ro/.test(item.kind) ? "k-down" : /tăng|Sức mạnh/.test(item.kind) ? "k-up" : "k-flat";
-    return `<article class="lcard">
-      <div class="lfig">${draw(item.svg)}</div>
-      <div class="lbody">
-        <div class="lhead"><h3>${esc(item.name)}</h3><span class="muted small">${esc(item.en)}</span></div>
-        <div class="ltags"><span class="ltag ${kindCls}">${esc(item.kind)}</span>
-          ${item.detect ? '<span class="ltag k-sys" title="Hệ thống tự nhận dạng mẫu này cho các mã đang theo dõi">tự nhận dạng</span>' : ""}
-          ${item.stat ? `<span class="ltag" title="Thống kê Bulkowski trên thị trường Mỹ, chưa kiểm định ở Việt Nam">Bulkowski: ${esc(item.stat)}</span>` : ""}</div>
-        <dl><dt>Nhận biết</dt><dd>${esc(item.how)}</dd><dt>Ý nghĩa</dt><dd>${esc(item.means)}</dd>
-          <dt>Xác nhận / lưu ý</dt><dd>${esc(item.confirm)}</dd></dl>
-        ${item.example ? `<button class="btn ghost small-btn" data-t="${esc(item.example)}" type="button">Xem biểu đồ ${esc(item.example)} →</button>` : ""}
-      </div></article>`;
-  }
 
-  function render(list, draw) {
-    return list.map((it) => (it.group ? `<h3 class="lgroup">${esc(it.group)}</h3>` : card(it, draw))).join("");
-  }
-
-  window.renderLearn = function renderLearn() {
-    const c = document.getElementById("learn-candles"), k = document.getElementById("learn-charts");
-    if (!c || c.dataset.done) return;
-    c.innerHTML = render(CANDLES, candleSvg);
-    k.innerHTML = render(CHARTS, chartSvg);
-    const s = document.getElementById("learn-sepa");
-    if (s) s.innerHTML = render(SEPA, chartSvg);
-    c.dataset.done = "1";
-  };
+ // More common structures, paired with an explicit invalidation condition.
+ CHARTS.push(
+  {name:'Hai đỉnh',en:'Double top',kind:'Đảo chiều giảm',svg:{pts:[[0,20],[15,85],[30,48],[48,83],[62,46],[78,25],[95,18]],lines:[{from:[25,48],to:[95,48],cls:'stop',label:'Vùng xác nhận: đáy giữa hai đỉnh'}]},how:'Hai lần thử vùng đỉnh tương tự nhau, ở giữa có một nhịp giảm rõ.',means:'Cấu trúc mới là cảnh báo khi giá còn trên đáy giữa hai đỉnh.',confirm:'Chỉ coi là hoàn thành khi phá hỗ trợ giữa hai đỉnh; nếu vượt lại vùng đỉnh, cách đọc giảm không còn phù hợp.'},
+  {name:'Tam giác tăng',en:'Ascending triangle',kind:'Chờ phá biên',svg:{pts:[[0,35],[12,85],[24,42],[36,85],[48,55],[60,85],[72,69],[82,85],[95,98]],lines:[{from:[12,85],to:[90,85],cls:'pivot',label:'Kháng cự ngang'},{from:[24,42],to:[82,76],label:'Đáy nâng dần'}]},how:'Đỉnh gặp một vùng kháng cự ngang trong khi các đáy sau cao dần.',means:'Biên dao động thu hẹp. Hình tam giác chưa đảm bảo giá sẽ phá lên.',confirm:'Quan sát giá đóng cửa ra ngoài biên và khối lượng; thủng cạnh dưới làm mất kịch bản phá lên.'},
+  {name:'Tam giác giảm',en:'Descending triangle',kind:'Chờ phá biên',svg:{pts:[[0,90],[12,25],[24,78],[36,25],[48,63],[60,25],[72,47],[84,25],[96,10]],lines:[{from:[12,25],to:[96,25],cls:'stop',label:'Hỗ trợ ngang'},{from:[0,90],to:[84,37],label:'Đỉnh hạ dần'}]},how:'Đáy giữ quanh một vùng hỗ trợ ngang, còn đỉnh sau thấp dần.',means:'Áp lực bán xuất hiện ở các mức thấp dần nhưng vẫn cần chờ giá rời biên.',confirm:'Phá hỗ trợ là điều kiện xác nhận kịch bản giảm; vượt cạnh trên là dấu hiệu cách đọc này đã sai.'},
+  {name:'Phá vỡ giả',en:'False breakout',kind:'Rủi ro cao',svg:{pts:[[0,55],[14,75],[27,56],[40,74],[54,60],[66,76],[74,94],[82,70],[89,54],[100,40]],lines:[{from:[8,76],to:[100,76],cls:'pivot',label:'Kháng cự / vùng phá vỡ'}]},how:'Giá có lúc vượt kháng cự nhưng nhanh chóng quay lại bên trong nền.',means:'Việc chạm qua một đường giá chưa chứng minh bên mua giữ được vùng đó.',confirm:'So sánh giá đóng cửa, khối lượng và khả năng giữ vùng vừa vượt; xác định trước điều kiện vô hiệu thay vì cố giữ tên mô hình.'}
+ );
+ const neutral={
+  'Doji chuồn chuồn':['Bên mua kéo giá lên khỏi đáy phiên; ý nghĩa phụ thuộc xu hướng và vùng hỗ trợ.','Quan sát phiên sau và phản ứng tại vùng giá đó, không xem hình dạng riêng lẻ là xác nhận đảo chiều.'],
+  'Doji bia mộ':['Giá không giữ được vùng cao trong phiên.','Cần xem xu hướng trước đó và phản ứng ở kháng cự; doji riêng lẻ không xác định được hướng tiếp theo.'],
+  'Người treo cổ':['Có lực bán trong phiên tăng trước đó; đây mới là một cảnh báo.','Chờ diễn biến sau và xem hỗ trợ gần nhất có bị phá hay không.'],
+  'Búa ngược':['Có nỗ lực kéo lên nhưng mức đóng cửa chưa giữ được vùng cao.','Cần diễn biến sau xác nhận; một bóng nến dài không đủ chứng minh xu hướng đã đổi.'],
+  'Harami tăng':['Biên thân nến thu hẹp sau phiên giảm mạnh.','Phân biệt nhịp nghỉ với đảo chiều bằng diễn biến tiếp theo và vị trí hỗ trợ.'],
+  'Harami giảm':['Biên thân nến thu hẹp sau phiên tăng mạnh.','Chưa kết luận giảm nếu giá vẫn giữ hỗ trợ và xu hướng trước đó.']
+ };
+ for(const c of CANDLES)if(neutral[c.name]){c.means=neutral[c.name][0];c.confirm=neutral[c.name][1];}
+ const BASICS=[
+  {name:'Cấu tạo một cây nến',en:'Open · High · Low · Close',kind:'Nền tảng',candle:true,svg:{pat:[[50,54,47,53],[53,55,48,49]]},how:'Mỗi cây nến biểu diễn một khoảng thời gian: phiên, tuần hoặc tháng. Bốn mức giá là mở cửa (O), cao nhất (H), thấp nhất (L) và đóng cửa (C).',means:'Thân là đoạn từ mở cửa đến đóng cửa. Bóng trên đi tới giá cao nhất; bóng dưới đi tới giá thấp nhất. Nến xanh khi đóng cao hơn mở, nến đỏ khi đóng thấp hơn mở.',confirm:'Màu nến so mở–đóng trong cùng cây nến; % trên bảng giá lại so với giá tham chiếu. Hai cách so sánh có thể cho màu khác nhau.'},
+  {name:'Đọc thân và bóng nến',en:'Real body & shadows',kind:'Nền tảng',candle:true,svg:{pat:[[50,54,35,53],[50,68,47,48],[50,61,39,50]]},how:'So độ dài thân, bóng trên và bóng dưới với toàn bộ biên cao–thấp của phiên. Thân dài thể hiện chênh lệch mở–đóng lớn; thân nhỏ cho thấy hai mức này gần nhau.',means:'Bóng dưới dài cho thấy giá từng xuống thấp rồi hồi; bóng trên dài cho thấy giá từng lên cao nhưng không giữ được tới đóng cửa. Doji có mở và đóng gần nhau.',confirm:'Hình dạng kể diễn biến trong phiên, chưa đủ khẳng định đảo chiều. Cần đặt cạnh các nến trước và vùng hỗ trợ hoặc kháng cự.'},
+  {name:'Xu hướng và vị trí',en:'Trend & price zones',kind:'Bối cảnh',svg:{pts:[[0,20],[12,45],[24,32],[36,60],[48,46],[60,76],[72,60],[88,94]],lines:[{from:[0,18],to:[90,74],label:'Vùng hỗ trợ đi lên'}]},how:'Đọc một chuỗi nến: đỉnh và đáy nâng dần, hạ dần hay đi ngang? Đánh dấu những vùng giá nhiều lần có phản ứng thay vì ép mọi điểm vào một đường mỏng.',means:'Một nến xanh giữa cấu trúc đỉnh–đáy giảm chưa đủ xác nhận xu hướng tăng. Cùng một hình nến ở hỗ trợ và ở giữa vùng đi ngang có thể mang ý nghĩa khác nhau.',confirm:'Xem khung thời gian lớn hơn và vị trí của mẫu trong cấu trúc chung trước khi đặt tên hoặc diễn giải.'},
+  {name:'Khối lượng và xác nhận',en:'Volume & confirmation',kind:'Bối cảnh',svg:{pts:[[0,48],[15,72],[28,50],[42,73],[55,55],[68,72],[78,90],[90,75],[100,88]],lines:[{from:[10,74],to:[100,74],cls:'pivot',label:'Kháng cự và vùng phá vỡ'}],vol:[.4,.5,.45,.5,.35,.3,.35,.9,.5,.7]},how:'So khối lượng hiện tại với các phiên gần đó. Quan sát giá đóng cửa và khả năng giữ vùng vừa vượt, thay vì chỉ nhìn râu nến chạm qua cản.',means:'Khối lượng cho thêm thông tin về mức tham gia, không tự quyết định hướng đi. Một lần vượt kháng cự vẫn có thể trở thành phá vỡ giả.',confirm:'Luôn xác định điều kiện làm cách đọc ban đầu không còn phù hợp; đánh giá lại khi giá quay vào nền hoặc phá theo hướng ngược lại.'}
+ ];
+ const modules=[['candles','01','Mẫu nến','Chọn một mẫu bên trái để xem hình và cách đọc bên phải.'],['patterns','02','Mô hình giá','Các cấu trúc nhiều phiên, vùng xác nhận và điều kiện thất bại.'],['basics','03','Đọc biểu đồ','Cấu tạo nến, thân–bóng nến, xu hướng và khối lượng.'],['sepa','04','SEPA & rủi ro','Xu hướng, điểm vô hiệu và quy mô vị thế.']];
+ let active='candles',selected={basics:0,candles:0,patterns:0,sepa:0};
+ const library=()=> (active==='basics'?BASICS:active==='candles'?CANDLES:active==='patterns'?CHARTS:SEPA).filter(x=>!x.group);
+ function figure(item,mini=false){
+  if(item.en==='Position sizing')return mini?'<span class="learn-formula-icon">÷</span>':`<div class="learn-formula"><span>Số cổ phiếu theo ngân sách rủi ro</span><strong>Rủi ro chấp nhận ÷ (giá mua − mức dừng)</strong><small>Ví dụ: 5.000.000 ÷ 4.000 = 1.250 cổ phiếu</small></div>`;
+  const isCandle=active==='candles'||item.candle;
+  const labels=[...(item.svg.lines||[]).filter(x=>x.label).map(x=>x.label),...(item.svg.labels||[]).map(x=>x.text)];
+  return (isCandle?candleSvg(item.svg):chartSvg(item.svg))+(!mini?`<figcaption><span>Hình minh họa · không theo tỷ lệ thật</span>${labels.length?`<div class="learn-figure-keys">${labels.map(t=>`<span>${esc(t)}</span>`).join('')}</div>`:''}${isCandle?'<small>Nến mờ: bối cảnh trước mẫu. Nến đậm: cụm nến đang học.</small>':item.svg.vol?'<small>Các cột phía dưới minh họa khối lượng.</small>':''}</figcaption>`:'');
+ }
+ function renderLesson(item){
+  const fail=active==='candles'?'Nếu giá không giữ được vùng hình thành mẫu hoặc diễn biến sau đi ngược hướng kỳ vọng, cần đánh giá lại; không suy ra tín hiệu chỉ từ tên nến.':active==='patterns'?'Nếu giá phá theo hướng ngược lại hoặc nhanh chóng quay lại nền, cấu trúc có thể thất bại. Vùng vô hiệu cần được xác định trước khi áp dụng.':'Quy tắc là khung quản trị, không bảo đảm khớp lệnh tại giá mong muốn hoặc bảo đảm kết quả.';
+  $('learn-lesson').innerHTML=`<div class="learn-lesson-head"><div><span class="learn-eyebrow">ĐANG TÌM HIỂU</span><h3>${esc(item.name)}</h3><p>${esc(item.en)}</p></div><span class="ltag">${esc(item.kind)}</span></div><div class="learn-lesson-layout"><figure class="lfig">${figure(item)}</figure><div class="learn-explanation"><section><h4>01 · Nhận biết</h4><p>${esc(item.how)}</p></section><section><h4>02 · Cách đọc</h4><p>${esc(item.means)}</p></section><section><h4>03 · Xác nhận & lưu ý</h4><p>${esc(item.confirm)}</p></section><details><summary>Khi nào cách đọc này không còn phù hợp?</summary><p>${fail}</p></details>${item.example?`<button class="btn" data-t="${esc(item.example)}">Mở biểu đồ ${esc(item.example)} để đối chiếu →</button>`:''}</div></div>`;
+ }
+ function renderLibrary(){
+  const items=library(),rows=items.map((item,i)=>({item,i}));
+  $('learn-picker').innerHTML=rows.map(({item,i})=>`<option value="${i}">${esc(item.name)}</option>`).join('');$('learn-picker').disabled=!rows.length;
+  $('learn-catalog').innerHTML=rows.map(({item,i})=>`<button type="button" class="learn-preview ${selected[active]===i?'selected':''}" data-lesson="${i}" aria-pressed="${selected[active]===i}"><div class="learn-preview-figure" aria-hidden="true">${figure(item,true)}</div><div class="learn-preview-copy"><span class="learn-preview-kind">${esc(item.kind)}</span><h3>${esc(item.name)}</h3><span>${esc(item.en)}</span></div><span class="learn-preview-arrow" aria-hidden="true">↗</span></button>`).join('')||'<p class="empty">Không có bài phù hợp. Thử từ khóa khác hoặc bỏ bộ lọc.</p>';
+  if(rows.length){if(!rows.some(x=>x.i===selected[active])){selected[active]=rows[0].i;return renderLibrary();}renderLesson(items[selected[active]]);$('learn-picker').value=String(selected[active]);$('learn-lesson').hidden=false;}
+  else $('learn-lesson').hidden=true;
+ }
+ function renderModule(){
+  $('learn-content').setAttribute('aria-labelledby','learn-tab-'+active);
+  document.querySelectorAll('[data-learn-tab]').forEach(b=>{const on=b.dataset.learnTab===active;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;});
+  renderLibrary();
+ }
+ function selectLesson(index){
+  selected[active]=index;renderLesson(library()[index]);$('learn-picker').value=String(index);
+  document.querySelectorAll('#learn-catalog [data-lesson]').forEach(b=>{const on=Number(b.dataset.lesson)===index;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',String(on));});
+ }
+ window.renderLearn=function(){
+  const root=$('tab-learn');if(root.dataset.ready)return;root.dataset.ready='1';
+  $('learn-nav').innerHTML=modules.map(([id,num,title])=>`<button type="button" role="tab" id="learn-tab-${id}" aria-controls="learn-content" aria-selected="${id===active}" data-learn-tab="${id}"><span>${num}</span>${title}</button>`).join('');
+  renderModule();
+  root.addEventListener('click',e=>{
+   const tab=e.target.closest('[data-learn-tab]');if(tab){active=tab.dataset.learnTab;renderModule();return;}
+   const lesson=e.target.closest('[data-lesson]');if(lesson)selectLesson(Number(lesson.dataset.lesson));
+  });
+  $('learn-picker').addEventListener('change',e=>selectLesson(Number(e.target.value)));
+  $('learn-nav').addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();let i=modules.findIndex(x=>x[0]===active);i=e.key==='Home'?0:e.key==='End'?modules.length-1:(i+(e.key==='ArrowRight'?1:-1)+modules.length)%modules.length;active=modules[i][0];renderModule();$('learn-tab-'+active).focus();});
+ };
 })();

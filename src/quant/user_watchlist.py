@@ -10,6 +10,7 @@ phantom ticker.
 from __future__ import annotations
 
 import re
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -140,3 +141,23 @@ def web_tickers(path: Path | None = None) -> list[str]:
     with connect(path) as conn:
         return [r[0] for r in conn.execute(
             "SELECT ticker FROM web_watchlist GROUP BY ticker ORDER BY MIN(added_at), ticker")]
+
+
+def refresh_requirements(tickers: list[str], session: str, path: Path | None = None) -> tuple[list[str], list[str]]:
+    """Reuse shared prices/states when another account adds an already updated ticker."""
+    prices, states = [], []
+    with connect(path) as conn:
+        for ticker in dict.fromkeys(tickers):
+            latest = conn.execute("SELECT MAX(trade_date) FROM prices_daily WHERE ticker = ?", (ticker,)).fetchone()[0]
+            need_price = not latest or latest < session
+            if need_price:
+                prices.append(ticker)
+            state = conn.execute("SELECT trade_date, state_json FROM monitor_state WHERE ticker = ? "
+                                 "ORDER BY trade_date DESC LIMIT 1", (ticker,)).fetchone()
+            try:
+                data = json.loads(state[1]) if state else {}
+            except (ValueError, TypeError):
+                data = {}
+            if need_price or not state or state[0] < max(session, latest or "") or not (data.get("tech") or data.get("flagged")):
+                states.append(ticker)
+    return prices, states

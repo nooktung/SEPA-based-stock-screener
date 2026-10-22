@@ -230,9 +230,20 @@ def test_mylist_refresh_runs_every_step_for_the_new_tickers_only(monkeypatch):
         return run
     monkeypatch.setattr("src.env.load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr(main, "init_db", lambda *a, **k: None)
+    monkeypatch.setattr(uw, "refresh_requirements", lambda tickers, session: (tickers, tickers))
     for name in ("backfill", "flow", "news", "logos"):
         monkeypatch.setitem(main.COMMANDS, name, step(name))
     monkeypatch.setitem(main.COMMANDS, "monitor", step("monitor", fail=True))
     assert main.mylist_refresh(["pnj"]) == 1                               # reported, not raised
     assert [c[0] for c in calls] == ["backfill", "monitor", "flow", "news", "logos"]
     assert calls[1][1] == ["--no-fetch", "--keep-events", "--tickers", "PNJ"]   # only the new ticker
+
+
+def test_refresh_reuses_current_prices_and_only_computes_missing_states(db):
+    with connect(db) as conn:
+        conn.execute("INSERT INTO monitor_state VALUES ('PNJ', '2026-10-09', ?, 'now')",
+                     (json.dumps({"tech": {"rsi": 55}}),))
+        conn.execute("INSERT INTO monitor_state VALUES ('ABB', '2026-10-08', ?, 'now')",
+                     (json.dumps({"tech": {"rsi": 50}}),))
+    assert uw.refresh_requirements(["PNJ", "ABB", "FPT", "ZZZ"], "2026-10-09", db) == (["ZZZ"], ["ABB", "FPT", "ZZZ"])
+    assert uw.refresh_requirements(["PNJ", "ABB"], "2026-10-12", db) == (["PNJ", "ABB"], ["PNJ", "ABB"])

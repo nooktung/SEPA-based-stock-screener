@@ -24,7 +24,6 @@ Usage:
     python -m src.main index-session [--days 300]                    # VN-Index matched volume, breadth + DNSE calendar
     python -m src.main index-check [--sessions 60] [--no-fetch]      # VN-Index bars vs HOSE's own values (report only)
     python -m src.main check                                         # invariants on what the dashboard shows (report)
-    python -m src.main watch [--until 14:50] [--dry-run]             # intraday alerts for the focus list (DNSE websocket)
     python -m src.main export-site [--force] [--out data/site]       # read-only static copy of the dashboard
     python -m src.main mylist-sync [--refresh]                       # the user's list from Cloudflare KV -> this machine
     python -m src.main site-user add|remove|list [NAME] [--role owner|viewer]   # accounts of the web copy's login
@@ -382,19 +381,29 @@ def news(args: list[str]) -> int:
     def fetch_body(article):
         return extract_body(article.url, body_fetcher(article.url))
 
+    # Tag all listed companies, while full-body downloads remain limited to watched names.
+    with connect() as conn:
+        news_universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
     for spec in load_config().sources.for_kind("news"):
         if spec.id.startswith("fixture") or (opts.no_rss and "feeds" in spec.config):
             continue
         provider = instantiate(spec)
+        if hasattr(provider, "fetch_market_articles") and not opts.tickers:
+            from src.collectors.market_news import collect_market_news
+            collect_market_news(provider, news_universe, set(focus), since, fetch_body)
         try:
             articles = provider.fetch_articles(focus, since)
         except ProviderError as exc:
             print(f"  {spec.id}: FAIL {exc}")
             continue
-        report = process_articles(articles, set(focus), fetch_body=fetch_body)
+        report = process_articles(articles, news_universe, fetch_body=fetch_body, body_focus=set(focus))
         print(f"  {spec.id:<10} bài mới {report.new_articles:>4}  lấy nội dung {report.bodies_fetched:>3}  "
               f"sự kiện mới {report.events_created:>3}  gộp {report.events_updated:>3}"
               + (f"  lỗi nội dung {len(report.body_failures)}" if report.body_failures else ""), flush=True)
+    from src.processors.news_pipeline import link_unassigned_articles
+    repaired = link_unassigned_articles(since)
+    if repaired.events_created:
+        print(f"  Khôi phục liên kết tin đã lưu: {repaired.events_created} sự kiện", flush=True)
     moved = reclassify_roles()              # links stored before roles existed (idempotent)
     if moved:
         print(f"  {moved} liên kết tin chỉ nhắc tới mã (không phải tin của mã) được đánh dấu lại")
@@ -458,14 +467,15 @@ def fundamentals(args: list[str]) -> int:
     import argparse
     import time
     from collections import Counter
-    from datetime import date
 
     from src.collectors.base import ProviderDataMissing, ProviderError
     from src.collectors.providers import vndirect_finfo_provider as vnd
     from src.collectors.providers.cafef_financial_provider import (
         SOURCE_ID as CAFEF_ID, fetch_quarterly_income, latest_completed_quarter, quarter_end)
     from src.collectors.providers.web_news import PoliteFetcher
-    from src.quant.fundamentals import fetch_log, grade_ticker, log_fetch, log_reason, store_income
+    from src.quant.fundamentals import (fetch_log, fetch_skip_reason, grade_ticker, history_pages,
+                                       load_quarters, log_fetch, log_reason, store_income)
+    from src.pipeline import vn_now
     from src.quant.screener import liquid_tickers, screen_settings
 
     parser = argparse.ArgumentParser(prog="python -m src.main fundamentals")
@@ -477,26 +487,32 @@ def fundamentals(args: list[str]) -> int:
     sync_reference_data()
     settings = screen_settings()
     tickers = [t.upper() for t in opts.tickers] if opts.tickers else liquid_tickers()
-    wanted = quarter_end(*reversed(latest_completed_quarter(date.today()))).isoformat()
+    now = vn_now()
+    today = now.date()
+    wanted = quarter_end(*reversed(latest_completed_quarter(today)))
     fetcher = PoliteFetcher(2.5, 20.0)
     as_json = vnd.json_fetcher(fetcher)
     models_checked = False
     started = time.monotonic()
-    fetched = skipped = from_vnd = 0
+    fetched = skipped = checked_today = from_vnd = 0
     for n, t in enumerate(tickers, 1):
         log = fetch_log(t)
-        recent = log and log.get("checked_at", "")[:10] >= date.today().isoformat()[:8] + "01"
         on_vnd = bool(log) and log.get("source_id") == vnd.SOURCE_ID
         rejected = bool(log) and not log.get("accepted_quarters")
-        vnd_tried = rejected and "VNDirect" in (log.get("rejected_reason") or "")
-        if not opts.refresh and log and (log.get("latest_quarter") == wanted or (recent and rejected and (vnd_tried or on_vnd))):
+        skip = fetch_skip_reason(log, wanted, now, opts.refresh)
+        if skip:
             skipped += 1
+            checked_today += skip == "today"
             continue
         # CafeF for ordinary companies; a bank's or a broker's layout is misplaced there, so a
         # ticker CafeF rejected (or already read from VNDirect) goes to VNDirect's own template.
         if not (on_vnd or (rejected and log.get("source_id") == CAFEF_ID)):
             try:
-                data = fetch_quarterly_income(t, date.today(), fetch=fetcher)
+                pages = history_pages(load_quarters(t), wanted, opts.refresh)
+                data = fetch_quarterly_income(t, today, pages=pages, fetch=fetcher)
+                if pages == 1 and not data.quarters:
+                    # An unexpected empty/rejected current page must not hide older valid history.
+                    data = fetch_quarterly_income(t, today, pages=2, fetch=fetcher)
             except ProviderError as exc:
                 print(f"  {t}: {exc}")
                 continue
@@ -510,7 +526,7 @@ def fundamentals(args: list[str]) -> int:
             if not models_checked:
                 vnd.check_items(vnd.fetch_models(as_json))
                 models_checked = True
-            template, data = vnd.fetch_quarterly_income(t, date.today(), as_json)
+            template, data = vnd.fetch_quarterly_income(t, today, as_json)
         except ProviderDataMissing as exc:
             prior = (fetch_log(t) or {}).get("rejected_reason") or "CafeF: không có quý hợp lệ"
             log_reason(t, CAFEF_ID, f"{prior.split('; VNDirect')[0]}; VNDirect: {exc}")
@@ -528,7 +544,7 @@ def fundamentals(args: list[str]) -> int:
     grades = {t: grade_ticker(t, settings) for t in tickers}
     count = Counter(g.grade for g in grades.values())
     print(f"BCTC: tải {fetched} (ngân hàng / chứng khoán từ VNDirect: {from_vnd}), bỏ qua {skipped} "
-          f"(đã có quý {wanted}), {len(tickers)} mã")
+          f"(đủ quý {wanted}: {skipped - checked_today}; đã kiểm tra hôm nay: {checked_today}), {len(tickers)} mã")
     print("  hạng: " + "  ".join(f"{k}={count.get(k, 0)}" for k in ("A+", "A", "B", "WEAK", "FAIL", "NO_DATA")))
     print("  (số liệu CafeF / VNDirect, chưa đối chiếu BCTC gốc; LNST công ty mẹ thay cho EPS)")
     return 0
@@ -1030,9 +1046,10 @@ def start(args: list[str]) -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--no-update", action="store_true", help="open the dashboard at once, without updating")
+    parser.add_argument("--refresh-news", action="store_true", help="fetch news even when recently collected")
     parser.add_argument("--plan", action="store_true", help="show which steps would run, run nothing")
     parser.add_argument("--update-only", action="store_true",
-                        help="update (screen included when due), then exit without serving: the 15:30 job's last step")
+                        help="update (screen included when due), then exit without serving")
     opts = parser.parse_args(args)
     init_db()
     if opts.plan:
@@ -1049,6 +1066,11 @@ def start(args: list[str]) -> int:
         else:
             try:
                 plan = pl.plan_steps(now, index_dates=pl.dnse_index_dates(now))
+                if opts.refresh_news:
+                    for step in plan.steps:
+                        if step.key == "news":
+                            step.run = True
+                            step.why = "yêu cầu thu tin mới trong lượt cập nhật này"
                 print("Kế hoạch cập nhật trước khi mở web:\n" + pl.summary(plan))
                 pl.run_steps(plan)
                 print("\nĐã cập nhật xong:\n" + pl.summary(plan))
@@ -1095,49 +1117,6 @@ def check(args: list[str]) -> int:
         print(f"  (ghi nhận) {i['ticker']:<4} {i['detail']}")
     print(f"Báo cáo: {out}")
     return 1 if report["violations"] else 0
-
-
-def watch(args: list[str]) -> int:
-    """Intraday alerts during the session (src/collectors/intraday_watch.py): pivot, stop and MA50
-    reached by a matched trade. Read-only market data; display only."""
-    import argparse
-    import asyncio
-    import time as _time
-    from datetime import datetime, time
-
-    from src.collectors.intraday_watch import VN_TZ, build_levels, intraday_settings, run_watch
-    from src.env import load_dotenv
-    from src.market_calendar import is_trading_day
-
-    parser = argparse.ArgumentParser(prog="python -m src.main watch")
-    parser.add_argument("--until", help="stop at this VN time, HH:MM (default intraday.stop)")
-    parser.add_argument("--dry-run", action="store_true", help="print alerts, do not store them")
-    opts = parser.parse_args(args)
-    load_dotenv()
-    init_db()
-    cfg = intraday_settings()
-    now = datetime.now(VN_TZ)
-    if not is_trading_day(now.date()):
-        print(f"{now:%d/%m/%Y} không phải phiên giao dịch.")
-        return 0
-    start, end = time.fromisoformat(str(cfg["start"])), time.fromisoformat(opts.until or str(cfg["stop"]))
-    if now.time() >= end:
-        print(f"Phiên đã qua {end:%H:%M}; không theo dõi.")
-        return 0
-    levels = build_levels(now.date())
-    watched = [t for t, lv in levels.items() if not lv.skip_reason]
-    print(f"Theo dõi trong phiên {len(watched)} mã (pivot / stop / MA50 của phiên trước), tới {end:%H:%M}.")
-    for t, lv in sorted(levels.items()):
-        if lv.skip_reason:
-            print(f"  bỏ qua {t:<4} {lv.skip_reason}")
-    wait = (datetime.combine(now.date(), start, VN_TZ) - now).total_seconds()
-    if wait > 0:
-        print(f"Chờ tới {start:%H:%M}…")
-        _time.sleep(wait)
-    status = asyncio.run(run_watch(until=end, dry_run=opts.dry_run))
-    print(f"Kết thúc: {status.trades} lệnh khớp đã đọc, {status.alerts} cảnh báo"
-          + (f", lỗi: {status.error}" if status.error else ""))
-    return 0
 
 
 def export_site(args: list[str]) -> int:
@@ -1241,12 +1220,22 @@ def mylist_refresh(args: list[str]) -> int:
     init_db()
     tickers = [t.upper() for t in opts.tickers]
     print(f"Cập nhật mã mới trong danh sách của tôi: {', '.join(tickers)}", flush=True)
+    from src.pipeline import vn_now
+    from src.web.export import expected_session
+    from src.quant.user_watchlist import refresh_requirements
+
+    prices, states = refresh_requirements(tickers, expected_session(vn_now()).isoformat())
     worst = 0
     # Only the new tickers at each step (the monitor too: recomputing every list's tickers took
     # ~0.4 s each, minutes once the web accounts' lists are in); their logos for the web copy.
-    for step in (["backfill", "--tickers", *tickers], ["monitor", "--no-fetch", "--keep-events", "--tickers", *tickers],
-                 ["flow", "--tickers", *tickers], ["news", "--tickers", *tickers, "--no-rss"],
-                 ["logos", "--tickers", *tickers]):
+    steps = []
+    if prices:
+        steps.append(["backfill", "--tickers", *prices])
+    if states:
+        steps.append(["monitor", "--no-fetch", "--keep-events", "--tickers", *states])
+    steps += [["flow", "--tickers", *tickers], ["news", "--tickers", *tickers, "--no-rss"],
+              ["logos", "--tickers", *tickers]]
+    for step in steps:
         try:
             code = COMMANDS[step[0]](step[1:])
         except SystemExit as exc:                      # argparse / a step that exits: report, go on
@@ -1332,7 +1321,6 @@ COMMANDS = {
     "check": check,
     "ssi": ssi,
     "crosscheck": crosscheck,
-    "watch": watch,
     "export-site": export_site,
     "mylist-sync": mylist_sync,
     "site-user": site_user,

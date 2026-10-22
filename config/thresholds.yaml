@@ -235,12 +235,13 @@ news:
   # HCM, GAS, OIL, BIG added 2026-10-11 (tester N03: "Công an TP.HCM bắt..." was filed under HCM,
   # Chứng khoán HSC -- 72 links, most of them the city). A cue is also "HCM: ..." at the start of a
   # headline (a company disclosure) or "(HCM)".
-  ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP, HCM, GAS, OIL, BIG]
+  ambiguous_tickers: [VND, USD, CEO, CPI, AGM, API, BOT, CAP, CNG, DPS, NAV, SJC, TOP, TSC, VIP, HCM, GAS, OIL, BIG, PGD]
   # Other names a company goes by, counted like its name for an ambiguous code (lower case, whole words).
   ticker_aliases:
     HCM: ["hsc", "chứng khoán tp.hcm", "chứng khoán tp. hcm", "chứng khoán thành phố hồ chí minh"]
     GAS: ["pv gas", "pvgas", "tổng công ty khí việt nam"]
     OIL: ["pv oil", "pvoil", "tổng công ty dầu việt nam"]
+    PGD: ["pv gas d", "pv gasd", "phân phối khí thấp áp"]
   # Phrases that hold an alias or the company's name but name someone else; they are left out
   # before the alias / name match. "Sở giao dịch Chứng khoán TP. HCM" is the exchange (HOSE):
   # "KOS bị yêu cầu giải trình" was filed under HCM (tester report 3, R3-08).
@@ -547,31 +548,12 @@ rs_line:
   lookback: {D: 250, W: 52, M: 12}
   trend: {D: 63, W: 13, M: 3}
 
-# Intraday alerts (Phase 11, `python -m src.main watch`, src/quant/intraday.py): matched trades
-# from DNSE's websocket against the focus list's pivot / stop / MA50 of the last close. Display only.
-intraday:
-  start: "09:00"                    # VN time; `watch` waits until then
-  stop: "14:50"                     # and ends itself after the ATC
-  board_id: G1                      # round lot
-  # Continuous-trading minutes per exchange, the clock for the volume pace (ATO / ATC left out).
-  sessions:
-    HOSE: [["09:15", "11:30"], ["13:00", "14:30"]]
-    HNX: [["09:00", "11:30"], ["13:00", "14:30"]]
-    UPCOM: [["09:00", "11:30"], ["13:00", "15:00"]]
-  min_session_fraction: 0.1         # no pace before ~10% of the day (one large opening print would dominate)
-  avg_volume_sessions: 50           # the pace's average, as the monitor's breakout rule
-  ma_sessions: 50
-  # HOSE / HNX: today's reference price must equal the stored close (within this %), else the levels
-  # may be on another price scale (a corporate action) and the ticker is not watched today.
-  reference_tolerance_pct: 0.1
-  status_every_seconds: 15          # how often the status file the dashboard reads is rewritten
-  status_stale_seconds: 120         # the dashboard calls the feed stale after this long without a write
-
 # Static copy of the dashboard for a few chosen viewers (src/web/export.py, `export-site`, then
 # scripts/deploy_site.ps1 -> Cloudflare Pages behind Cloudflare Access; user decision 2026-10-12).
 # Read-only: no database, no keys, no write route; written to data/site/ (never committed).
 site:
   out_dir: data/site
+  export_workers: 4               # local chart processes, bounded to CPU count and at most 4; use 1 for serial
   runs: 5                         # screen runs offered in "Danh sách lọc ngày" on the copy
   pages_project: sepa-vn          # Cloudflare Pages project the deploy script uploads to
   local_account: admin            # whose web list is "Danh sách của tôi" on this machine's dashboard

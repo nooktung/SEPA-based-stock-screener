@@ -569,7 +569,7 @@ VN-Index không còn mang sang chi tiết mã).
 **Bố cục**: thanh bên trái chia ba phần.
 - **Cổ phiếu**: Danh sách chính (A + B) · Theo dõi mở rộng (C) · Của tôi · Đầu ngành (trang "Tất cả theo dõi" đã bỏ 13/10/2026).
   Năm nhóm dùng **chung một bảng và một bộ lọc**; số bên cạnh là số mã.
-- **Thị trường**: Ngành & sóng · Sự kiện · Tin tức.
+- **Thị trường**: Ngành & sóng · Tin tức.
 - **Kiến thức**: Học (mục 27).
 
 Đầu trang chỉ còn thẻ **VN-Index**: điểm số, % so với phiên trước, trạng thái thị trường (mục 10) kèm
@@ -962,13 +962,6 @@ bỏ qua. Tác vụ hằng ngày chạy lệnh này sau `monitor`.
 
 Chỉ hiển thị, không tính vào điểm hay nhóm.
 
-## 26b. Cảnh báo trong phiên (12/10/2026)
-
-`python -m src.main watch` (giờ giao dịch, tự dừng 14:50) đọc lệnh khớp DNSE websocket của các mã đang theo dõi và báo khi
-giá chạm / vượt pivot, xuống tới stop, xuống dưới MA50 hoặc mã vừa breakout quay lại dưới pivot — mỗi loại một lần mỗi
-ngày, kèm nhịp khối lượng ước tính. Trang **Trong phiên** (thanh bên) hiện danh sách, tự làm mới 30 giây. Đây không phải
-breakout hay thủng stop: các sự kiện đó vẫn xét ở giá đóng cửa (mục 11). Công thức: congthuc.md §13a.
-
 ## 26c. Đường RS (12/10/2026)
 
 Lớp **"Đường RS (so với VN-Index)"** trong "Lớp hiển thị": giá / VN-Index, 100 = điểm đầu biểu đồ, chấm xanh khi đường RS
@@ -1157,3 +1150,8 @@ gọi mỗi mã). Mã mới niêm yết sau 2015 có lịch sử từ ngày niê
   **không đổi** (so từng phiên với bản sao) nên danh sách lọc, trạng thái, cảnh báo không đổi. 18 mã UPCoM gần như không
   giao dịch (thanh khoản < 0,15 tỷ, không mã nào trong danh sách theo dõi) bị gắn cờ "dữ liệu cần kiểm tra" vì 300 phiên
   gần nhất của chúng kéo về 2020–2024 và chạm phiên nhảy giá quá biên độ; 6 mã được gỡ cờ.
+
+
+## Khám phá ngành (17/10/2026)
+
+Chọn ngành hoặc nhóm theo dõi để xem ngay các mã có giá đã lưu; bấm mã mở chart như bảng chính. Có tìm ngành, lọc trạng thái, sắp xếp và ghim trên trình duyệt. Phần chi tiết hiển thị lợi nhuận trung vị 5/21/63 phiên, mức chênh lợi nhuận 21 phiên so VN-Index, tỷ lệ trên MA50, thanh khoản tương đối và diễn biến 21 phiên. Mã cũ/đáng ngờ vẫn hiện để nghiên cứu, được loại khỏi phép đo. Nhãn cần ít nhất 3 mã hợp lệ; lịch sử dùng tập mã đủ điều kiện hiện tại, không phải kiểm định dự báo. Công thức chi tiết có ngay trên trang.

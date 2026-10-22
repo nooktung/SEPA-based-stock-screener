@@ -27,7 +27,7 @@ revenue held (CLAUDE.md).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -196,6 +196,48 @@ def fetch_log(ticker: str, path: Path | None = None) -> dict[str, Any] | None:
     with connect(path) as conn:
         row = conn.execute("SELECT * FROM financial_fetch_log WHERE ticker = ?", (ticker.upper(),)).fetchone()
     return dict(row) if row else None
+
+
+def fetch_skip_reason(log: Mapping[str, Any] | None, wanted: date, now: datetime,
+                      refresh: bool = False) -> str | None:
+    """Cache a completed check for one Vietnam calendar day, never a partial/failed read."""
+    if refresh or not log:
+        return None
+    try:
+        latest = date.fromisoformat(str(log.get("latest_quarter")))
+    except ValueError:
+        latest = None
+    if latest and latest >= wanted and log.get("accepted_quarters", 0) > 0:
+        return "quarter"
+    try:
+        checked = datetime.fromisoformat(str(log.get("checked_at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    checked = checked if checked.tzinfo else checked.replace(tzinfo=timezone.utc)
+    vn = timezone(timedelta(hours=7))
+    if checked > now or checked.astimezone(vn).date() != now.astimezone(vn).date():
+        return None
+    # CafeF can log an unusable template before the VNDirect fallback fails. Such a
+    # partial attempt must stay retryable, unlike a successful read of older quarters.
+    complete = (log.get("accepted_quarters", 0) > 0 or log.get("source_id") == VNDIRECT_ID
+                or "VNDirect:" in (log.get("rejected_reason") or ""))
+    return "today" if complete else None
+
+
+def history_pages(quarters: Mapping[date, Any], wanted: date, refresh: bool = False) -> int:
+    """One current page suffices when the seven preceding quarters are already stored.
+
+    Keep the entire prior-year comparison window for the three growth readings;
+    a sparse/new history or an explicit refresh still downloads both pages.
+    """
+    from src.collectors.providers.cafef_financial_provider import quarter_end
+
+    index = wanted.year * 4 + (wanted.month - 1) // 3
+    preceding = set()
+    for offset in range(1, 8):
+        year, quarter = divmod(index - offset, 4)
+        preceding.add(quarter_end(quarter + 1, year))
+    return 1 if not refresh and preceding.issubset(quarters) else 2
 
 
 def grade_ticker(ticker: str, settings: Mapping[str, Any], path: Path | None = None) -> FundamentalRead:

@@ -230,6 +230,7 @@ def process_articles(
     body_dir: Path | None = None,
     now: datetime | None = None,
     thresholds: Mapping[str, Any] | None = None,
+    body_focus: set[str] | None = None,
 ) -> PipelineReport:
     settings = news_settings(thresholds)
     now = now or datetime.now(VN_TZ)
@@ -242,6 +243,21 @@ def process_articles(
 
     for article in articles:
         if article.article_id in known:
+            # Older runs saved off-watchlist articles without events. Link them now without
+            # downloading again; otherwise expanding coverage would skip them forever.
+            with connect(path) as conn:
+                stored = conn.execute("SELECT event_id,body_hash FROM news_articles WHERE article_id=?",
+                                      (article.article_id,)).fetchone()
+            if stored and stored["event_id"] is None:
+                tags = (set(article.tickers_hint) | tag_tickers(article.title, universe, names,
+                                                               ambiguous, aliases, exclusions)) & focus
+                event_type = classify_event(article.title, article.body or "", settings["event_rules"])
+                for ticker in sorted(tags):
+                    created = _attach_to_event(article, ticker, event_type, float(settings["relevance_subject"]),
+                                               int(article.provenance.source_level), article.title,
+                                               stored["body_hash"], settings, now, path)
+                    report.events_created += int(created)
+                    report.events_updated += int(not created)
             continue
         known.add(article.article_id)
         headline_tags = set(article.tickers_hint) | tag_tickers(article.title, universe, names, ambiguous, aliases,
@@ -252,7 +268,7 @@ def process_articles(
         raw_path = digest = None
         summary = article.body or ""
         text_for_typing = f"{article.title}\n{summary}"
-        if relevant and fetch_body is not None:
+        if relevant & (focus if body_focus is None else body_focus) and fetch_body is not None:
             try:
                 body = fetch_body(article)
                 target = (body_dir / f"{article.article_id}.json") if body_dir else None
@@ -289,6 +305,20 @@ def process_articles(
     return report
 
 
+def link_unassigned_articles(since: datetime, path: Path | None = None) -> PipelineReport:
+    """Repair recent RSS headlines stored by older watchlist-only runs, without fetching again."""
+    from src.collectors.base import Provenance, SourceLevel
+    with connect(path) as conn:
+        universe = {r[0] for r in conn.execute("SELECT ticker FROM tickers")}
+        rows = conn.execute("SELECT * FROM news_articles WHERE event_id IS NULL AND published_at >= ?",
+                            (since.isoformat(),)).fetchall()
+    articles = [NewsArticle(article_id=r["article_id"], title=r["title"], url=r["url"],
+                            published_at=datetime.fromisoformat(r["published_at"]),
+                            provenance=Provenance(r["source_id"], SourceLevel(r["source_level"]),
+                                                  datetime.now(VN_TZ), r["url"])) for r in rows]
+    return process_articles(articles, universe, path=path)
+
+
 def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevance: float, level: int,
                      text: str, digest: str | None, settings: Mapping[str, Any], now: datetime,
                      path: Path | None, role: str = "subject") -> bool:
@@ -306,8 +336,9 @@ def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevan
             occurred = datetime.fromisoformat(c["occurred_at"]) if c["occurred_at"] else None
             if occurred is not None and abs(occurred - published) > window:
                 continue
-            rows = conn.execute("SELECT body_hash, simhash FROM news_articles WHERE event_id = ?",
-                                (c["event_id"],)).fetchall()
+            rows = conn.execute("SELECT body_hash, simhash FROM news_articles WHERE event_id = ? OR article_id IN "
+                                "(SELECT article_id FROM news_event_articles WHERE event_id = ?)",
+                                (c["event_id"], c["event_id"])).fetchall()
             same_body = digest is not None and any(r["body_hash"] == digest for r in rows)
             near = any(r["simhash"] and hamming(int(r["simhash"], 16), this_hash) <= int(settings["simhash_max_hamming"])
                        for r in rows)
@@ -324,6 +355,8 @@ def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevan
                 (best, assertion_for(best, settings), _credibility(best, settings), relevance, match["event_id"]))
             conn.execute("UPDATE news_articles SET event_id = ? WHERE article_id = ?",
                          (match["event_id"], article.article_id))
+            conn.execute("INSERT OR IGNORE INTO news_event_articles VALUES (?, ?)",
+                         (match["event_id"], article.article_id))
             return False
 
         event_id = hashlib.sha1(f"{ticker}|{event_type}|{article.article_id}".encode()).hexdigest()[:20]
@@ -338,6 +371,7 @@ def _attach_to_event(article: NewsArticle, ticker: str, event_type: str, relevan
         conn.execute("INSERT OR IGNORE INTO event_tickers (event_id, ticker, role) VALUES (?, ?, ?)",
                      (event_id, ticker, role))
         conn.execute("UPDATE news_articles SET event_id = ? WHERE article_id = ?", (event_id, article.article_id))
+        conn.execute("INSERT OR IGNORE INTO news_event_articles VALUES (?, ?)", (event_id, article.article_id))
         return True
 
 

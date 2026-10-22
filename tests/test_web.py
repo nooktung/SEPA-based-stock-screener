@@ -70,6 +70,11 @@ def test_http_server_serves_page_and_json_and_refuses_writes(db):
     try:
         page = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode("utf-8")
         assert "SEPA Việt Nam" in page
+        assert 'data-tab="alerts"' not in page and 'data-tab="intraday"' not in page
+        for removed in ("alerts", "intraday"):
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/{removed}")
+            assert exc.value.code == 404
         runs = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/runs").read())
         assert runs[0]["run_id"] == "r1"
         with pytest.raises(urllib.error.HTTPError) as exc:
@@ -469,20 +474,6 @@ def test_state_checks_cover_each_rule():
     assert dict(state_violations({**ok, "contractions": [5.0] * 7}, "HOSE", s)).keys() == {"legs"}
 
 
-def test_a_stop_breach_of_an_earlier_base_is_marked(db):
-    """Old "thủng stop" events stay visible, labelled when their stop is not today's (plan, round 2)."""
-    with connect(db) as conn:
-        conn.execute("INSERT INTO alerts (alert_id, ticker, created_at, alert_type, what_changed) VALUES "
-                     "('s1','AAA','x','STOP_BREACHED','[2026-09-24] Đóng cửa 43.100 dưới mức stop tham chiếu 44.500 (đáy nhịp)')")
-        conn.execute("INSERT INTO monitor_state (ticker, trade_date, state_json, computed_at) "
-                     "VALUES ('AAA','2026-09-25', ?, 'x')", (json.dumps({"close": 40_000, "stop": None}),))
-    row = next(r for r in server.api_alerts({}, db) if r["alert_type"] == "STOP_BREACHED")
-    assert row["stale_stop"] is True and row["current_stop"] is None
-    with connect(db) as conn:
-        conn.execute("UPDATE monitor_state SET state_json = ?", (json.dumps({"close": 40_000, "stop": 44_500}),))
-    assert next(r for r in server.api_alerts({}, db) if r["alert_type"] == "STOP_BREACHED")["stale_stop"] is False
-
-
 def test_the_checks_route_serves_the_latest_report(db):
     from src.web import checks
     assert server.api_checks({}, db) is None                      # nothing written yet
@@ -505,14 +496,6 @@ def test_the_flow_lists_every_session_and_five_sessions_mean_five_sessions(db):
     assert [r["has_flow"] for r in rows] == [True, False, False, True, False]
     flow = server.api_stocks({}, db)[0]["flow"]
     assert flow["net5_volume"] == 150 and flow["net5_sessions"] == 2 and flow["net5_of"] == 5   # 01/09 is left out
-
-
-def test_old_event_texts_show_the_tt6_threshold(db):
-    with connect(db) as conn:
-        conn.execute("INSERT INTO alerts (alert_id, ticker, created_at, alert_type, what_changed) VALUES "
-                     "('t6','AAA','x','TREND_TEMPLATE_BROKEN','[2026-09-25] Mất tiêu chí TT6 (Giá cao hơn đáy 52 tuần ≥ X%).')")
-    text = next(r for r in server.api_alerts({}, db) if r["alert_type"] == "TREND_TEMPLATE_BROKEN")["what_changed"]
-    assert "≥ 30%" in text and "X%" not in text
 
 
 def test_the_ticker_carries_its_rs_line_against_the_index(db):
