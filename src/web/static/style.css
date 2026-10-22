@@ -708,10 +708,7 @@ body.static-site:not(.can-edit) #mine-form, body.static-site .dtab[data-pane="po
 .nd-popup { position:fixed; inset:auto; margin:0; padding:16px; box-sizing:border-box; max-height:calc(100dvh - 24px); overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--line); border-radius:16px; background:var(--surface); color:var(--text); font-family:inherit; font-size:12px; line-height:1.5; box-shadow:0 16px 56px #0003; }
 .nd-popup button { font:inherit; cursor:pointer; color:inherit; }
 .nd-popup button:focus-visible,.nd-trigger:focus-visible { outline:2px solid #e14b4b; outline-offset:2px; }
-.nd-modes { display:grid; grid-template-columns:1fr 1fr; padding:4px; gap:4px; background:var(--surface-2); border-radius:10px; }
-.nd-modes button { border:0; background:transparent; border-radius:7px; padding:8px; color:var(--muted); }
-.nd-modes button[aria-pressed="true"] { background:var(--surface); color:#e14b4b; box-shadow:0 1px 5px #0001; font-weight:650; }
-.nd-selection { min-height:36px; margin:14px 0 8px; color:var(--muted); font-size:12px; }
+.nd-selection { min-height:30px; margin:0 0 12px; color:var(--muted); font-size:12px; }
 .nd-selection b { color:var(--text); font-weight:600; }
 .nd-month { display:flex; justify-content:space-between; align-items:center; margin-bottom:13px; }
 .nd-month strong { font-size:14px; }
@@ -726,8 +723,7 @@ body.static-site:not(.can-edit) #mine-form, body.static-site .dtab[data-pane="po
 .nd-days button.today { box-shadow:inset 0 0 0 1px #de4848; }
 .nd-days button.between { width:100%; border-radius:0; background:color-mix(in srgb,#df4444 13%,var(--surface)); }
 .nd-days button.selected { background:#d83c3c; color:#fff; font-weight:650; }
-.nd-hint { color:var(--muted); font-size:11px; margin:13px 0; }
-.nd-actions { display:flex; justify-content:space-between; gap:12px; padding-top:13px; border-top:1px solid var(--line); }
+.nd-actions { margin-top:16px; display:flex; justify-content:space-between; gap:12px; padding-top:13px; border-top:1px solid var(--line); }
 .nd-actions button { border:0; border-radius:8px; background:var(--surface-2); padding:9px 15px; }
 .nd-actions button[data-apply] { color:white; background:#d83c3c; font-weight:600; }
 .nd-actions button:disabled { opacity:.4; cursor:default; }
@@ -787,3 +783,16 @@ body:has(#sector-drawer[open]) { overflow:hidden; }
 @keyframes sector-drawer-in { from { transform:translateX(100%); opacity:.4; } to { transform:translateX(0); opacity:1; } }
 @media(max-width:600px) { .sector-drawer { width:100vw; border-radius:0; }.sector-drawer-head { padding:20px 16px 16px; }.sector-drawer-head h2 { font-size:22px; }#sector-drawer-content { padding:18px 16px 24px; }.sector-drawer-returns { grid-template-columns:repeat(2,minmax(0,1fr)); }.sector-drawer-chart,.sector-drawer-breadth { padding:15px; }.sector-member-columns,.sector-member-row { grid-template-columns:minmax(0,1.3fr) minmax(82px,1fr) 65px; gap:10px; }.sector-chart-dates > :nth-child(2) { display:none; }.sector-tools .dd { max-width:100%; } }
 @media(prefers-reduced-motion:reduce) { .sector-drawer[open] { animation:none; } }
+
+.nd-chevron { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.7; transition:transform .18s; }
+.nd-trigger[aria-expanded="true"] .nd-chevron { transform:rotate(180deg); }
+.nd-month button { display:grid; place-items:center; width:36px; height:36px; transition:background .15s; }
+.nd-month button svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.nd-month button:disabled,.nd-days button:disabled { opacity:.27; cursor:default; box-shadow:none; }
+.nd-month button:disabled:hover,.nd-days button:disabled:hover { background:transparent; }
+.nd-days button.preview { border-radius:8px; background:color-mix(in srgb,#df4444 13%,var(--surface)); }
+.nd-calendar.slide-forward { animation:nd-next .16s ease-out; }
+.nd-calendar.slide-back { animation:nd-previous .16s ease-out; }
+@keyframes nd-next { from { opacity:.4; transform:translateX(12px); } to { opacity:1; transform:none; } }
+@keyframes nd-previous { from { opacity:.4; transform:translateX(-12px); } to { opacity:1; transform:none; } }
+@media(prefers-reduced-motion:reduce) { .nd-calendar.slide-forward,.nd-calendar.slide-back { animation:none; }.nd-chevron { transition:none; } }
