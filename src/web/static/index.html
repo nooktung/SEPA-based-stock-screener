@@ -41,7 +41,7 @@
       <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
     <div class="nav-group">Thị trường</div>
     <button class="tab" data-tab="industries" role="tab"
-      data-title="Khám phá ngành" data-desc="Sức mạnh các sóng ngành bạn tự định nghĩa và các ngành theo phân loại Vietstock.">
+      data-title="Khám phá ngành" data-desc="Bản đồ ngành, diễn biến cổ phiếu và danh sách ngành đang theo dõi.">
       <span class="ico">◎</span>Khám phá ngành</button>
     <button class="tab" data-tab="news" role="tab"
       data-title="Tin tức" data-desc="Tin doanh nghiệp trên toàn thị trường, mới nhất trước. Tìm theo mã hoặc chọn ngày để đọc tin đã được cập nhật.">
@@ -105,21 +105,20 @@
 
     <!-- industries and themes -->
     <section id="tab-industries" class="panel">
-      <div class="sector-intro"><p class="muted">Quan sát dòng tiền theo ngành. Rê chuột xem bảng mã. Bấm tiêu đề ngành để thu gọn / mở rộng; bấm mã để mở biểu đồ.</p><span id="sector-date" class="muted"></span></div>
-      <div class="toolbar sector-tools"><input id="sector-search" type="search" placeholder="Tìm ngành hoặc nhóm…" aria-label="Tìm ngành"><select id="sector-kind" aria-label="Loại nhóm"><option value="industry">Ngành</option><option value="theme">Nhóm theo dõi</option></select><select id="sector-status" aria-label="Trạng thái ngành"><option value="">Mọi trạng thái</option><option value="leading">Đang dẫn dắt</option><option value="improving">Đang cải thiện</option><option value="weakening">Đang suy yếu</option><option value="mixed">Chưa đồng thuận</option><option value="insufficient">Ít dữ liệu</option></select><select id="sector-sort" aria-label="Sắp xếp ngành"><option value="relative_change">Cải thiện mạnh nhất</option><option value="relative">Mạnh hơn VN-Index</option><option value="breadth">Độ lan tỏa cao nhất</option></select><button id="sector-pinned" class="btn" type="button">☆ Đã ghim</button></div>
+      <div class="sector-intro"><p class="muted">Quan sát dòng tiền theo ngành. Rê chuột xem bảng mã. Bấm tên ngành để xem riêng ngành; bấm mã để mở biểu đồ.</p><span id="sector-date" class="muted"></span></div>
+
       <section class="sector-map-card" aria-label="Bản đồ nhiệt ngành">
-        <div class="sector-map-toolbar"><div class="sector-map-heading"><h2>Bản đồ ngành</h2><span id="sector-map-count" class="muted"></span></div><div class="sector-map-controls">
-          <select id="sector-map-exchange" aria-label="Sàn trên bản đồ"><option value="">Tất cả sàn</option><option value="HOSE">HOSE</option><option value="HNX">HNX</option><option value="UPCOM">UPCOM</option></select>
-          <select id="sector-map-weight" aria-label="Diện tích ô trên bản đồ"><option value="value">Diện tích: GTGD 20 phiên</option><option value="equal">Diện tích: đều theo mã</option></select>
-          <select id="sector-map-mode" aria-label="Nội dung bản đồ"><option value="stocks">Hiện từng cổ phiếu</option><option value="groups">Chỉ hiện ngành</option></select>
-          <button id="sector-map-expand" class="btn" type="button" aria-pressed="false" aria-label="Mở rộng bản đồ nhiệt">⛶ Mở rộng</button>
-          <button id="sector-map-zoom" class="btn" type="button">Phóng to ngành đang chọn</button>
+        <div class="sector-map-toolbar"><div class="sector-map-heading"><button id="sector-map-back" class="sector-back" type="button" aria-label="Quay lại bản đồ tất cả ngành" hidden>‹</button><div><h2>Bản đồ ngành</h2><span id="sector-map-count" class="muted"></span></div></div><div class="sector-map-controls">
+          <select id="sector-map-exchange" aria-label="Sàn trên bản đồ"><option value="">Tất cả</option><option value="HOSE">HOSE</option><option value="HNX">HNX</option><option value="UPCOM">UPCOM</option></select>
+          <select id="sector-map-weight" aria-label="Diện tích ô trên bản đồ"><option value="value">GTGD 20 phiên</option><option value="equal">Đều theo mã</option></select>
+          <select id="sector-map-mode" aria-label="Nội dung bản đồ"><option value="stocks">Từng cổ phiếu</option><option value="groups">Chỉ hiện ngành</option></select>
         </div></div>
         <div class="sector-map-legend"><span>Màu: biến động giá trong phiên</span><span><i style="background:#009f66"></i> Tăng</span><span><i style="background:#c93d36"></i> Giảm</span><span><i style="background:#f1ae55"></i> Đứng giá</span><span><i style="background:#6747bf"></i> Trần</span><span><i style="background:#00a8cf"></i> Sàn</span><span><i style="background:#465164"></i> Thiếu / cũ</span></div>
         <div id="sector-map" class="sector-map" aria-label="Các ngành và cổ phiếu"></div>
         <details class="sector-map-help"><summary>Cách đọc bản đồ</summary><p id="sector-map-note" class="sector-map-note"></p></details>
       </section>
-      <div class="sector-section-heading"><h2>Theo dõi ngành</h2><span class="muted">Bấm thẻ ngành để phóng to các mã trên bản đồ</span></div>
+      <div class="sector-section-heading"><h2>Theo dõi ngành</h2><span class="muted">Bấm một ngành để mở bảng phân tích riêng</span></div>
+      <div class="toolbar sector-tools"><input id="sector-search" type="search" placeholder="Tìm ngành theo dõi…" aria-label="Tìm ngành"><select id="sector-status" aria-label="Trạng thái ngành"><option value="">Tất cả</option><option value="leading">Đang dẫn dắt</option><option value="improving">Đang cải thiện</option><option value="weakening">Đang suy yếu</option><option value="mixed">Chưa đồng thuận</option><option value="insufficient">Ít dữ liệu</option></select><select id="sector-sort" aria-label="Sắp xếp ngành"><option value="relative_change">Cải thiện mạnh nhất</option><option value="relative">Mạnh hơn VN-Index</option><option value="breadth">Độ lan tỏa cao nhất</option></select><button id="sector-pinned" class="btn" type="button">☆ Đã ghim</button></div>
       <div id="sector-list" class="sector-cards"></div>
       <details class="sector-method"><summary>Cách đọc và cách tính</summary><p id="sector-method"></p><p>Đang dẫn dắt: vượt VN-Index trong 21 phiên, ít nhất 50% mã trên MA50 và sức mạnh tương đối không giảm so với 5 phiên trước. Đang cải thiện: sức mạnh tương đối và độ lan tỏa cùng tăng. Đang suy yếu: cả hai cùng giảm. Cần ít nhất 3 mã hợp lệ; các nhóm ít dữ liệu không được xếp trạng thái.</p><p>Thanh khoản = trung vị tỷ lệ giá trị giao dịch bình quân 5 phiên gần nhất / 20 phiên trước đó. Các nhãn mô tả dữ liệu, chưa có xác suất dự báo được kiểm định. Nhóm theo dõi có thể chồng lấn và bao gồm nhiều hoạt động kinh doanh.</p></details>
     </section>
@@ -247,6 +246,7 @@
     <div id="p-out"></div>
   </div>
 </aside>
+<dialog id="sector-drawer" class="sector-drawer" aria-labelledby="sector-drawer-title"><header class="sector-drawer-head"><div><span class="sector-eyebrow">THEO DÕI NGÀNH</span><h2 id="sector-drawer-title"></h2><p id="sector-drawer-subtitle" class="muted"></p></div><button id="sector-drawer-close" class="sector-drawer-close" type="button" aria-label="Đóng phân tích ngành" autofocus>×</button></header><div id="sector-drawer-content"></div></dialog>
 <div id="scrim" class="scrim"></div>
 
 <script src="news-dates.js"></script>

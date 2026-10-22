@@ -122,7 +122,7 @@ const logoTile = (t, size = "") => (state.logos.has(t)
 // Above a million shares the exact count stops helping a scan: 55.332.492 -> 55,3 tr.
 const vol = (v, signed = false) => (v == null ? "–" : Math.abs(v) >= 1e6 ? `${signed && v > 0 ? "+" : ""}${fmt(v / 1e6, 1)} tr` : signed ? sfmt(v) : fmt(v));
 const themeBadges = (r) => (r.themes || []).map((t) =>
-  `<span class="theme${t.hot ? " hot" : ""}" title="Sóng ngành ${esc(t.name)}${t.hot ? " · đang mạnh" : ""}">${esc(t.name)}</span>`).join("");
+  `<span class="theme${t.hot ? " hot" : ""}" title="Ngành ${esc(t.name)}${t.hot ? " · đang mạnh" : ""}">${esc(t.name)}</span>`).join("");
 
 // ---------------------------------------------------------------- state
 const state = {
@@ -288,13 +288,9 @@ const FILTERS = [
       UP200: (r.above_ma || {})["200"] === true, DN200: (r.above_ma || {})["200"] === false, FLAG: !!r.flagged }[v]),
     options: () => [["A8", "Đạt đủ 8/8 tiêu chí"], ["NEAR", "Gần đạt 6–7/8"], ["UP200", "Giá trên MA200"],
       ["DN200", "Giá dưới MA200"], ["FLAG", "Dữ liệu cần kiểm tra"]] },
-  { key: "ind", label: "Ngành", test: (r, v) => (v.startsWith("t:") ? (r.themes || []).some((t) => t.name === v.slice(2)) : (r.industry || {}).name === v.slice(2)),
-    options: (base) => {
-      const by = (a, b) => a.localeCompare(b, "vi");
-      const themes = [...new Set(base.flatMap((r) => (r.themes || []).map((t) => t.name)))].sort(by);
-      const inds = [...new Set(base.map((r) => (r.industry || {}).name).filter(Boolean))].sort(by);
-      return [{ group: "Sóng ngành", items: themes.map((n) => [`t:${n}`, n]) }, { group: "Ngành", items: inds.map((n) => [`i:${n}`, n]) }];
-    } },
+  { key: "ind", label: "Ngành", test: (r, v) => (r.themes || []).some(t => t.name === v.slice(2)) || (r.industry || {}).name === v.slice(2),
+    options: base => [...new Set(base.flatMap(r => [...(r.themes || []).map(t => t.name), (r.industry || {}).name]).filter(Boolean))]
+      .sort((a,b) => a.localeCompare(b,"vi")).map(name => [`n:${name}`, name]) },
   { key: "ex", label: "Sàn", test: (r, v) => r.exchange === v, options: () => [["HOSE", "HOSE"], ["HNX", "HNX"], ["UPCOM", "UPCoM"]] },
   { key: "liq", label: "Thanh khoản", test: (r, v) => liqOf(r) === v,
     options: () => [["HIGH", "Cao · ≥ 10 tỷ/phiên"], ["GOOD", "Khá · 8–10 tỷ"], ["LOW", "Thấp · 3–8 tỷ"], ["UNDER", "Dưới 3 tỷ"]] },
@@ -1613,7 +1609,69 @@ async function toggleMine(ticker) {
 
 // ---------------------------------------------------------------- other tabs
 const SECTOR_LABEL = {leading:'Đang dẫn dắt',improving:'Đang cải thiện',weakening:'Đang suy yếu',mixed:'Chưa đồng thuận',insufficient:'Ít dữ liệu'};
-const sectorState = {data:null,selected:null,pins:new Set(store.get('sepa.sectors',[])),pinned:false,request:0,mapRows:[],zoom:false,collapsed:new Set()};
+const sectorState = {data:null,selected:null,pins:new Set(store.get('sepa.sectors',[])),pinned:false,request:0,mapRows:[],zoom:false,detail:null};
+function sectorGroups(groups) {
+ const byName=new Map();
+ for(const g of groups){const key=fold(g.name).trim();if(!byName.has(key)||g.kind==='industry')byName.set(key,g);}
+ return [...byName.values()];
+}
+function wireSectorDropdowns() {
+ const labels={'sector-map-exchange':'Sàn','sector-map-weight':'Diện tích','sector-map-mode':'Hiển thị','sector-status':'Trạng thái','sector-sort':'Sắp xếp'};
+ for(const [id,label] of Object.entries(labels)){
+  const select=$('#'+id);select.hidden=true;
+  select.insertAdjacentHTML('afterend',ddButton(`data-sector-select="${id}"`,label,select.selectedOptions[0].textContent,false));
+ }
+ $('#tab-industries').addEventListener('click',e=>{
+  const button=e.target.closest('[data-sector-select]');if(!button)return;
+  const select=$('#'+button.dataset.sectorSelect);
+  const items=[...select.options].map(o=>{
+   let count;
+   if(select.id==='sector-map-exchange'){
+    const groups=sectorState.mapRows.filter(g=>!sectorState.zoom||g.id===sectorState.selected);
+    count=new Set(groups.flatMap(g=>g.members).filter(r=>!o.value||r.exchange===o.value).map(r=>r.ticker)).size;
+   }else if(select.id==='sector-status'){
+    const q=fold($('#sector-search').value);
+    count=sectorGroups((sectorState.data||{}).groups||[]).filter(g=>(!q||fold(g.name).includes(q))&&(!sectorState.pinned||sectorState.pins.has(g.id))&&(!o.value||g.status===o.value)).length;
+   }
+   return {value:o.value,text:o.textContent,count};
+  });
+  openDropdown(button,{value:select.value,searchable:false,items,onPick:value=>{
+   select.value=value;$('.dd-value',button).textContent=select.selectedOptions[0].textContent;
+   button.classList.toggle('active',value!==select.options[0].value);select.dispatchEvent(new Event('change',{bubbles:true}));
+  }});
+ });
+}
+function sectorTrendChart(history) {
+ const values=history.map(x=>x.relative).filter(v=>Number.isFinite(v));if(values.length<2)return '<p class="muted">Chưa đủ lịch sử để vẽ diễn biến.</p>';
+ const lo=Math.min(-.1,...values),hi=Math.max(.1,...values),span=hi-lo;
+ const y=v=>140-(v-lo)/span*116, x=i=>24+i/Math.max(1,history.length-1)*592;
+ let pen=false;const path=history.map((r,i)=>{if(!Number.isFinite(r.relative)){pen=false;return '';}const part=`${pen?'L':'M'}${x(i).toFixed(1)},${y(r.relative).toFixed(1)}`;pen=true;return part;}).join(' ');
+ return `<svg class="sector-trend-chart" viewBox="0 0 640 164" role="img" aria-label="Sức mạnh tương đối so với VN-Index trong 21 phiên"><path d="M24,${y(0)} H616" class="sector-chart-zero"/><path d="${path}" class="sector-chart-line"/></svg><div class="sector-chart-dates"><span>${dmy(history[0].date)}</span><span>Đường đứt: ngang VN-Index</span><span>${dmy(history[history.length-1].date)}</span></div>`;
+}
+function openSectorDrawer(id) {
+ const g=sectorGroups((sectorState.data||{}).groups||[]).find(x=>x.id===id);if(!g)return;
+ sectorState.detail=id;
+ $('#sector-drawer-title').textContent=g.name;
+ $('#sector-drawer-subtitle').textContent=`Phiên ${dmy(sectorState.data.as_of)} · ${g.members.length} cổ phiếu`;
+ const m=g.metrics,valid=g.members.filter(sectorMapCurrent);
+ const up=valid.filter(r=>r.change>0).length,down=valid.filter(r=>r.change<0).length,flat=valid.length-up-down;
+ const segment=(n,cls)=>n?`<i class="${cls}" style="width:${n/Math.max(1,valid.length)*100}%"></i>`:'';
+ $('#sector-drawer-content').innerHTML=`<div class="sector-drawer-summary"><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span><p>${esc(sectorReason(g))}</p></div>
+  <div class="sector-drawer-returns">${[['5','1 tuần'],['21','1 tháng'],['63','3 tháng']].map(([key,title])=>`<div><span>${title}</span><b class="${tone(m.returns[key])}">${pct(m.returns[key])}</b></div>`).join('')}<div><span>Thanh khoản tương đối</span><b>${m.liquidity==null?'–':fmt(m.liquidity,2)+'×'}</b></div></div>
+  <section class="sector-drawer-chart"><div class="sector-chart-title"><div><h3>Sức mạnh so với VN-Index</h3><p>Chênh lệch hiệu suất 1 tháng, theo từng phiên · điểm %</p></div><b class="${tone(m.relative)}">${sfmt(m.relative,1)} đ.%</b></div>${sectorTrendChart(g.history)}</section>
+  <section class="sector-drawer-breadth"><h3>Độ rộng trong phiên</h3><div class="sector-breadth-bar">${segment(up,'rising')}${segment(flat,'unchanged')}${segment(down,'falling')}</div><div class="sector-breadth-labels"><span class="pos">↑ ${up} tăng</span><span class="zero">${flat} đứng giá</span><span class="neg">↓ ${down} giảm</span><span>${g.members.length-valid.length} mã giá cũ / thiếu</span></div><p>${pct(m.breadth,0,false)} mã đủ điều kiện đang trên MA50 · ${m.count}/${g.members.length} mã tham gia đo sức mạnh ngành.</p></section>
+  <section class="sector-drawer-members"><div class="sector-members-heading"><h3>Cổ phiếu trong ngành</h3><span class="muted">Bấm mã để mở biểu đồ</span></div><input id="sector-member-search" type="search" aria-label="Tìm cổ phiếu trong ngành" placeholder="Tìm mã hoặc doanh nghiệp…"><div class="sector-member-columns"><span>Mã / doanh nghiệp</span><span>Biến động phiên</span><span>GTGD 20P</span></div><div id="sector-drawer-members"></div></section>
+  <p class="sector-drawer-note">Hiệu suất ngành là trung vị của các mã đủ thanh khoản, đủ lịch sử và có giá hợp lệ. GTGD: bình quân 20 phiên, tỷ đồng/ngày. Dữ liệu mô tả diễn biến đã xảy ra; không phải dự báo sóng sắp tới.</p>`;
+ renderSectorDrawerMembers();const dialog=$('#sector-drawer');if(!dialog.open)dialog.showModal();dialog.scrollTop=0;
+}
+function renderSectorDrawerMembers() {
+ const g=sectorGroups((sectorState.data||{}).groups||[]).find(x=>x.id===sectorState.detail);if(!g)return;
+ const q=fold($('#sector-member-search').value),rows=g.members.filter(r=>!q||fold(r.ticker+' '+r.name).includes(q)).slice().sort((a,b)=>(b.value||0)-(a.value||0));
+ const max=Math.max(1,...g.members.filter(sectorMapCurrent).map(r=>Math.abs(r.change)));
+ $('#sector-drawer-members').innerHTML=rows.map(r=>{const valid=sectorMapCurrent(r),width=valid?Math.min(50,Math.abs(r.change)/max*50):0;
+  return `<button type="button" class="sector-member-row" data-t="${esc(r.ticker)}" aria-label="Mở biểu đồ ${esc(r.ticker)}"><span><b>${esc(r.ticker)}</b><small>${esc(r.name)}</small>${!valid?'<small class="muted">Giá cũ / cần kiểm tra</small>':''}</span><span class="sector-member-move"><b class="${valid?tone(r.change):''}">${valid?pct(r.change,2):'–'}</b><span class="sector-move-track"><i class="${r.change<0?'falling':'rising'}" style="width:${width}%;${r.change<0?'transform:translateX(-100%)':''}"></i></span></span><span>${r.value==null?'–':fmt(r.value/1e9,1)}<small>${fmt(r.close)} đ</small></span></button>`;
+ }).join('')||'<p class="empty">Không có mã phù hợp.</p>';
+}
 function sectorSpark(g) {
  const vs=g.history.map(x=>x.relative), ok=vs.filter(x=>x!=null);if(ok.length<2)return '–';
  const lo=Math.min(...ok),hi=Math.max(...ok), points=vs.map((v,i)=>v==null?null:`${i/(vs.length-1)*110},${30-(v-lo)/(hi-lo||1)*26}`).filter(Boolean).join(' ');
@@ -1634,15 +1692,14 @@ function sectorReason(g) {
  return `So VN-Index ${sfmt(m.relative,1)} điểm % · độ lan tỏa ${pct(m.breadth,0,false)}${g.breadth_change!=null?` (${sfmt(g.breadth_change,1)} điểm %/5 phiên)`:''}.`;
 }
 function renderSectors() {
- const all=(sectorState.data||{}).groups||[], kind=$('#sector-kind').value;
- const groups=all.filter(g=>g.kind===kind), q=fold($('#sector-search').value), status=$('#sector-status').value;
+ const groups=sectorGroups((sectorState.data||{}).groups||[]), q=fold($('#sector-search').value), status=$('#sector-status').value;
  const sort=$('#sector-sort').value;
  const value=g=>sort==='relative_change'?g.relative_change:g.metrics[sort];
  const rows=groups.filter(g=>(!q||fold(g.name).includes(q))&&(!status||g.status===status)&&(!sectorState.pinned||sectorState.pins.has(g.id))).sort((a,b)=>Number(a.status==='insufficient')-Number(b.status==='insufficient')||(value(b)??-Infinity)-(value(a)??-Infinity)||a.name.localeCompare(b.name));
- if(!rows.some(g=>g.id===sectorState.selected))sectorState.selected=rows[0]?.id;
+ if(!groups.some(g=>g.id===sectorState.selected)){sectorState.selected=null;sectorState.zoom=false;}
  $('#sector-pinned').classList.toggle('on',sectorState.pinned);
  $('#sector-list').innerHTML=rows.length?rows.map(g=>`<article class="sector-row ${g.id===sectorState.selected?'selected':''}"><button class="sector-pin" data-sector-pin="${esc(g.id)}" aria-label="${sectorState.pins.has(g.id)?'Bỏ ghim':'Ghim'} ${esc(g.name)}">${sectorState.pins.has(g.id)?'★':'☆'}</button><button class="sector-open" data-sector="${esc(g.id)}"><span class="sector-row-head"><b>${esc(g.name)}</b><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span></span><span class="sector-row-summary">${esc(sectorReason(g))}</span><span class="sector-row-stats"><span>1 tuần <b class="${tone(g.metrics.returns['5'])}">${pct(g.metrics.returns['5'])}</b></span><span>1 tháng <b class="${tone(g.metrics.returns['21'])}">${pct(g.metrics.returns['21'])}</b></span><span>3 tháng <b class="${tone(g.metrics.returns['63'])}">${pct(g.metrics.returns['63'])}</b></span>${sectorSpark(g)}</span></button></article>`).join(''):'<p class="empty">Không có ngành phù hợp. Thử đổi bộ lọc.</p>';
- sectorState.mapRows=rows;renderSectorMap();
+ sectorState.mapRows=groups;renderSectorMap();
 }
 // Balanced weighted partition: every positive weight owns a disjoint rectangle.
 function sectorMapRects(items,x,y,w,h) {
@@ -1679,21 +1736,20 @@ function renderSectorMap() {
     return {g,members,stocks,weight:stocks.reduce((n,r)=>n+r.weight,0)};
   });
   const count=groups.reduce((n,g)=>n+g.stocks.length,0), unique=new Set(groups.flatMap(g=>g.stocks.map(x=>x.r.ticker))).size;
-  $('#sector-map-count').textContent=`${groups.filter(g=>g.weight>0).length} nhóm · ${unique} mã`;
-  $('#sector-map-zoom').textContent=sectorState.zoom?'← Toàn bộ các ngành':'Phóng to ngành đang chọn';
-  $('#sector-map-zoom').disabled=!sectorState.selected;
+  $('#sector-map-count').textContent=`${sectorState.zoom?(sectorState.mapRows.find(g=>g.id===sectorState.selected)?.name||'')+' · ':''}${groups.filter(g=>g.weight>0).length} ngành · ${unique} mã`;
+  $('#sector-map-back').hidden=!sectorState.zoom;
   const missing=groups.reduce((n,g)=>n+g.members.length-g.stocks.length,0);
-  $('#sector-map-note').textContent=`${equal?'Mỗi mã có diện tích bằng nhau.':'Diện tích theo giá trị giao dịch bình quân 20 phiên, không phải vốn hóa.'} Tím / xanh lam chỉ dùng khi có giá trần / sàn của phiên để đối chiếu. Biến động theo tham chiếu khi có dữ liệu, nếu thiếu thì so đóng cửa trước. Màu ngành: trung bình biến động các mã có giá hợp lệ, gia quyền theo GTGD 20 phiên. Ô xám: thiếu giá phiên đang xem hoặc cần kiểm tra.${missing?' '+missing+' mã thiếu GTGD không có ô; chọn diện tích đều để xem.':''}${count!==unique?' Các nhóm chồng lấn, một mã có thể xuất hiện nhiều lần.':''} Rê chuột hoặc dùng phím Tab để xem số liệu.`;
+  $('#sector-map-note').textContent=`${equal?'Mỗi mã có diện tích bằng nhau.':'Diện tích theo giá trị giao dịch bình quân 20 phiên, không phải vốn hóa.'} Tím / xanh lam chỉ dùng khi có giá trần / sàn của phiên để đối chiếu. Biến động theo tham chiếu khi có dữ liệu, nếu thiếu thì so đóng cửa trước. Màu ngành: trung bình biến động các mã có giá hợp lệ, gia quyền theo GTGD 20 phiên. Ô xám: thiếu giá phiên đang xem hoặc cần kiểm tra.${missing?' '+missing+' mã thiếu GTGD không có ô; chọn diện tích đều để xem.':''}${count!==unique?' Một mã có thể thuộc nhiều ngành theo cách nhóm dữ liệu.':''} Rê chuột hoặc dùng phím Tab để xem số liệu.`;
   $('#sector-map-tip').hidden=true;
   const height=map.clientHeight, mode=$('#sector-map-mode').value;
   const rectStyle=r=>`left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;`;
   const html=sectorMapRects(groups,0,0,width,height).map(box=>{
     const {g,members,stocks}=box, change=sectorMapChange(members), tiny=box.w<70||box.h<40;
-    if(mode==='groups'||sectorState.collapsed.has(g.id))return `<button type="button" data-map-key="${esc(g.id)}" class="sector-map-group-summary ${g.id===sectorState.selected?'selected':''}" data-map-collapse="${esc(g.id)}" data-map-group="${esc(g.id)}" style="${rectStyle(box)}background:${sectorMapColor(change)}" aria-label="Mở các mã ngành ${esc(g.name)}, ${pct(change)}"><b style="font-size:${Math.max(11,Math.min(38,box.w/11,box.h/4))}px">${tiny?'':esc(g.name)}</b>${tiny?'':`<span>${pct(change)}</span>`}</button>`;
+    if(mode==='groups')return `<button type="button" data-map-key="${esc(g.id)}" class="sector-map-group-summary ${g.id===sectorState.selected?'selected':''}" data-map-zoom="${esc(g.id)}" data-map-group="${esc(g.id)}" style="${rectStyle(box)}background:${sectorMapColor(change)}" aria-label="Xem riêng ngành ${esc(g.name)}, ${pct(change)}"><b style="font-size:${Math.max(11,Math.min(38,box.w/11,box.h/4))}px">${tiny?'':esc(g.name)}</b>${tiny?'':`<span>${pct(change)}</span>`}</button>`;
     const header=tiny?0:Math.min(26,box.h*.23), padding=0;
     const tiles=sectorMapRects(stocks,padding,header+padding,Math.max(0,box.w-2*padding),Math.max(0,box.h-header-2*padding));
     return `<div data-map-key="${esc(g.id)}" class="sector-map-group ${g.id===sectorState.selected?'selected':''}" style="${rectStyle(box)}" role="group" aria-label="${esc(g.name)}">
-      ${header?`<button type="button" data-map-key="heading" class="sector-map-group-name" data-map-collapse="${esc(g.id)}" data-map-group="${esc(g.id)}" style="height:${header}px" title="${esc(g.name)} · bấm để thu gọn ngành"><b><i aria-hidden="true">⌄</i> ${esc(g.name)}</b><span>${pct(change,2)}</span></button>`:''}
+      ${header?`<button type="button" data-map-key="heading" class="sector-map-group-name" data-map-zoom="${esc(g.id)}" data-map-group="${esc(g.id)}" style="height:${header}px" title="${esc(g.name)} · bấm để xem riêng ngành"><b><i aria-hidden="true">⌄</i> ${esc(g.name)}</b><span>${pct(change,2)}</span></button>`:''}
       ${tiles.map(t=>{const r=t.r, valid=sectorMapCurrent(r), label=t.w>=30&&t.h>=22, sub=t.w>=46&&t.h>=44;
         return `<button type="button" data-map-key="${esc(r.ticker)}" class="sector-map-stock" data-t="${esc(r.ticker)}" data-map-stock="${esc(r.ticker)}" data-map-parent="${esc(g.id)}" style="${rectStyle(t)}background:${sectorMapColor(valid?r.change:null,valid?r.limit:null)};font-size:${Math.max(10,Math.min(40,t.w/4,t.h/3))}px" aria-label="Mở biểu đồ ${esc(r.ticker)}, ${valid?pct(r.change,2):'Giá cũ hoặc thiếu dữ liệu'}">${label?`<b>${esc(r.ticker)}</b>`:''}${sub?`<span>${valid?pct(r.change,2):'Giá cũ / thiếu'}</span>`:''}</button>`;
       }).join('')}</div>`;
@@ -1723,7 +1779,7 @@ function showSectorMapTip(target) {
   const tip=$('#sector-map-tip'), exchange=$('#sector-map-exchange').value;
   const members=g.members.filter(r=>!exchange||r.exchange===exchange), r=members.find(r=>r.ticker===target.dataset.mapStock);
   const sorted=members.slice().sort((a,b)=>(b.value||0)-(a.value||0)).slice(0,10);
-  tip.innerHTML=`<div class="map-tip-heading"><b>${esc(g.name)}</b><span>${members.length} mã</span></div>${r?`<div class="map-tip-stock"><b>${esc(r.ticker)}</b> · ${esc(r.name)}</div>`:''}<table><thead><tr><th>Mã</th><th>Giá</th><th>% đổi</th><th>GTGD 20P</th></tr></thead><tbody>${(r?[r,...sorted.filter(x=>x.ticker!==r.ticker).slice(0,4)]:sorted).map(x=>`<tr class="${r&&x.ticker===r.ticker?'map-tip-active':''}"><td>${esc(x.ticker)}</td><td>${fmt(x.close)}</td><td class="${tone(sectorMapCurrent(x)?x.change:null)}">${sectorMapCurrent(x)?pct(x.change,2):'–'}</td><td>${x.value==null?'–':fmt(x.value/1e9,1)}</td></tr>`).join('')}</tbody></table><p>GTGD bình quân 20 phiên · tỷ đồng/ngày. ${r?'Bấm mã để mở biểu đồ.':'Bấm tiêu đề ngành để thu gọn / mở các mã.'}</p>`;
+  tip.innerHTML=`<div class="map-tip-heading"><b>${esc(g.name)}</b><span>${members.length} mã</span></div>${r?`<div class="map-tip-stock"><b>${esc(r.ticker)}</b> · ${esc(r.name)}</div>`:''}<table><thead><tr><th>Mã</th><th>Giá</th><th>% đổi</th><th>GTGD 20P</th></tr></thead><tbody>${(r?[r,...sorted.filter(x=>x.ticker!==r.ticker).slice(0,4)]:sorted).map(x=>`<tr class="${r&&x.ticker===r.ticker?'map-tip-active':''}"><td>${esc(x.ticker)}</td><td>${fmt(x.close)}</td><td class="${tone(sectorMapCurrent(x)?x.change:null)}">${sectorMapCurrent(x)?pct(x.change,2):'–'}</td><td>${x.value==null?'–':fmt(x.value/1e9,1)}</td></tr>`).join('')}</tbody></table><p>GTGD bình quân 20 phiên · tỷ đồng/ngày. ${r?'Bấm mã để mở biểu đồ.':'Bấm tên ngành để xem riêng ngành.'}</p>`;
   tip.hidden=false;
   const rect=target.getBoundingClientRect(), w=tip.offsetWidth,h=tip.offsetHeight;
   const left=rect.right+w+16<window.innerWidth?rect.right+12:rect.left-w-12;
@@ -1734,28 +1790,30 @@ function wireSectors() {
  const tip=document.createElement('div');tip.id='sector-map-tip';tip.className='sector-map-tip';tip.setAttribute('role','tooltip');tip.hidden=true;document.body.appendChild(tip);
  const map=$('#sector-map');
  ['sector-map-exchange','sector-map-weight','sector-map-mode'].forEach(id=>$('#'+id).addEventListener('change',renderSectorMap));
- $('#sector-map-zoom').addEventListener('click',()=>{sectorState.zoom=!sectorState.zoom;renderSectorMap();});
- const setExpanded=open=>{const card=$('.sector-map-card');card.classList.toggle('is-expanded',open);$('#sector-map-expand').textContent=open?'↙ Thu gọn':'⛶ Mở rộng';$('#sector-map-expand').setAttribute('aria-pressed',String(open));$('#sector-map-expand').setAttribute('aria-label',open?'Thu gọn bản đồ nhiệt':'Mở rộng bản đồ nhiệt');};
- $('#sector-map-expand').addEventListener('click',()=>setExpanded(!$('.sector-map-card').classList.contains('is-expanded')));
- document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('.sector-map-card').classList.contains('is-expanded')){setExpanded(false);$('#sector-map-expand').focus();}});
+ $('#sector-map-back').addEventListener('click',()=>{sectorState.zoom=false;sectorState.selected=null;renderSectorMap();});
+ wireSectorDropdowns();
+ $('#sector-drawer-close').addEventListener('click',()=>$('#sector-drawer').close());
+ $('#sector-drawer').addEventListener('click',e=>{if(e.target===$('#sector-drawer')||e.target.closest('[data-t]'))$('#sector-drawer').close();});
+ $('#sector-drawer').addEventListener('close',()=>{sectorState.detail=null;});
+ $('#sector-drawer').addEventListener('input',e=>{if(e.target.id==='sector-member-search')renderSectorDrawerMembers();});
  let tipTimer;
  const hideTip=()=>{clearTimeout(tipTimer);tip.hidden=true;};
  map.addEventListener('pointerover',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(!t||t.contains(e.relatedTarget))return;clearTimeout(tipTimer);tipTimer=setTimeout(()=>{if(t.isConnected)showSectorMapTip(t);},110);});
  map.addEventListener('pointerout',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(t&&!t.contains(e.relatedTarget))hideTip();});
  map.addEventListener('focusin',e=>{const t=e.target.closest('[data-map-stock],[data-map-group]');if(t){clearTimeout(tipTimer);showSectorMapTip(t);}});
  ['pointerleave','focusout','click'].forEach(event=>map.addEventListener(event,hideTip));
- map.addEventListener('click',e=>{if(e.target.closest('[data-t],[data-sector]'))setExpanded(false);});
  document.addEventListener('scroll',hideTip,true);
  let resizeFrame;
  new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>{if(sectorState.data)renderSectorMap();});}).observe(map);
 
- ['sector-search','sector-kind','sector-status','sector-sort'].forEach(id=>$('#'+id).addEventListener(id==='sector-search'?'input':'change',renderSectors));
+ ['sector-search','sector-status','sector-sort'].forEach(id=>$('#'+id).addEventListener(id==='sector-search'?'input':'change',renderSectors));
  $('#sector-pinned').addEventListener('click',()=>{sectorState.pinned=!sectorState.pinned;renderSectors();});
  $('#tab-industries').addEventListener('click',e=>{
- const pin=e.target.closest('[data-sector-pin]'),open=e.target.closest('[data-sector]'),collapse=e.target.closest('[data-map-collapse]');
- if(collapse){const id=collapse.dataset.mapCollapse;sectorState.collapsed.has(id)?sectorState.collapsed.delete(id):sectorState.collapsed.add(id);if($('#sector-map-mode').value==='groups'){$('#sector-map-mode').value='stocks';sectorState.collapsed=new Set(sectorState.mapRows.map(g=>g.id).filter(x=>x!==id));}renderSectorMap();return;}
+ const pin=e.target.closest('[data-sector-pin]'),open=e.target.closest('[data-sector]'),zoom=e.target.closest('[data-map-zoom]');
+ if(zoom){sectorState.selected=zoom.dataset.mapZoom;sectorState.zoom=true;renderSectorMap();return;}
  if(pin){const id=pin.dataset.sectorPin;sectorState.pins.has(id)?sectorState.pins.delete(id):sectorState.pins.add(id);store.set('sepa.sectors',[...sectorState.pins]);renderSectors();}
- else if(open){sectorState.selected=open.dataset.sector;sectorState.zoom=true;renderSectors();$('.sector-map-card').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth',block:'start'});}
+ else if(open){openSectorDrawer(open.dataset.sector);}
+
  });
 }
 wireSectors();

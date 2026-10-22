@@ -36,3 +36,15 @@ assert.equal(c.sectorMapColor(6.99),'#009f66'); // a large rise alone cannot imp
 assert.equal(c.sectorMapColor(6.99,'ceiling'),'#6747bf');
 assert.equal(c.sectorMapColor(-6.99,'floor'),'#00a8cf');
 console.log('treemap: area, bounds, non-overlap, proportions, resize and stale-data exclusions passed');
+
+// Industry labels form one list; a duplicate name uses the classified cohort.
+c.fold=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+c.dmy=s=>s;
+for(const name of ['sectorGroups','sectorTrendChart']){
+ const fn=source.match(new RegExp('function '+name+'\\([^]*?\\n\\}'));assert.ok(fn,name);vm.runInContext(fn[0],c);
+}
+const unified=c.sectorGroups([{id:'t',name:'Bank',kind:'theme'},{id:'i',name:'Bank',kind:'industry'},{id:'p',name:'Ports',kind:'theme'}]);
+assert.equal(unified.length,2);assert.equal(unified[0].id,'i');
+const trend=c.sectorTrendChart([{date:'2026-10-19',relative:2},{date:'2026-10-20',relative:null},{date:'2026-10-21',relative:-1},{date:'2026-10-22',relative:0}]);
+assert.ok(!trend.includes('NaN')&&!trend.includes('Infinity'));assert.ok(trend.includes('M24.0'));
+console.log('industry drawer: unified cohorts and valid trend geometry passed');
