@@ -1621,7 +1621,7 @@ function wireSectorDropdowns() {
   const select=$('#'+id);select.hidden=true;
   select.insertAdjacentHTML('afterend',ddButton(`data-sector-select="${id}"`,label,select.selectedOptions[0].textContent,false));
  }
- $('#tab-industries').addEventListener('click',e=>{
+ document.addEventListener('click',e=>{
   const button=e.target.closest('[data-sector-select]');if(!button)return;
   const select=$('#'+button.dataset.sectorSelect);
   const items=[...select.options].map(o=>{
@@ -1680,9 +1680,9 @@ function sectorSpark(g) {
 async function loadIndustries() {
  const request=++sectorState.request;
  $('#sector-list').innerHTML='<p class="muted">Đang đọc dữ liệu ngành…</p>';
- sectorState.data=null;sectorState.mapRows=[];$('#sector-map').innerHTML='<p class="empty">Đang đọc dữ liệu ngành…</p>';$('#sector-map-count').textContent='';$('#sector-date').textContent='';$('#sector-map-tip').hidden=true;
+ sectorState.data=null;sectorState.mapRows=[];$('#sector-map').innerHTML='<p class="empty">Đang đọc dữ liệu ngành…</p>';$('#sector-map-count').textContent='';$('#sector-date').textContent='';$('#sector-watch-date').textContent='';$('#sector-map-tip').hidden=true;
  try {const data=await get(`/api/industries${state.runId?`?run_id=${encodeURIComponent(state.runId)}`:''}`);if(request!==sectorState.request)return;
- sectorState.data=data.explorer||{groups:[]};$('#sector-date').textContent=`Phiên ${dmy(sectorState.data.as_of)}`;
+ sectorState.data=data.explorer||{groups:[]};$('#sector-date').textContent=$('#sector-watch-date').textContent=`Phiên ${dmy(sectorState.data.as_of)}`;
  $('#sector-method').textContent=sectorState.data.method||'Chưa có dữ liệu ngành.';renderSectors();
  }catch(e){if(request===sectorState.request){$('#sector-list').textContent=e.message;$('#sector-map').textContent=e.message;}}
 }
@@ -1808,7 +1808,7 @@ function wireSectors() {
 
  ['sector-search','sector-status','sector-sort'].forEach(id=>$('#'+id).addEventListener(id==='sector-search'?'input':'change',renderSectors));
  $('#sector-pinned').addEventListener('click',()=>{sectorState.pinned=!sectorState.pinned;renderSectors();});
- $('#tab-industries').addEventListener('click',e=>{
+ document.addEventListener('click',e=>{
  const pin=e.target.closest('[data-sector-pin]'),open=e.target.closest('[data-sector]'),zoom=e.target.closest('[data-map-zoom]');
  if(zoom){sectorState.selected=zoom.dataset.mapZoom;sectorState.zoom=true;renderSectorMap();return;}
  if(pin){const id=pin.dataset.sectorPin;sectorState.pins.has(id)?sectorState.pins.delete(id):sectorState.pins.add(id);store.set('sepa.sectors',[...sectorState.pins]);renderSectors();}
@@ -1862,7 +1862,7 @@ function showTab(t) {
     renderMinePending();
     renderTable();
   }
-  if (t.dataset.tab === "industries") loadIndustries();
+  if (["industries", "sector-watch"].includes(t.dataset.tab)) loadIndustries();
   if (t.dataset.tab === "news") loadNews();
   if (t.dataset.tab === "learn" && window.renderLearn) window.renderLearn();
 }
@@ -1888,7 +1888,7 @@ async function init() {
       $("#run-text").textContent = runText(runs.find((r) => r.run_id === v));
       t.focus();
       loadRun(v);
-      if ($("#tab-industries").classList.contains("active")) loadIndustries();
+      if ($("#tab-industries").classList.contains("active") || $("#tab-sector-watch").classList.contains("active")) loadIndustries();
     },
   }));
   document.addEventListener("mousedown", (e) => { if (dd.pop && !dd.pop.contains(e.target) && !dd.trigger.contains(e.target)) closeDropdown(); });
