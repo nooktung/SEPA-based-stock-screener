@@ -1630,7 +1630,7 @@ async function toggleMine(ticker) {
 }
 
 // ---------------------------------------------------------------- other tabs
-const SECTOR_LABEL = {leading:'Đang dẫn dắt',improving:'Đang cải thiện',weakening:'Đang suy yếu',mixed:'Chưa đồng thuận',insufficient:'Ít dữ liệu'};
+const SECTOR_LABEL = {leading:'Đang dẫn dắt',outperforming:'Mạnh hơn thị trường',improving:'Đang cải thiện',weakening:'Đang suy yếu',mixed:'Chưa đồng thuận',insufficient:'Ít dữ liệu'};
 const sectorState = {data:null,selected:null,pins:new Set(store.get('sepa.sectors',[])),pinned:false,request:0,mapRows:[],zoom:false,detail:null};
 function sectorGroups(groups) {
  const byName=new Map();
@@ -1679,6 +1679,7 @@ function openSectorDrawer(id) {
  const up=valid.filter(r=>r.change>0).length,down=valid.filter(r=>r.change<0).length,flat=valid.length-up-down;
  const segment=(n,cls)=>n?`<i class="${cls}" style="width:${n/Math.max(1,valid.length)*100}%"></i>`:'';
  $('#sector-drawer-content').innerHTML=`<div class="sector-drawer-summary"><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span><p>${esc(sectorReason(g))}</p></div>
+  ${sectorLeadershipHtml(g)}
   <div class="sector-drawer-returns">${[['5','1 tuần'],['21','1 tháng'],['63','3 tháng']].map(([key,title])=>`<div><span>${title}</span><b class="${tone(m.returns[key])}">${pct(m.returns[key])}</b></div>`).join('')}<div><span>Thanh khoản tương đối</span><b>${m.liquidity==null?'–':fmt(m.liquidity,2)+'×'}</b></div></div>
   <section class="sector-drawer-chart"><div class="sector-chart-title"><div><h3>Sức mạnh so với VN-Index</h3><p>Chênh lệch hiệu suất 1 tháng, theo từng phiên · điểm %</p></div><b class="${tone(m.relative)}">${sfmt(m.relative,1)} đ.%</b></div>${sectorTrendChart(g.history)}</section>
   <section class="sector-drawer-breadth"><h3>Độ rộng trong phiên</h3><div class="sector-breadth-bar">${segment(up,'rising')}${segment(flat,'unchanged')}${segment(down,'falling')}</div><div class="sector-breadth-labels"><span class="pos">↑ ${up} tăng</span><span class="zero">${flat} đứng giá</span><span class="neg">↓ ${down} giảm</span><span>${g.members.length-valid.length} mã giá cũ / thiếu</span></div><p>${pct(m.breadth,0,false)} mã đủ điều kiện đang trên MA50 · ${m.count}/${g.members.length} mã tham gia đo sức mạnh ngành.</p></section>
@@ -1691,7 +1692,7 @@ function renderSectorDrawerMembers() {
  const q=fold($('#sector-member-search').value),rows=g.members.filter(r=>!q||fold(r.ticker+' '+r.name).includes(q)).slice().sort((a,b)=>(b.value||0)-(a.value||0));
  const max=Math.max(1,...g.members.filter(sectorMapCurrent).map(r=>Math.abs(r.change)));
  $('#sector-drawer-members').innerHTML=rows.map(r=>{const valid=sectorMapCurrent(r),width=valid?Math.min(50,Math.abs(r.change)/max*50):0;
-  return `<button type="button" class="sector-member-row" data-t="${esc(r.ticker)}" aria-label="Mở biểu đồ ${esc(r.ticker)}"><span><b>${esc(r.ticker)}</b><small>${esc(r.name)}</small>${!valid?'<small class="muted">Giá cũ / cần kiểm tra</small>':''}</span><span class="sector-member-move"><b class="${valid?tone(r.change):''}">${valid?pct(r.change,2):'–'}</b><span class="sector-move-track"><i class="${r.change<0?'falling':'rising'}" style="width:${width}%;${r.change<0?'transform:translateX(-100%)':''}"></i></span></span><span>${r.value==null?'–':fmt(r.value/1e9,1)}<small>${fmt(r.close)} đ</small></span></button>`;
+  return `<button type="button" class="sector-member-row" data-t="${esc(r.ticker)}" aria-label="Mở biểu đồ ${esc(r.ticker)}"><span><b>${esc(r.ticker)}</b><small>${esc(r.name)}</small>${!valid?'<small class="muted">Giá cũ / cần kiểm tra</small>':g.metrics.breakout_tickers?.includes(r.ticker)?'<small class="pos">Vượt đỉnh 20P · có KL xác nhận</small>':''}</span><span class="sector-member-move"><b class="${valid?tone(r.change):''}">${valid?pct(r.change,2):'–'}</b><span class="sector-move-track"><i class="${r.change<0?'falling':'rising'}" style="width:${width}%;${r.change<0?'transform:translateX(-100%)':''}"></i></span></span><span>${r.value==null?'–':fmt(r.value/1e9,1)}<small>${fmt(r.close)} đ</small></span></button>`;
  }).join('')||'<p class="empty">Không có mã phù hợp.</p>';
 }
 function sectorSpark(g) {
@@ -1708,10 +1709,14 @@ async function loadIndustries() {
  $('#sector-method').textContent=sectorState.data.method||'Chưa có dữ liệu ngành.';renderSectors();
  }catch(e){if(request===sectorState.request){$('#sector-list').textContent=e.message;$('#sector-map').textContent=e.message;}}
 }
+function sectorLeadershipHtml(g) {
+ const m=g.metrics,lead=g.leadership;if(!lead)return '';
+ return `<section class="sector-drawer-breadth sector-leadership"><h3>Vì sao có nhãn này?</h3><p>So với 5 phiên trước: mức vượt VN-Index ở kỳ 20 phiên thay đổi ${sfmt(g.relative_change,2)} điểm %; tỷ lệ mã trên MA50 thay đổi ${sfmt(g.breadth_change,1)} điểm %.</p><div class="sector-signal-grid">${[['Vượt VN-Index · 20 phiên',m.excess?.['20']==null?'–':sfmt(m.excess['20'],2)+' đ.%'],['Vượt VN-Index · 60 phiên',m.excess?.['60']==null?'–':sfmt(m.excess['60'],2)+' đ.%'],['Phân vị RS20 / RS60',m.ranks?.['20']==null?'Chưa đủ nhóm':`${fmt(m.ranks['20'],0)} / ${fmt(m.ranks['60'],0)}`],['Trên MA20 / MA50',`${pct(m.breadth20,0,false)} / ${pct(m.breadth,0,false)}`],['Vượt đỉnh 20 / 60 phiên',`${m.breakout_count} / ${m.breakout60_count} mã`],['Top 25% RS20 gần đây',`${lead.persistence}/5 phiên`]].map(([title,value])=>`<div><span>${title}</span><b>${value}</b></div>`).join('')}</div><ul class="sector-signal-checks">${lead.checks.map(c=>`<li><span class="${c.passed?'pos':'muted'}">${c.passed?'✓ Đạt':'○ Chưa đạt'}</span> ${esc(c.label)}</li>`).join('')}</ul><p>Vượt đỉnh trong 5 phiên gần nhất, khối lượng ≥1,2× bình quân 20 phiên trước và giá hiện còn trên vùng vượt. ${m.breakout_tickers?.length?'Mã xác nhận: '+m.breakout_tickers.map(esc).join(', ')+'.':''}</p><p>Thứ hạng 0–100 so với ${m.peer_counts?.['20']||0} nhóm cùng loại đủ dữ liệu; 100 là mạnh nhất. Năm điều kiện cần cùng đạt để gắn “Đang dẫn dắt”. Lợi nhuận, EPS và câu chuyện hỗ trợ chưa được chấm trong nhãn này; đây không phải xác suất tăng giá.</p></section>`;
+}
 function sectorReason(g) {
  const m=g.metrics;
- if(g.status==='insufficient')return `Có ${m.count} mã hợp lệ; cần ít nhất 3 mã và lịch sử so sánh.`;
- return `So VN-Index ${sfmt(m.relative,1)} điểm % · độ lan tỏa ${pct(m.breadth,0,false)}${g.breadth_change!=null?` (${sfmt(g.breadth_change,1)} điểm %/5 phiên)`:''}.`;
+ if(g.status==='insufficient')return `Cần ít nhất 3 mã có dữ liệu so sánh đủ 20/60 phiên; hiện ${m.count} mã hợp lệ.`;
+ return `Vượt VN-Index 20P ${sfmt(m.excess?.['20'],1)} đ.% · trên MA50 ${pct(m.breadth,0,false)} · thanh khoản ${m.liquidity==null?'–':fmt(m.liquidity,2)+'×'} · ${m.breakout_count??0} mã vượt đỉnh.`;
 }
 function renderSectors() {
  const groups=sectorGroups((sectorState.data||{}).groups||[]), q=fold($('#sector-search').value), status=$('#sector-status').value;
