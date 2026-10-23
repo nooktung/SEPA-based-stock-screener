@@ -1836,7 +1836,21 @@ wireSectors();
 
 // News: a card opens its article (CafeF first) in a new tab; the ticker chip opens the stock.
 // One search box: the ticker ("PNJ", "pn") or the company's name ("phu nhuan", accents optional).
-let newsRows = [];
+const NEWS_PAGE_SIZE = 15;
+let newsRows = [], newsPage = 1;
+function newsPageData(rows, requestedPage) {
+  const pages = Math.max(1, Math.ceil(rows.length / NEWS_PAGE_SIZE));
+  const page = Math.min(pages, Math.max(1, Math.trunc(Number(requestedPage)) || 1));
+  return { page, pages, items: rows.slice((page - 1) * NEWS_PAGE_SIZE, page * NEWS_PAGE_SIZE) };
+}
+function renderNewsPager(page, pages) {
+  const pager = $("#news-pagination");
+  pager.hidden = pages <= 1;
+  if (pager.hidden) { pager.innerHTML = ""; return; }
+  const candidates = [...new Set([1, page - 1, page, page + 1, pages])].filter(n => n >= 1 && n <= pages).sort((a,b) => a-b);
+  const button = (n, text, label, disabled = false) => `<button type="button" class="btn" data-news-page="${n}" aria-label="${label}" ${disabled ? 'disabled' : ''} ${n === page && /^\d+$/.test(text) ? 'aria-current="page"' : ''}>${text}</button>`;
+  pager.innerHTML = `<span class="news-page-status" role="status">Trang ${page} / ${pages}</span><div class="news-page-buttons">${button(page - 1, '‹', 'Trang trước', page === 1)}${candidates.map((n,i) => (i && n > candidates[i-1]+1 ? '<span class="news-page-gap" aria-hidden="true">…</span>' : '') + button(n, String(n), 'Trang '+n)).join('')}${button(page + 1, '›', 'Trang sau', page === pages)}</div>`;
+}
 let newsDateFilter = null, stockNewsDateFilter = null;
 function renderStockNews() {
   if (!state.detail || !state.detailTicker) return;
@@ -1848,12 +1862,15 @@ async function loadNews() {
   catch (err) { $("#news-list").innerHTML = `<p class="empty">${esc(err.message)}</p>`; return; }
   renderNews();
 }
-function renderNews() {
+function renderNews(reset = true) {
+  if (reset) newsPage = 1;
   const q = fold($("#news-search").value.trim());
   const rows = newsRows.filter((n) => (!q || fold(n.ticker).startsWith(q) || fold(n.name || "").includes(q))
     && (!newsDateFilter || newsDateFilter.matches(n.occurred_at)));
+  const page = newsPageData(rows, newsPage); newsPage = page.page;
+  renderNewsPager(page.page, page.pages);
   const source = (s) => SOURCE_TEXT[s] || s || "";
-  $("#news-list").innerHTML = rows.length ? rows.map((e) => `<div class="card news"${e.url ? ` data-url="${esc(e.url)}"` : ""}>
+  $("#news-list").innerHTML = rows.length ? page.items.map((e) => `<div class="card news"${e.url ? ` data-url="${esc(e.url)}"` : ""}>
       <div class="tk-inline">${starBtn(e.ticker)}<span class="news-tk" data-t="${esc(e.ticker)}" title="Mở chi tiết ${esc(e.ticker)}">${logoTile(e.ticker, " sm")}<span class="tk">${esc(e.ticker)}</span></span> <span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}</div>
       ${e.url ? `<a class="hl" href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.headline)}</a>` : `<b>${esc(e.headline)}</b>`}
       <div class="sub">${dmy(e.occurred_at)} ${esc(String(e.occurred_at).slice(11, 16))} · ${e.article_count} bài · nguồn cấp ${e.best_source_level} · ${esc(ASSERTION_TEXT[e.assertion_type] || e.assertion_type)}${e.url ? ` · đọc trên ${esc(source(e.url_source))} ↗` : ""}</div></div>`).join("")
@@ -1995,6 +2012,13 @@ async function init() {
     addMine(it.dataset.add);
   });
   $("#news-search").addEventListener("input", renderNews);
+  $("#news-pagination").addEventListener("click", e => {
+    const button = e.target.closest("[data-news-page]");
+    if (!button || button.disabled || Number(button.dataset.newsPage) === newsPage) return;
+    newsPage = Number(button.dataset.newsPage); renderNews(false);
+    $("#tab-news .toolbar").scrollIntoView({ block: "start", behavior: "auto" });
+    $(`#news-pagination [data-news-page="${newsPage}"][aria-current="page"]`)?.focus({ preventScroll: true });
+  });
   newsDateFilter = NewsDates.create($("#news-date-filter"), renderNews);
   stockNewsDateFilter = NewsDates.create($("#stock-news-date-filter"), renderStockNews);
 
