@@ -9,11 +9,15 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <!-- TradingView's official free embed widget (loaded by the browser; needs internet). -->
-<script src="https://s3.tradingview.com/tv.js"></script>
+<script defer src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
+<div id="page-loading" class="page-loading" role="status" aria-live="polite" aria-atomic="true">
+  <div class="page-loading-card"><span class="page-loading-spinner" aria-hidden="true"></span><strong id="page-loading-title">Đang tải dữ liệu…</strong><p id="page-loading-message">Đang chuẩn bị bảng giá và dữ liệu nghiên cứu.</p><button id="page-loading-retry" type="button" class="btn primary" hidden>Tải lại trang</button></div>
+</div>
+<noscript><style>#page-loading{display:none}</style><p class="empty">Hãy bật JavaScript để xem dữ liệu.</p></noscript>
 <div class="app">
 
 <!-- ============================================================ sidebar -->
@@ -256,7 +260,7 @@
 
 <script src="news-dates.js"></script>
 <script src="learn.js"></script>
-<script src="app.js"></script>
+<script defer src="app.js"></script>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 </body>
 </html>

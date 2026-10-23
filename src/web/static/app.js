@@ -43,7 +43,29 @@ async function detectSite() {
   }, 600000);
 }
 
+// Keep the first screen visible until initialization finishes; overlapping requests share it.
+let loadingRequests = 1, loadingTimer;
+function beginLoading() {
+  loadingRequests++;
+  if (!loadingTimer) loadingTimer = setTimeout(() => {
+    loadingTimer = null;
+    if (loadingRequests) $("#page-loading").hidden = false;
+  }, 150);
+}
+function endLoading() {
+  loadingRequests = Math.max(0, loadingRequests - 1);
+  if (!loadingRequests) {
+    clearTimeout(loadingTimer); loadingTimer = null;
+    $("#page-loading").hidden = true;
+  }
+}
+$("#page-loading-retry").addEventListener("click", () => location.reload());
 async function get(url) {
+  beginLoading();
+  try { return await fetchData(url); }
+  finally { endLoading(); }
+}
+async function fetchData(url) {
   if (SITE && url.startsWith("/api/")) {
     const t = new URL(url, location.href).searchParams.get("ticker");
     const missing = t ? `${t} chưa có dữ liệu chi tiết trong bản cập nhật này. Hãy tải lại trang hoặc thử lại sau.` : "Bản web chưa có dữ liệu cho mục này. Hãy tải lại trang.";
@@ -2039,9 +2061,15 @@ async function init() {
   $("#scrim").addEventListener("click", closeDetail);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDetail(); });
   await loadRun(runs[0] && runs[0].run_id);
+  endLoading();
   loadMarket();            // in the background: the sidebar count, and instant opening later
 }
 
 init().catch((err) => {
-  document.querySelector("main").insertAdjacentHTML("afterbegin", `<p class="empty">Lỗi tải dữ liệu: ${esc(err.message)}</p>`);
+  clearTimeout(loadingTimer); loadingTimer = null;
+  $("#page-loading").hidden = false;
+  $("#page-loading").classList.add("failed");
+  $("#page-loading-title").textContent = "Chưa tải được dữ liệu";
+  $("#page-loading-message").textContent = err.message || "Kiểm tra kết nối mạng rồi thử lại.";
+  $("#page-loading-retry").hidden = false;
 });
