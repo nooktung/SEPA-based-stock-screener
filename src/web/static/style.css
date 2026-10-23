@@ -3,6 +3,7 @@
    One neutral palette, one accent, soft tinted badges; light and dark.
    ========================================================================== */
 :root {
+  --sidebar-width: 228px;
   --bg: #f5f6f8; --surface: #ffffff; --surface-2: #f8f9fb; --hover: #f3f5f8;
   --text: #101828; --muted: #667085; --faint: #98a2b3; --line: #e4e7ec; --line-2: #eef0f3;
   --accent: #2563eb; --up: #12a150; --down: #e5383b; --warn: #d97706; --amber: #f59e0b; --orange: #ea580c;
@@ -53,7 +54,7 @@ select optgroup { color: var(--muted); }
 select option:disabled { color: var(--faint); }
 
 /* ------------------------------------------------------------------ layout */
-.app { display: grid; grid-template-columns: 228px minmax(0, 1fr); min-height: 100vh; }
+.app { display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); min-height: 100vh; }
 .side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px;
   padding: 18px 12px; background: var(--surface); border-right: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 14px; }
@@ -798,7 +799,7 @@ body:has(#sector-drawer[open]) { overflow:hidden; }
 @media(prefers-reduced-motion:reduce) { .nd-calendar.slide-forward,.nd-calendar.slide-back { animation:none; }.nd-chevron { transition:none; } }
 
 /* Data loading: visible in the initial HTML, before the application starts. */
-.page-loading { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.page-loading { position: fixed; inset: 0 0 0 var(--sidebar-width); z-index: 10000; display: grid; place-items: center; padding: 24px; background: var(--bg); }
 .page-loading[hidden] { display: none; }
 .page-loading-card { width: min(100%, 380px); text-align: center; padding: 36px 24px; }
 .page-loading-card strong { display: block; font-size: 20px; margin-top: 24px; }
@@ -807,3 +808,5 @@ body:has(#sector-drawer[open]) { overflow:hidden; }
 .page-loading.failed .page-loading-spinner { display: none; }
 @keyframes page-loading-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .page-loading-spinner { animation-duration: 2s; } }
+
+@media (max-width: 820px) { .page-loading { left: 0; z-index: 7; } }
