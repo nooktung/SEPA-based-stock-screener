@@ -1852,8 +1852,6 @@ function renderNews() {
   const q = fold($("#news-search").value.trim());
   const rows = newsRows.filter((n) => (!q || fold(n.ticker).startsWith(q) || fold(n.name || "").includes(q))
     && (!newsDateFilter || newsDateFilter.matches(n.occurred_at)));
-  const oldest = rows.length ? rows[rows.length - 1].occurred_at : null;
-  $("#news-count").innerHTML = `<b>${rows.length}</b> tin${oldest ? ` · từ ${dmy(oldest)}` : ""}`;
   const source = (s) => SOURCE_TEXT[s] || s || "";
   $("#news-list").innerHTML = rows.length ? rows.map((e) => `<div class="card news"${e.url ? ` data-url="${esc(e.url)}"` : ""}>
       <div class="tk-inline">${starBtn(e.ticker)}<span class="news-tk" data-t="${esc(e.ticker)}" title="Mở chi tiết ${esc(e.ticker)}">${logoTile(e.ticker, " sm")}<span class="tk">${esc(e.ticker)}</span></span> <span class="badge">${esc(newsType(e.event_type))}</span>${mentionTag(e)}</div>
