@@ -1324,7 +1324,7 @@ async function loadFlow(ticker) {
   // One row per session; a session DNSE has no foreign figures for stays, blank (tester R3-03).
   const all = data.rows, rows = all.filter((r) => r.foreign_net != null);
   if (!rows.length) {
-    box.innerHTML = `<div class="card"><p class="muted">Chưa có dữ liệu khối ngoại theo khối lượng cho ${esc(ticker)}. Chạy: python -m src.main flow --tickers ${esc(ticker)}</p></div>`;
+    box.innerHTML = `<div class="card"><p class="muted">Chưa có dữ liệu khối ngoại theo khối lượng cho ${esc(ticker)}.</p></div>`;
     return;
   }
   const span = (n) => all.slice(0, n).filter((r) => r.foreign_net != null);
