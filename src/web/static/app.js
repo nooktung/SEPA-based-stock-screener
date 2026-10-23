@@ -33,9 +33,7 @@ async function detectSite() {
   if (!s || !s.static) return;
   SITE = s;
   document.body.classList.add("static-site");
-  const made = s.generated_at ? `${s.generated_at.slice(11, 16)} ${dmy(s.generated_at.slice(0, 10))}` : "";
-  $("#site-note").hidden = false;
-  $("#site-note").textContent = `Bản web chỉ đọc · dữ liệu phiên ${dmy(s.session)}${made ? ` · cập nhật lúc ${made}` : ""}`;
+  $("#sidebar-logout").hidden = false;
   pageVersion = s.version;
   // A new copy is published after each session: offer a reload to a tab left open.
   setInterval(async () => {
@@ -634,10 +632,7 @@ async function loadLiveList() {
     acceptMineList(d.items || []);
     state.canEdit = !!d.can_edit;
     document.body.classList.toggle("can-edit", state.canEdit);
-    if (d.user && !$("#site-user")) {
-      $("#site-note").insertAdjacentHTML("beforeend",
-        ` · <span id="site-user">${esc(d.user)}</span> · <a href="/logout" class="site-logout">Đăng xuất</a>`);
-    }
+    if (d.user) $("#sidebar-logout").hidden = false;
   } catch (e) { if (/đăng nhập/.test(e.message)) throw e; /* no function: read-only */ }
 }
 
