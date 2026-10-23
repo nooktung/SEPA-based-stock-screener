@@ -143,8 +143,6 @@ const logoTile = (t, size = "") => (state.logos.has(t)
   : `<span class="clogo mono${size}" style="--h:${hue(t)}" aria-hidden="true">${esc(t)}</span>`);
 // Above a million shares the exact count stops helping a scan: 55.332.492 -> 55,3 tr.
 const vol = (v, signed = false) => (v == null ? "–" : Math.abs(v) >= 1e6 ? `${signed && v > 0 ? "+" : ""}${fmt(v / 1e6, 1)} tr` : signed ? sfmt(v) : fmt(v));
-const themeBadges = (r) => (r.themes || []).map((t) =>
-  `<span class="theme${t.hot ? " hot" : ""}" title="Ngành ${esc(t.name)}${t.hot ? " · đang mạnh" : ""}">${esc(t.name)}</span>`).join("");
 
 // ---------------------------------------------------------------- state
 const state = {
@@ -371,7 +369,7 @@ const srcTag = (r) => (r.grp ? `<span class="g g-${esc(r.grp)}" title="${esc(GRO
   + (state.group === "mine" && !r.flagged && !Object.keys(r.tech || {}).length ? '<span class="tag">Chưa có phân tích chi tiết</span>' : "")
   + (r.leader_of && state.group !== "leaders" ? `<span class="tag" title="Đầu ngành ${esc(r.leader_of)}">đầu ngành</span>` : "")
   + (r.flagged ? `<span class="tag tag-flag" title="${esc(r.flag_note || "Chuỗi giá bị gắn cờ (vd chưa điều chỉnh quyền)")}. Không tính chỉ báo cho mã này.">dữ liệu cần kiểm tra</span>` : "");
-const tickerCell = (r) => `<div class="tkw">${logoTile(r.ticker)}<div class="tkc"><div class="tk-line"><span class="tk">${esc(r.ticker)}</span>${srcTag(r)}${themeBadges(r)}</div>
+const tickerCell = (r) => `<div class="tkw">${logoTile(r.ticker)}<div class="tkc"><div class="tk-line"><span class="tk">${esc(r.ticker)}</span>${srcTag(r)}</div>
   <span class="nm" title="${esc(r.name || "")}">${esc(r.exchange || "")}${r.name ? " · " + esc(r.name) : ""}</span>
   ${state.group === "mine" && r.note ? `<span class="nm note-line" title="${esc(r.note)}">✎ ${esc(r.note)}</span>` : ""}</div></div>`;
 // % as the price boards show it: against the session's reference price when it was read
@@ -1474,7 +1472,6 @@ function detailHeader(ticker, d) {
   if (rs != null) badges.push(`<span class="tag" title="Sức mạnh giá so với toàn thị trường">RS ${fmt(rs)}</span>`);
   if (setup.status) badges.push(stBadge(setup.status));
   if (row.ticker) badges.push(liqBadge(liqOf(row)));
-  badges.push(themeBadges(row));
   const analysisDate = (d.state || {}).trade_date, priceDate = (d.bars || []).at(-1)?.trade_date;
   if (analysisDate && priceDate && analysisDate < priceDate) badges.push(`<span class="stale">Phân tích phiên ${dmy(analysisDate)} · chờ bổ sung</span>`);
   $("#d-badges").innerHTML = badges.join("");
