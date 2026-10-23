@@ -1623,7 +1623,7 @@ async function toggleMine(ticker) {
 
 // ---------------------------------------------------------------- other tabs
 const SECTOR_LABEL = {leading:'Đang dẫn dắt',outperforming:'Mạnh hơn thị trường',improving:'Đang cải thiện',weakening:'Đang suy yếu',mixed:'Chưa đồng thuận',insufficient:'Ít dữ liệu'};
-const sectorState = {data:null,selected:null,pins:new Set(store.get('sepa.sectors',[])),pinned:false,request:0,mapRows:[],zoom:false,detail:null};
+const sectorState = {data:null,selected:null,request:0,mapRows:[],zoom:false,detail:null};
 function sectorGroups(groups) {
  const byName=new Map();
  for(const g of groups){const key=fold(g.name).trim();if(!byName.has(key)||g.kind==='industry')byName.set(key,g);}
@@ -1645,7 +1645,7 @@ function wireSectorDropdowns() {
     count=new Set(groups.flatMap(g=>g.members).filter(r=>!o.value||r.exchange===o.value).map(r=>r.ticker)).size;
    }else if(select.id==='sector-status'){
     const q=fold($('#sector-search').value);
-    count=sectorGroups((sectorState.data||{}).groups||[]).filter(g=>(!q||fold(g.name).includes(q))&&(!sectorState.pinned||sectorState.pins.has(g.id))&&(!o.value||g.status===o.value)).length;
+    count=sectorGroups((sectorState.data||{}).groups||[]).filter(g=>(!q||fold(g.name).includes(q))&&(!o.value||g.status===o.value)).length;
    }
    return {value:o.value,text:o.textContent,count};
   });
@@ -1714,10 +1714,9 @@ function renderSectors() {
  const groups=sectorGroups((sectorState.data||{}).groups||[]), q=fold($('#sector-search').value), status=$('#sector-status').value;
  const sort=$('#sector-sort').value;
  const value=g=>sort==='relative_change'?g.relative_change:g.metrics[sort];
- const rows=groups.filter(g=>(!q||fold(g.name).includes(q))&&(!status||g.status===status)&&(!sectorState.pinned||sectorState.pins.has(g.id))).sort((a,b)=>Number(a.status==='insufficient')-Number(b.status==='insufficient')||(value(b)??-Infinity)-(value(a)??-Infinity)||a.name.localeCompare(b.name));
+ const rows=groups.filter(g=>(!q||fold(g.name).includes(q))&&(!status||g.status===status)).sort((a,b)=>Number(a.status==='insufficient')-Number(b.status==='insufficient')||(value(b)??-Infinity)-(value(a)??-Infinity)||a.name.localeCompare(b.name));
  if(!groups.some(g=>g.id===sectorState.selected)){sectorState.selected=null;sectorState.zoom=false;}
- $('#sector-pinned').classList.toggle('on',sectorState.pinned);
- $('#sector-list').innerHTML=rows.length?rows.map(g=>`<article class="sector-row ${g.id===sectorState.selected?'selected':''}"><button class="sector-pin" data-sector-pin="${esc(g.id)}" aria-label="${sectorState.pins.has(g.id)?'Bỏ ghim':'Ghim'} ${esc(g.name)}">${sectorState.pins.has(g.id)?'★':'☆'}</button><button class="sector-open" data-sector="${esc(g.id)}"><span class="sector-row-head"><b>${esc(g.name)}</b><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span></span><span class="sector-row-summary">${esc(sectorReason(g))}</span><span class="sector-row-stats"><span>1 tuần <b class="${tone(g.metrics.returns['5'])}">${pct(g.metrics.returns['5'])}</b></span><span>1 tháng <b class="${tone(g.metrics.returns['21'])}">${pct(g.metrics.returns['21'])}</b></span><span>3 tháng <b class="${tone(g.metrics.returns['63'])}">${pct(g.metrics.returns['63'])}</b></span>${sectorSpark(g)}</span></button></article>`).join(''):'<p class="empty">Không có ngành phù hợp. Thử đổi bộ lọc.</p>';
+ $('#sector-list').innerHTML=rows.length?rows.map(g=>`<article class="sector-row ${g.id===sectorState.selected?'selected':''}"><button class="sector-open" data-sector="${esc(g.id)}"><span class="sector-row-head"><b>${esc(g.name)}</b><span class="sector-badge ${g.status}">${SECTOR_LABEL[g.status]}</span></span><span class="sector-row-summary">${esc(sectorReason(g))}</span><span class="sector-row-stats"><span>1 tuần <b class="${tone(g.metrics.returns['5'])}">${pct(g.metrics.returns['5'])}</b></span><span>1 tháng <b class="${tone(g.metrics.returns['21'])}">${pct(g.metrics.returns['21'])}</b></span><span>3 tháng <b class="${tone(g.metrics.returns['63'])}">${pct(g.metrics.returns['63'])}</b></span>${sectorSpark(g)}</span></button></article>`).join(''):'<p class="empty">Không có ngành phù hợp. Thử đổi bộ lọc.</p>';
  sectorState.mapRows=groups;renderSectorMap();
 }
 // Balanced weighted partition: every positive weight owns a disjoint rectangle.
@@ -1826,12 +1825,10 @@ function wireSectors() {
  new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>{if(sectorState.data)renderSectorMap();});}).observe(map);
 
  ['sector-search','sector-status','sector-sort'].forEach(id=>$('#'+id).addEventListener(id==='sector-search'?'input':'change',renderSectors));
- $('#sector-pinned').addEventListener('click',()=>{sectorState.pinned=!sectorState.pinned;renderSectors();});
  document.addEventListener('click',e=>{
- const pin=e.target.closest('[data-sector-pin]'),open=e.target.closest('[data-sector]'),zoom=e.target.closest('[data-map-zoom]');
+ const open=e.target.closest('[data-sector]'),zoom=e.target.closest('[data-map-zoom]');
  if(zoom){sectorState.selected=zoom.dataset.mapZoom;sectorState.zoom=true;renderSectorMap();return;}
- if(pin){const id=pin.dataset.sectorPin;sectorState.pins.has(id)?sectorState.pins.delete(id):sectorState.pins.add(id);store.set('sepa.sectors',[...sectorState.pins]);renderSectors();}
- else if(open){openSectorDrawer(open.dataset.sector);}
+ if(open){openSectorDrawer(open.dataset.sector);}
 
  });
 }

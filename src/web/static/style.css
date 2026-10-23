@@ -603,8 +603,7 @@ body.static-site:not(.can-edit) #mine-form, body.static-site .dtab[data-pane="po
 .sector-row { display:flex; background:var(--surface); border:1px solid var(--line); border-radius:14px; margin-bottom:0; overflow:hidden; transition:border-color .18s,background .18s,box-shadow .18s; }
 .sector-row.selected { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); background:color-mix(in srgb,var(--accent) 5%,var(--surface)); box-shadow:0 2px 12px #00000006; }
 .sector-row:hover { border-color:color-mix(in srgb,var(--accent) 35%,var(--line)); }
-.sector-open { padding:18px 16px 18px 0; border:0; background:none; text-align:left; color:var(--text); cursor:pointer; flex:1; min-width:0; }
-.sector-pin { padding:12px; border:0; background:none; color:var(--accent); cursor:pointer; font-size:20px; align-self:start; }
+.sector-open { padding:18px; border:0; background:none; text-align:left; color:var(--text); cursor:pointer; flex:1; min-width:0; }
 .sector-row-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .sector-row-summary { display:block; color:var(--muted); font-size:12px; margin:8px 0; }
 .sector-row-stats { display:flex; gap:14px; align-items:center; font-size:11px; flex-wrap:wrap; }
