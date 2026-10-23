@@ -2,6 +2,7 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
+<base href="/">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SEPA Việt Nam</title>
 <link rel="icon" href="data:,">
@@ -26,37 +27,37 @@
     <div class="logo">S</div>
     <div><b>SEPA Việt Nam</b><span>Công cụ nghiên cứu</span></div>
   </div>
-  <nav class="nav" role="tablist">
+  <nav class="nav" aria-label="Điều hướng chính">
     <div class="nav-group">Cổ phiếu</div>
-    <button class="tab active" data-tab="screen" data-group="main" role="tab"
+    <a href="/danh-sach-chinh" class="tab active" data-tab="screen" data-group="main"
       data-title="Danh sách chính" data-desc="Đạt đủ 8/8 tiêu chí xu hướng (A) hoặc gần đạt và đang tạo nền (B). Đây là ứng viên để nghiên cứu, không phải khuyến nghị.">
-      <span class="ico">◆</span>Danh sách chính<span class="n" id="n-main"></span></button>
-    <button class="tab" data-tab="screen" data-group="ext" role="tab"
+      <span class="ico">◆</span>Danh sách chính<span class="n" id="n-main"></span></a>
+    <a href="/theo-doi-mo-rong" class="tab" data-tab="screen" data-group="ext"
       data-title="Theo dõi mở rộng" data-desc="Đang trong xu hướng tăng nhưng chưa đạt chuẩn SEPA. Chỉ để theo dõi, không phải ứng viên.">
-      <span class="ico">◇</span>Theo dõi mở rộng<span class="n" id="n-ext"></span></button>
-    <button class="tab" data-tab="screen" data-group="mine" role="tab"
+      <span class="ico">◇</span>Theo dõi mở rộng<span class="n" id="n-ext"></span></a>
+    <a href="/danh-sach-cua-toi" class="tab" data-tab="screen" data-group="mine"
       data-title="Danh sách của tôi" data-desc="Mã bạn tự chọn để theo dõi: giá, kỹ thuật, dòng tiền, sự kiện và tin tức được cập nhật hằng ngày dù có đạt chuẩn hay không.">
-      <span class="ico">★</span>Danh sách của tôi<span class="n" id="n-mine"></span></button>
-    <button class="tab" data-tab="screen" data-group="leaders" role="tab"
+      <span class="ico">★</span>Danh sách của tôi<span class="n" id="n-mine"></span></a>
+    <a href="/dau-nganh" class="tab" data-tab="screen" data-group="leaders"
       data-title="Đầu ngành" data-desc="Ba mã giao dịch nhiều nhất mỗi ngành, để theo dõi diễn biến ngành. Không phải ứng viên SEPA.">
-      <span class="ico">▲</span>Đầu ngành<span class="n" id="n-leaders"></span></button>
-    <button class="tab" data-tab="screen" data-group="market" role="tab"
+      <span class="ico">▲</span>Đầu ngành<span class="n" id="n-leaders"></span></a>
+    <a href="/toan-thi-truong" class="tab" data-tab="screen" data-group="market"
       data-title="Toàn thị trường" data-desc="Mọi mã HOSE, HNX, UPCoM có dữ liệu giá — lọc theo xu hướng, ngành, sàn, thanh khoản. Ảnh chụp để nghiên cứu, không phải danh sách ứng viên.">
-      <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></button>
+      <span class="ico">◫</span>Toàn thị trường<span class="n" id="n-market"></span></a>
     <div class="nav-group">Thị trường</div>
-    <button class="tab" data-tab="industries" role="tab"
+    <a href="/kham-pha-nganh" class="tab" data-tab="industries"
       data-title="Khám phá ngành" data-desc="Quan sát bản đồ nhiệt và biến động cổ phiếu theo ngành.">
-      <span class="ico">◎</span>Khám phá ngành</button>
-    <button class="tab" data-tab="sector-watch" role="tab"
+      <span class="ico">◎</span>Khám phá ngành</a>
+    <a href="/theo-doi-nganh" class="tab" data-tab="sector-watch"
       data-title="Theo dõi ngành" data-desc="So sánh sức mạnh ngành và mở bảng phân tích cổ phiếu trong ngành.">
-      <span class="ico">◈</span>Theo dõi ngành</button>
-    <button class="tab" data-tab="news" role="tab"
+      <span class="ico">◈</span>Theo dõi ngành</a>
+    <a href="/tin-tuc" class="tab" data-tab="news"
       data-title="Tin tức" data-desc="Tin doanh nghiệp trên toàn thị trường, mới nhất trước. Tìm theo mã hoặc chọn ngày để đọc tin đã được cập nhật.">
-      <span class="ico">✉</span>Tin tức</button>
+      <span class="ico">✉</span>Tin tức</a>
     <div class="nav-group">Kiến thức</div>
-    <button class="tab" data-tab="learn" role="tab"
+    <a href="/hoc" class="tab" data-tab="learn"
       data-title="Kiến thức biểu đồ" data-desc="Đọc nến, nhận diện cấu trúc giá và thực hành đánh giá bối cảnh qua hình minh họa.">
-      <span class="ico">✎</span>Học</button>
+      <span class="ico">✎</span>Học</a>
   </nav>
   <div class="side-foot"><a id="sidebar-logout" class="sidebar-logout" href="/logout" hidden><span aria-hidden="true">↪</span>Đăng xuất</a></div>
 </aside>

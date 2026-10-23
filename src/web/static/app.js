@@ -1878,8 +1878,27 @@ function renderNews(reset = true) {
 }
 
 // ---------------------------------------------------------------- wiring
-function showTab(t) {
+let navigationReady = false;
+function pagePath(pathname) {
+  return (pathname.replace(/\/+$/, "").replace(/\.html$/, "") || "/");
+}
+function pageTab() {
+  const path = pagePath(location.pathname);
+  return $$(".side .tab[href]").find(t => t.getAttribute("href") === path) || $(".side .tab[href]");
+}
+function navigatePage(t, mode = "push") {
+  closeDetail();
+  const drawer = $("#sector-drawer"); if (drawer.open) drawer.close();
+  const href = t.getAttribute("href");
+  if (mode === "replace") history.replaceState(null, "", href + location.search + location.hash);
+  else if (mode === "push" && location.pathname !== href) history.pushState(null, "", href);
+  showTab(t, navigationReady);
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+function showTab(t, load = true) {
   $$(".tab").forEach((x) => x.classList.toggle("active", x === t));
+  document.title = `${t.dataset.title || "SEPA Việt Nam"} · SEPA Việt Nam`;
+  $$(".side .tab[href]").forEach(x => { if (x === t) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); });
   $("#page-title").textContent = t.dataset.title || "";
   $("#page-desc").textContent = t.dataset.desc || "";
   $$(".panel").forEach((p) => p.classList.remove("active"));
@@ -1890,9 +1909,9 @@ function showTab(t) {
     state.group = t.dataset.group;
     state.grp = ""; state.sortKey = "";
     $("#mine-form").hidden = state.group !== "mine";
-    renderMinePending();
-    renderTable();
+    if (load) { renderMinePending(); renderTable(); }
   }
+  if (!load) return;
   if (["industries", "sector-watch"].includes(t.dataset.tab)) loadIndustries();
   if (t.dataset.tab === "news") loadNews();
   if (t.dataset.tab === "learn" && window.renderLearn) window.renderLearn();
@@ -1904,7 +1923,12 @@ function syncView() {
 
 async function init() {
   // Wired before the first request: a click on the menu while the page loads used to be lost (R3-12).
-  $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t)));
+  $$(".side .tab[href]").forEach(t => t.addEventListener("click", e => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault(); navigatePage(t);
+  }));
+  window.addEventListener("popstate", () => navigatePage(pageTab(), "none"));
+  navigatePage(pageTab(), "replace");
   await detectSite();
   try { state.logos = new Set(await get("/api/logos")); } catch { /* tiles with the code instead */ }
   const runs = await get("/api/runs");
@@ -2077,6 +2101,7 @@ async function init() {
   $("#scrim").addEventListener("click", closeDetail);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDetail(); });
   await loadRun(runs[0] && runs[0].run_id);
+  navigationReady = true; showTab(pageTab());
   endLoading();
   loadMarket();            // in the background: the sidebar count, and instant opening later
 }

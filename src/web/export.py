@@ -35,6 +35,7 @@ from typing import Any, Callable, Mapping
 
 from src.config import PROJECT_ROOT, load_config
 from src.database import connect
+from src.web.page_routes import write_page_aliases
 
 STATIC = PROJECT_ROOT / "src" / "web" / "static"
 OUT_DIR = PROJECT_ROOT / "data" / "site"
@@ -170,6 +171,7 @@ def export_site(out_dir: Path | None = None, path: Path | None = None, now: date
 
     for name in PAGE_FILES:
         shutil.copy2(STATIC / name, work / name)
+    write_page_aliases(work)
     # Cloudflare Pages: every path goes through the login (cloudflare/functions/_middleware.js) except
     # the company logos -- public images, most of a page's requests (the free plan counts invocations).
     write_json(work / "_routes.json", {"version": 1, "include": ["/*"], "exclude": ["/logo/*"]})
@@ -338,6 +340,7 @@ def update_site(out_dir: Path | None = None, path: Path | None = None, now: date
         write_json(work / static_path("logos"), sorted(logo_files))
     for name in PAGE_FILES:
         shutil.copy2(STATIC / name, work / name)
+    write_page_aliases(work)
     _refuse_secrets(work, env_file)
 
     staged = sorted(f for f in work.rglob("*") if f.is_file())

@@ -1040,7 +1040,8 @@ class Handler(BaseHTTPRequestHandler):
             # The page asks whether it is the static web copy (src/web/export.py writes one there); this is not.
             self._send(200, b'{"static": false}', "application/json; charset=utf-8")
             return
-        name = "index.html" if parts.path in ("/", "") else parts.path.lstrip("/")
+        from src.web.page_routes import is_page_path
+        name = "index.html" if is_page_path(parts.path) else parts.path.lstrip("/")
         target = (STATIC / name).resolve()
         if STATIC not in target.parents or not target.is_file():
             self._send(404, b"not found", "text/plain")

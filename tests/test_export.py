@@ -75,6 +75,9 @@ def test_the_copy_holds_the_api_answers_and_nothing_to_write(db, tmp_path):
                  "data/bars/tf-W_ticker-AAA.json", "data/flow/sessions-30_ticker-AAA.json", "data/news.json",
                  "data/universe.json"):
         assert (out / name).is_file(), name
+    from src.web.page_routes import PAGE_PATHS
+    for route in PAGE_PATHS:
+        assert (out / (route[1:] + ".html")).read_bytes() == (out / "index.html").read_bytes()
     assert not (out / "data/position").exists() and not (out / "data/mylist").exists()
     assert not (out.parent / "site.new").exists()
     # Every path behind the login on Cloudflare, the public logos excepted.
@@ -121,6 +124,9 @@ def test_an_update_writes_only_what_a_new_ticker_changes(db, tmp_path):
     _pick(db, "BBB", "CTCP B")
     rep = export.update_site(out_dir=out, **_kw(db, tmp_path))
     assert rep.mode == "update" and rep.detail == ["BBB"]
+    from src.web.page_routes import PAGE_PATHS
+    for route in PAGE_PATHS:
+        assert (out / (route[1:] + ".html")).read_bytes() == (out / "index.html").read_bytes()
     meta = json.loads((out / "site.json").read_text(encoding="utf-8"))
     assert meta["detail"] == ["AAA", "BBB"] and meta["run_id"] == "r1" and meta["version"] != before["version"]
     for name in ("data/ticker/ticker-BBB.json", "data/bars/tf-W_ticker-BBB.json", "data/bars/tf-M_ticker-BBB.json",

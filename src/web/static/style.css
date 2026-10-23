@@ -829,3 +829,5 @@ body:has(#sector-drawer[open]) { overflow:hidden; }
 .news-page-buttons .btn:disabled { opacity:.35; cursor:default; }
 .news-page-gap { padding:0 3px; color:var(--muted); }
 @media(max-width:480px) { .news-pagination { justify-content:center; } .news-page-status { width:100%; text-align:center; } .news-page-buttons { gap:4px; } }
+
+.side a.tab { text-decoration:none; }
